@@ -1,0 +1,3184 @@
+openapi: 3.1.0
+info:
+  title: Plateforme de gestion des réclamations — API
+  version: 1.0.0
+  summary: Contrat de l'API du MVP (Makor Telecoms · Solution 1)
+  description: |
+    Contrat de l'API, écrit avant le code (étape 5). Le backend NestJS de l'étape 7 et le frontend
+    de l'étape 8 s'y conforment ; les réponses de l'API seront validées contre ce fichier par les tests.
+
+    ## Espaces
+
+    | Préfixe | Qui | Authentification | La banque est connue par |
+    |---|---|---|---|
+    | `/public` | Client final, sans compte | aucune | le code du point de dépôt ou le jeton de suivi |
+    | `/client` | Client final après code OTP | `jetonClient` (30 min) | le jeton |
+    | `/auth` | Personnel | mot de passe + TOTP | — |
+    | `/banque` | Agent, superviseur, Admin Entreprise | `jetonPersonnel` (15 min) | le jeton |
+    | `/plateforme` | Super Admin | `jetonPersonnel` | — (toutes les banques, métadonnées seulement) |
+
+    La banque n'est jamais un paramètre libre de la requête : un agent de la banque A qui demande
+    un ticket de la banque B reçoit 404.
+
+    ## Conventions
+
+    - Chemins et champs en français, comme le code et le modèle de données.
+    - Dates au format ISO 8601 en UTC (`2026-09-25T10:00:00Z`) ; l'interface les affiche dans le
+      fuseau de la banque (`fuseauHoraire` de `/banque/parametres`).
+    - Identifiants UUID.
+    - Listes paginées : `page` (à partir de 1) et `parPage` (100 au plus) ; réponse
+      `{ donnees, pagination: { page, parPage, total } }`.
+    - Erreurs au format RFC 9457 (`application/problem+json`) avec un `code` stable.
+    - Les actions sur une réclamation renvoient la réclamation à jour.
+    - `x-roles` indique qui peut appeler chaque opération ; `x-action` la relie à la méthode du
+      service du cycle de vie (`src/application/reclamations/cycle-de-vie.ts`).
+  contact:
+    name: Makor Telecoms
+  license:
+    name: Propriétaire — Makor Telecoms
+    identifier: LicenseRef-Proprietaire
+
+servers:
+  - url: https://{hote}/api/v1
+    description: Production (même origine que le portail ou la console)
+    variables:
+      hote:
+        default: console.reclamations.example
+        description: Portail d'une banque (`<slug>.<domaine>`) ou console du personnel (`console.<domaine>`)
+  - url: http://localhost:3000/api/v1
+    description: Développement
+
+tags:
+  - name: Santé
+    description: Supervision
+  - name: Dépôt et suivi
+    description: Portail public du client final (QR code, lien de suivi, code OTP)
+  - name: Espace client
+    description: Réclamations du client après vérification du code OTP
+  - name: Authentification
+    description: Connexion du personnel, TOTP, sessions
+  - name: Réclamations
+    description: Files, traitement, clôture (agent, superviseur)
+  - name: Tableau de bord
+    description: Indicateurs du §6.6 et export
+  - name: Notifications
+    description: Notifications in-app du personnel
+  - name: Paramétrage
+    description: Catégories, agences, points de dépôt, horaires, jours fériés, apparence (Admin Entreprise)
+  - name: Personnel
+    description: Comptes du personnel et équipes (Admin Entreprise)
+  - name: Audit
+    description: Journal d'audit chaîné
+  - name: Plateforme
+    description: Banques, plans, statistiques et audit de toutes les banques (Super Admin)
+
+paths:
+  # ===========================================================================
+  #  Santé
+  # ===========================================================================
+  /sante:
+    get:
+      tags: [Santé]
+      operationId: lireSante
+      summary: État de l'API, de la base et de Redis
+      x-roles: [PUBLIC]
+      security: []
+      responses:
+        '200':
+          description: Service opérationnel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sante' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+        '503':
+          description: Une dépendance ne répond pas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sante' }
+
+  # ===========================================================================
+  #  Public : dépôt et suivi
+  # ===========================================================================
+  /public/points-depot/{code}:
+    get:
+      tags: [Dépôt et suivi]
+      operationId: lireFormulaireDepot
+      summary: Formulaire de dépôt d'un point (QR code ou lien)
+      description: Le code du point suffit à identifier la banque, l'agence et le canal (§6.1).
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CodePoint'
+      responses:
+        '200':
+          description: Tout ce qu'il faut pour afficher le formulaire
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FormulaireDepot' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/points-depot/{code}/reclamations:
+    post:
+      tags: [Dépôt et suivi]
+      operationId: deposerReclamation
+      summary: Déposer une réclamation
+      description: |
+        Crée le ticket (numéro `PRÉFIXE-AAAA-NNNNNN`), démarre le SLA et envoie l'accusé de réception
+        par e-mail et SMS. Idempotent avec l'en-tête `Idempotency-Key` : la même clé renvoie le même
+        accusé sans créer de doublon. Limité à 5 dépôts par heure et par adresse IP, 3 par téléphone.
+      x-roles: [PUBLIC]
+      x-action: deposer
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CodePoint'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/DepotReclamation' }
+            encoding:
+              fichiers:
+                contentType: image/jpeg, image/png, image/webp, application/pdf
+      responses:
+        '201':
+          description: Réclamation enregistrée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccuseDepot' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/suivi/{jetonSuivi}:
+    get:
+      tags: [Dépôt et suivi]
+      operationId: lireSuivi
+      summary: Chronologie horodatée d'une réclamation
+      description: Ouverte par le lien de suivi. Statuts et dates seulement ; le détail exige le code OTP.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/JetonSuivi'
+      responses:
+        '200':
+          description: Chronologie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuiviPublic' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/suivi/{jetonSuivi}/otp:
+    post:
+      tags: [Dépôt et suivi]
+      operationId: demanderCodeOtp
+      summary: Recevoir un code OTP par SMS ou e-mail
+      description: Code à 6 chiffres, valable 10 minutes. 3 envois par heure et par réclamation.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/JetonSuivi'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DemandeOtp' }
+      responses:
+        '202':
+          description: Code envoyé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpEnvoye' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/suivi/{jetonSuivi}/otp/verification:
+    post:
+      tags: [Dépôt et suivi]
+      operationId: verifierCodeOtp
+      summary: Vérifier le code OTP et ouvrir une session client
+      description: 5 essais par code. La session client dure 30 minutes et ne donne accès qu'aux réclamations de ce client dans cette banque.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/JetonSuivi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationOtp' }
+      responses:
+        '200':
+          description: Session client ouverte
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionClient' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  # ===========================================================================
+  #  Espace client (après OTP)
+  # ===========================================================================
+  /client/reclamations:
+    get:
+      tags: [Espace client]
+      operationId: listerMesReclamations
+      summary: Historique des réclamations du client dans cette banque
+      x-roles: [CLIENT]
+      security:
+        - jetonClient: []
+      responses:
+        '200':
+          description: Réclamations du client, les plus récentes d'abord
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [donnees]
+                properties:
+                  donnees:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReclamationClientResume' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /client/reclamations/{id}:
+    get:
+      tags: [Espace client]
+      operationId: lireMaReclamation
+      summary: Détail d'une réclamation du client
+      description: Messages échangés (jamais les notes internes), pièces jointes visibles, chronologie et actions possibles.
+      x-roles: [CLIENT]
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Détail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReclamationClient' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /client/reclamations/{id}/messages:
+    post:
+      tags: [Espace client]
+      operationId: envoyerMessageClient
+      summary: Écrire à la banque (avec pièces jointes)
+      description: Si la banque attendait une réponse, le ticket repasse « En cours » et le chrono SLA reprend.
+      x-roles: [CLIENT]
+      x-action: messageDuClient
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/NouveauMessage' }
+      responses:
+        '201':
+          description: Message envoyé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReclamationClient' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /client/reclamations/{id}/confirmation:
+    post:
+      tags: [Espace client]
+      operationId: confirmerResolution
+      summary: Confirmer la résolution (clôture)
+      x-roles: [CLIENT]
+      x-action: confirmer
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Réclamation clôturée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReclamationClient' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /client/reclamations/{id}/contestation:
+    post:
+      tags: [Espace client]
+      operationId: contesterResolution
+      summary: Contester la résolution (réouverture)
+      description: Possible jusqu'à la clôture automatique (5 jours après la résolution par défaut).
+      x-roles: [CLIENT]
+      x-action: contester
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Contestation' }
+      responses:
+        '200':
+          description: Réclamation rouverte
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReclamationClient' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /client/reclamations/{id}/pieces-jointes/{pieceId}:
+    get:
+      tags: [Espace client]
+      operationId: telechargerPieceJointeClient
+      summary: Télécharger une pièce jointe visible du client
+      x-roles: [CLIENT]
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/PieceId'
+      responses:
+        '200': { $ref: '#/components/responses/Fichier' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  # ===========================================================================
+  #  Authentification du personnel
+  # ===========================================================================
+  /auth/connexion:
+    post:
+      tags: [Authentification]
+      operationId: connexion
+      summary: Première étape de connexion (e-mail et mot de passe)
+      description: |
+        Renvoie toujours une étape TOTP : la double authentification est obligatoire pour tout le personnel.
+        Après 5 échecs, le compte est verrouillé 15 minutes. 10 tentatives par 15 minutes et par adresse IP.
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Connexion' }
+      responses:
+        '200':
+          description: Mot de passe accepté, code TOTP attendu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EtapeTotp' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '423': { $ref: '#/components/responses/Verrouille' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /auth/connexion/totp:
+    post:
+      tags: [Authentification]
+      operationId: validerCodeTotp
+      summary: Seconde étape de connexion (code TOTP)
+      description: Ouvre la session. Le refresh token est posé en cookie `rt` (httpOnly, Secure, SameSite=Strict).
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeTotp' }
+      responses:
+        '200': { $ref: '#/components/responses/SessionOuverte' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /auth/invitation/acceptation:
+    post:
+      tags: [Authentification]
+      operationId: accepterInvitation
+      summary: Accepter une invitation (choix du mot de passe, puis enrôlement TOTP)
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DefinitionMotDePasse' }
+      responses:
+        '200':
+          description: Mot de passe enregistré ; le TOTP doit maintenant être activé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrolementTotp' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /auth/totp/activation:
+    post:
+      tags: [Authentification]
+      operationId: activerTotp
+      summary: Activer le TOTP avec un premier code, et ouvrir la session
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeTotp' }
+      responses:
+        '200': { $ref: '#/components/responses/SessionOuverte' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /auth/rafraichissement:
+    post:
+      tags: [Authentification]
+      operationId: rafraichirSession
+      summary: Nouveau jeton d'accès à partir du cookie de rafraîchissement
+      description: Le refresh token change à chaque appel. Réutiliser un ancien jeton révoque toute la session.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE, SUPER_ADMIN]
+      security:
+        - cookieRafraichissement: []
+      responses:
+        '200': { $ref: '#/components/responses/SessionOuverte' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /auth/deconnexion:
+    post:
+      tags: [Authentification]
+      operationId: deconnexion
+      summary: Fermer la session (révoque le refresh token)
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE, SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '204':
+          description: Session fermée, cookie effacé
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /auth/mot-de-passe/oubli:
+    post:
+      tags: [Authentification]
+      operationId: demanderReinitialisation
+      summary: Recevoir un lien de réinitialisation par e-mail
+      description: Répond toujours 202, que l'adresse existe ou non.
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202':
+          description: Demande prise en compte
+        '400': { $ref: '#/components/responses/Invalide' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /auth/mot-de-passe/reinitialisation:
+    post:
+      tags: [Authentification]
+      operationId: reinitialiserMotDePasse
+      summary: Choisir un nouveau mot de passe avec le lien reçu
+      x-roles: [PUBLIC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DefinitionMotDePasse' }
+      responses:
+        '204':
+          description: Mot de passe changé ; toutes les sessions sont révoquées
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /auth/moi:
+    get:
+      tags: [Authentification]
+      operationId: lireMoi
+      summary: Utilisateur connecté
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE, SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Profil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Moi' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  # ===========================================================================
+  #  Banque : réclamations
+  # ===========================================================================
+  /banque/reclamations:
+    get:
+      tags: [Réclamations]
+      operationId: listerReclamations
+      summary: Files de traitement et recherche
+      description: |
+        Files du §6.2 : reçues (non assignées), assignées à moi, urgentes, en retard (SLA dépassé), escaladées.
+        Un agent ne voit que les tickets qui lui sont assignés ; superviseur et Admin Entreprise voient toute la banque.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/File'
+        - $ref: '#/components/parameters/FiltreStatut'
+        - $ref: '#/components/parameters/FiltrePriorite'
+        - $ref: '#/components/parameters/FiltreCategorie'
+        - $ref: '#/components/parameters/FiltreAgence'
+        - $ref: '#/components/parameters/FiltreCanal'
+        - $ref: '#/components/parameters/FiltreAgent'
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/Recherche'
+        - $ref: '#/components/parameters/TriReclamations'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Page de réclamations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageReclamations' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/reclamations/export:
+    get:
+      tags: [Tableau de bord]
+      operationId: exporterReclamations
+      summary: Export CSV des réclamations filtrées
+      description: Mêmes filtres que la liste. CSV UTF-8 avec BOM, séparateur « ; » (lisible directement dans Excel en français).
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/File'
+        - $ref: '#/components/parameters/FiltreStatut'
+        - $ref: '#/components/parameters/FiltrePriorite'
+        - $ref: '#/components/parameters/FiltreCategorie'
+        - $ref: '#/components/parameters/FiltreAgence'
+        - $ref: '#/components/parameters/FiltreCanal'
+        - $ref: '#/components/parameters/FiltreAgent'
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/Recherche'
+      responses:
+        '200':
+          description: Fichier CSV
+          headers:
+            Content-Disposition:
+              schema: { type: string, examples: ['attachment; filename="reclamations-2026-09-25.csv"'] }
+          content:
+            text/csv:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/reclamations/{id}:
+    get:
+      tags: [Réclamations]
+      operationId: lireReclamation
+      summary: Détail d'une réclamation
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/reclamations/{id}/prise-en-charge:
+    post:
+      tags: [Réclamations]
+      operationId: prendreEnCharge
+      summary: Prendre en charge (Ouverte → En cours)
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: prendreEnCharge
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/reclamations/{id}/assignation:
+    post:
+      tags: [Réclamations]
+      operationId: assignerReclamation
+      summary: Assigner à un agent
+      x-roles: [SUPERVISEUR]
+      x-action: assigner
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId]
+              properties:
+                agentId: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/reponses:
+    post:
+      tags: [Réclamations]
+      operationId: repondreAuClient
+      summary: Répondre au client (avec pièces jointes)
+      description: |
+        Depuis « Ouverte », le ticket est d'abord pris en charge. Avec `attendreReponse`, il passe
+        « En attente client » et le chrono SLA s'arrête jusqu'à la réponse du client.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: repondreAuClient
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/ReponseAuClient' }
+      responses:
+        '201': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/notes:
+    post:
+      tags: [Réclamations]
+      operationId: ajouterNoteInterne
+      summary: Note interne (jamais visible du client)
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: noteInterne
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/NouveauMessage' }
+      responses:
+        '201': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/resolution:
+    post:
+      tags: [Réclamations]
+      operationId: resoudreReclamation
+      summary: Résoudre (En cours → Résolue), avec la réponse finale
+      description: Le client reçoit par e-mail et SMS les liens pour confirmer ou contester.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: resoudre
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reponseFinale]
+              properties:
+                reponseFinale: { type: string, minLength: 1, maxLength: 5000 }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/priorite:
+    post:
+      tags: [Réclamations]
+      operationId: changerPriorite
+      summary: Changer la priorité
+      description: Le passage en « Urgente » alerte aussitôt l'agent, le superviseur, l'Admin Entreprise et le Super Admin.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: changerPriorite
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [priorite]
+              properties:
+                priorite: { $ref: '#/components/schemas/Priorite' }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/reclamations/{id}/escalade:
+    post:
+      tags: [Réclamations]
+      operationId: escaladerReclamation
+      summary: Escalader vers son superviseur
+      x-roles: [AGENT]
+      x-action: escalader
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                motif: { type: string, maxLength: 2000, description: "Ajouté en note interne" }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/reclamations/{id}/cloture-forcee:
+    post:
+      tags: [Réclamations]
+      operationId: cloturerDeForce
+      summary: Clôturer de force (tout statut), motif obligatoire
+      x-roles: [SUPERVISEUR]
+      x-action: cloturerDeForce
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [motif, precision]
+              properties:
+                motif: { $ref: '#/components/schemas/MotifClotureForcee' }
+                precision: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/pieces-jointes/{pieceId}:
+    get:
+      tags: [Réclamations]
+      operationId: telechargerPieceJointe
+      summary: Télécharger une pièce jointe
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/PieceId'
+      responses:
+        '200': { $ref: '#/components/responses/Fichier' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  # ===========================================================================
+  #  Banque : tableau de bord et notifications
+  # ===========================================================================
+  /banque/indicateurs:
+    get:
+      tags: [Tableau de bord]
+      operationId: lireIndicateurs
+      summary: Indicateurs du §6.6 sur une période
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/FiltreCategorie'
+        - $ref: '#/components/parameters/FiltreAgence'
+        - $ref: '#/components/parameters/FiltreCanal'
+      responses:
+        '200':
+          description: Indicateurs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Indicateurs' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/notifications:
+    get:
+      tags: [Notifications]
+      operationId: listerNotifications
+      summary: Mes notifications in-app
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/NonLues'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Notifications, les plus récentes d'abord
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageNotifications' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /banque/notifications/{id}/lecture:
+    post:
+      tags: [Notifications]
+      operationId: marquerNotificationLue
+      summary: Marquer une notification comme lue
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Notification lue
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/notifications/lecture:
+    post:
+      tags: [Notifications]
+      operationId: marquerToutesNotificationsLues
+      summary: Tout marquer comme lu
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '204':
+          description: Notifications lues
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  # ===========================================================================
+  #  Banque : paramétrage (§6.7)
+  # ===========================================================================
+  /banque/parametres:
+    get:
+      tags: [Paramétrage]
+      operationId: lireParametresBanque
+      summary: Paramètres, plan et consommation de la banque
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200': { $ref: '#/components/responses/Parametres' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+    patch:
+      tags: [Paramétrage]
+      operationId: modifierApparence
+      summary: Couleurs du portail et e-mail de contact
+      description: Préfixe, fuseau, seuil d'alerte, délai de clôture et option SMS relèvent du Super Admin.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationApparence' }
+      responses:
+        '200': { $ref: '#/components/responses/Parametres' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/parametres/logo:
+    put:
+      tags: [Paramétrage]
+      operationId: televerserLogo
+      summary: Logo du portail (PNG, SVG ou WebP, 1 Mo au plus)
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [logo]
+              properties:
+                logo: { type: string, format: binary }
+      responses:
+        '200': { $ref: '#/components/responses/Parametres' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+
+  /banque/categories:
+    get:
+      tags: [Paramétrage]
+      operationId: listerCategories
+      summary: Catégories de réclamation
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Catégories, dans l'ordre d'affichage
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Categorie' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+    post:
+      tags: [Paramétrage]
+      operationId: creerCategorie
+      summary: Créer une catégorie (priorité par défaut, délai cible)
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcritureCategorie' }
+      responses:
+        '201':
+          description: Catégorie créée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categorie' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/categories/{id}:
+    patch:
+      tags: [Paramétrage]
+      operationId: modifierCategorie
+      summary: Modifier une catégorie
+      description: Un nouveau délai cible ne touche pas les tickets en cours (il est copié à la création).
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationCategorie' }
+      responses:
+        '200':
+          description: Catégorie modifiée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categorie' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/agences:
+    get:
+      tags: [Paramétrage]
+      operationId: listerAgences
+      summary: Agences
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Agences
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Agence' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+    post:
+      tags: [Paramétrage]
+      operationId: creerAgence
+      summary: Créer une agence
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcritureAgence' }
+      responses:
+        '201':
+          description: Agence créée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agence' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/agences/{id}:
+    patch:
+      tags: [Paramétrage]
+      operationId: modifierAgence
+      summary: Modifier ou désactiver une agence
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationAgence' }
+      responses:
+        '200':
+          description: Agence modifiée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agence' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/points-depot:
+    get:
+      tags: [Paramétrage]
+      operationId: listerPointsDepot
+      summary: Points de dépôt (QR codes et liens)
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Points de dépôt
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PointDepot' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Paramétrage]
+      operationId: creerPointDepot
+      summary: Créer un point de dépôt (le code public est généré)
+      description: Un QR code est toujours rattaché à une agence (arbitrage 3).
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcriturePointDepot' }
+      responses:
+        '201':
+          description: Point créé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PointDepot' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/points-depot/{id}:
+    patch:
+      tags: [Paramétrage]
+      operationId: modifierPointDepot
+      summary: Renommer, rattacher ou désactiver un point (le code ne change jamais)
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationPointDepot' }
+      responses:
+        '200':
+          description: Point modifié
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PointDepot' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/points-depot/{id}/qr-code:
+    get:
+      tags: [Paramétrage]
+      operationId: telechargerQrCode
+      summary: QR code à imprimer
+      description: Encode `https://<slug>.<domaine>/d/<code>`.
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: format
+          in: query
+          schema: { type: string, enum: [png, svg], default: png }
+        - name: taille
+          in: query
+          description: Côté en pixels (PNG)
+          schema: { type: integer, minimum: 128, maximum: 2048, default: 512 }
+      responses:
+        '200':
+          description: Image du QR code
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/horaires:
+    get:
+      tags: [Paramétrage]
+      operationId: lireHoraires
+      summary: Horaires ouvrés de la semaine
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200': { $ref: '#/components/responses/Horaires' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+    put:
+      tags: [Paramétrage]
+      operationId: remplacerHoraires
+      summary: Remplacer les horaires de toute la semaine
+      description: Les plages qui se chevauchent sont fusionnées. S'applique aux calculs à venir.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plages]
+              properties:
+                plages:
+                  type: array
+                  maxItems: 28
+                  items: { $ref: '#/components/schemas/Plage' }
+      responses:
+        '200': { $ref: '#/components/responses/Horaires' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/jours-feries:
+    get:
+      tags: [Paramétrage]
+      operationId: listerJoursFeries
+      summary: Jours fériés
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: annee
+          in: query
+          description: Jours fériés qui tombent cette année (récurrents compris)
+          schema: { type: integer, minimum: 2020, maximum: 2100 }
+      responses:
+        '200':
+          description: Jours fériés
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/JourFerie' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+    post:
+      tags: [Paramétrage]
+      operationId: ajouterJourFerie
+      summary: "Ajouter un jour férié (fêtes à date mobile : chaque année)"
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcritureJourFerie' }
+      responses:
+        '201':
+          description: Jour férié ajouté
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourFerie' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/jours-feries/{id}:
+    delete:
+      tags: [Paramétrage]
+      operationId: supprimerJourFerie
+      summary: Retirer un jour férié
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Retiré
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  # ===========================================================================
+  #  Banque : personnel
+  # ===========================================================================
+  /banque/utilisateurs:
+    get:
+      tags: [Personnel]
+      operationId: listerUtilisateurs
+      summary: Personnel de la banque
+      description: Le superviseur s'en sert pour choisir l'agent à assigner.
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/RoleBanque' }
+        - name: statut
+          in: query
+          schema: { $ref: '#/components/schemas/StatutUtilisateur' }
+        - $ref: '#/components/parameters/Recherche'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Personnel
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageUtilisateurs' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Personnel]
+      operationId: inviterUtilisateur
+      summary: Inviter un membre du personnel (e-mail d'invitation)
+      description: Le plafond d'agents du plan bloque l'invitation d'un agent ou d'un superviseur au-delà de la limite.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InvitationUtilisateur' }
+      responses:
+        '201':
+          description: Invitation envoyée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Utilisateur' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/utilisateurs/{id}:
+    get:
+      tags: [Personnel]
+      operationId: lireUtilisateur
+      summary: Un membre du personnel
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UnUtilisateur' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+    patch:
+      tags: [Personnel]
+      operationId: modifierUtilisateur
+      summary: Modifier nom, rôle ou équipe
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationUtilisateur' }
+      responses:
+        '200': { $ref: '#/components/responses/UnUtilisateur' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/utilisateurs/{id}/desactivation:
+    post:
+      tags: [Personnel]
+      operationId: desactiverUtilisateur
+      summary: Désactiver un compte (remplace la suppression)
+      description: Ses sessions sont révoquées. Ses tickets restent assignés jusqu'à réassignation par un superviseur.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UnUtilisateur' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/utilisateurs/{id}/reactivation:
+    post:
+      tags: [Personnel]
+      operationId: reactiverUtilisateur
+      summary: Réactiver un compte
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UnUtilisateur' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/utilisateurs/{id}/invitation:
+    post:
+      tags: [Personnel]
+      operationId: renvoyerInvitation
+      summary: Renvoyer l'invitation (l'ancien lien est annulé)
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '202':
+          description: Invitation renvoyée
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /banque/utilisateurs/{id}/reinitialisation-totp:
+    post:
+      tags: [Personnel]
+      operationId: reinitialiserTotp
+      summary: Réinitialiser la double authentification (téléphone perdu)
+      description: L'utilisateur réactivera le TOTP à sa prochaine connexion ; ses sessions sont révoquées.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UnUtilisateur' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  # ===========================================================================
+  #  Banque : journal d'audit (§6.8)
+  # ===========================================================================
+  /banque/journal-audit:
+    get:
+      tags: [Audit]
+      operationId: listerJournalBanque
+      summary: Journal d'audit de la banque
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/FiltreAction'
+        - name: acteurId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: entiteId
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Lignes, les plus récentes d'abord
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageAudit' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/journal-audit/verification:
+    get:
+      tags: [Audit]
+      operationId: verifierJournalBanque
+      summary: Vérifier l'intégrité de la chaîne de la banque
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200': { $ref: '#/components/responses/Verification' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  # ===========================================================================
+  #  Plateforme (Super Admin)
+  # ===========================================================================
+  /plateforme/banques:
+    get:
+      tags: [Plateforme]
+      operationId: listerBanques
+      summary: Banques clientes
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Recherche'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Banques
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageBanques' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Plateforme]
+      operationId: creerBanque
+      summary: Créer une banque et inviter son premier Admin Entreprise
+      description: Horaires par défaut lun–ven 08:00–17:00, modifiables ensuite par l'Admin Entreprise.
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreationBanque' }
+      responses:
+        '201': { $ref: '#/components/responses/UneBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /plateforme/banques/{id}:
+    get:
+      tags: [Plateforme]
+      operationId: lireBanque
+      summary: Une banque (paramètres et consommation)
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UneBanque' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+    patch:
+      tags: [Plateforme]
+      operationId: modifierBanque
+      summary: Modifier plan, fuseau, seuil d'alerte, délai de clôture, option SMS
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationBanque' }
+      responses:
+        '200': { $ref: '#/components/responses/UneBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /plateforme/banques/{id}/suspension:
+    post:
+      tags: [Plateforme]
+      operationId: suspendreBanque
+      summary: Suspendre une banque (portail et console fermés)
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [motif]
+              properties:
+                motif: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200': { $ref: '#/components/responses/UneBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /plateforme/banques/{id}/reactivation:
+    post:
+      tags: [Plateforme]
+      operationId: reactiverBanque
+      summary: Lever la suspension
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/UneBanque' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /plateforme/plans:
+    get:
+      tags: [Plateforme]
+      operationId: listerPlans
+      summary: Plans commerciaux
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Plan' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Plateforme]
+      operationId: creerPlan
+      summary: Créer un plan
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcriturePlan' }
+      responses:
+        '201':
+          description: Plan créé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /plateforme/plans/{id}:
+    patch:
+      tags: [Plateforme]
+      operationId: modifierPlan
+      summary: Modifier un plan
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationPlan' }
+      responses:
+        '200':
+          description: Plan modifié
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /plateforme/indicateurs:
+    get:
+      tags: [Plateforme]
+      operationId: lireIndicateursPlateforme
+      summary: Statistiques de toutes les banques (métadonnées seulement)
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - name: banqueId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Indicateurs par banque
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IndicateursPlateforme' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /plateforme/facturation-sms:
+    get:
+      tags: [Plateforme]
+      operationId: lireFacturationSms
+      summary: SMS et segments envoyés par banque sur un mois (refacturation)
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: mois
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', examples: ['2026-09'] }
+      responses:
+        '200':
+          description: Consommation SMS
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FacturationSms' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /plateforme/journal-audit:
+    get:
+      tags: [Plateforme]
+      operationId: listerJournalPlateforme
+      summary: Journal d'audit de toutes les banques et de la plateforme
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: banqueId
+          in: query
+          description: Absent = toutes les chaînes ; `plateforme` = la chaîne de la plateforme
+          schema: { type: string, maxLength: 36 }
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/FiltreAction'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Lignes, les plus récentes d'abord
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageAudit' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /plateforme/journal-audit/verification:
+    get:
+      tags: [Plateforme]
+      operationId: verifierJournalPlateforme
+      summary: Vérifier l'intégrité d'une chaîne d'audit
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: chaine
+          in: query
+          required: true
+          description: '`plateforme` ou `banque:<uuid>`'
+          schema: { type: string, maxLength: 48 }
+      responses:
+        '200': { $ref: '#/components/responses/Verification' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /plateforme/notifications:
+    get:
+      tags: [Plateforme]
+      operationId: listerNotificationsPlateforme
+      summary: Alertes urgentes et dépassements de plafond (métadonnées)
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/NonLues'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageNotifications' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /plateforme/notifications/{id}/lecture:
+    post:
+      tags: [Plateforme]
+      operationId: marquerNotificationPlateformeLue
+      summary: Marquer une alerte comme lue
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Lue
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /plateforme/administrateurs:
+    get:
+      tags: [Plateforme]
+      operationId: listerSuperAdmins
+      summary: Comptes Super Admin
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Super Admins
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Utilisateur' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Plateforme]
+      operationId: inviterSuperAdmin
+      summary: Inviter un Super Admin
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentitePersonne' }
+      responses:
+        '201': { $ref: '#/components/responses/UnUtilisateur' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+components:
+  securitySchemes:
+    jetonPersonnel:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Jeton d'accès du personnel (15 minutes), obtenu après mot de passe + code TOTP.
+    jetonClient:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Session client (30 minutes) obtenue avec le code OTP ; limitée à ce client et à sa banque.
+    cookieRafraichissement:
+      type: apiKey
+      in: cookie
+      name: rt
+      description: Refresh token (httpOnly, Secure, SameSite=Strict), remplacé à chaque usage.
+
+  # ---------------------------------------------------------------------------
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PieceId:
+      name: pieceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CodePoint:
+      name: code
+      in: path
+      required: true
+      description: Code public du point de dépôt, porté par le QR code ou le lien
+      schema: { type: string, pattern: '^[A-Z0-9]{6,16}$', examples: ['7K3QX9P2MA'] }
+    JetonSuivi:
+      name: jetonSuivi
+      in: path
+      required: true
+      description: Jeton du lien de suivi reçu au dépôt
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{16,64}$' }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Clé choisie par le navigateur (UUID conseillé) ; conservée 24 h
+      schema: { type: string, minLength: 8, maxLength: 100 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    ParPage:
+      name: parPage
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    Du:
+      name: du
+      in: query
+      description: Début de période (inclus), date de dépôt
+      schema: { type: string, format: date-time }
+    Au:
+      name: au
+      in: query
+      description: Fin de période (exclue), date de dépôt
+      schema: { type: string, format: date-time }
+    Recherche:
+      name: recherche
+      in: query
+      description: Numéro de ticket, nom, e-mail ou téléphone
+      schema: { type: string, minLength: 2, maxLength: 100 }
+    File:
+      name: file
+      in: query
+      description: File de traitement (§6.2)
+      schema:
+        type: string
+        enum: [toutes, recues, assignees, urgentes, en-retard, escaladees]
+        default: toutes
+    FiltreStatut:
+      name: statut
+      in: query
+      style: form
+      explode: true
+      schema:
+        type: array
+        items: { $ref: '#/components/schemas/StatutReclamation' }
+    FiltrePriorite:
+      name: priorite
+      in: query
+      schema: { $ref: '#/components/schemas/Priorite' }
+    FiltreCategorie:
+      name: categorieId
+      in: query
+      schema: { type: string, format: uuid }
+    FiltreAgence:
+      name: agenceId
+      in: query
+      schema: { type: string, format: uuid }
+    FiltreCanal:
+      name: canal
+      in: query
+      schema: { $ref: '#/components/schemas/CanalDepot' }
+    FiltreAgent:
+      name: agentId
+      in: query
+      schema: { type: string, format: uuid }
+    FiltreAction:
+      name: action
+      in: query
+      description: Préfixe d'action, ex. `reclamation.` ou `auth.connexion`
+      schema: { type: string, maxLength: 80 }
+    TriReclamations:
+      name: tri
+      in: query
+      schema:
+        type: string
+        enum: [-creeLe, creeLe, echeanceSlaLe, -echeanceSlaLe, -priorite]
+        default: -creeLe
+    NonLues:
+      name: nonLues
+      in: query
+      schema: { type: boolean, default: false }
+
+  # ---------------------------------------------------------------------------
+  responses:
+    Invalide:
+      description: Requête mal formée ou champ invalide (code VALIDATION, erreurs par champ)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    NonAuthentifie:
+      description: Jeton absent, expiré ou invalide ; identifiants ou code incorrects
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    Interdit:
+      description: Rôle insuffisant, ou banque suspendue
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    Introuvable:
+      description: Introuvable — y compris une ressource d'une autre banque, ou un ticket non assigné à l'agent
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    Conflit:
+      description: Action impossible dans l'état actuel (transition interdite, doublon, clé d'idempotence réutilisée)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    RegleMetier:
+      description: Donnée correcte en forme mais refusée par une règle métier
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    Verrouille:
+      description: Compte verrouillé temporairement après des échecs répétés
+      headers:
+        Retry-After:
+          description: Secondes avant de réessayer
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    TropDeRequetes:
+      description: Limite de débit atteinte
+      headers:
+        Retry-After:
+          description: Secondes avant de réessayer
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    FichierTropVolumineux:
+      description: Fichier au-delà de 5 Mo (1 Mo pour un logo)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    TypeNonSupporte:
+      description: Type de fichier refusé (JPEG, PNG, WebP ou PDF attendus)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Probleme' }
+    Fichier:
+      description: Contenu du fichier
+      headers:
+        Content-Disposition:
+          schema: { type: string, examples: ['attachment; filename="recu.pdf"'] }
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    Reclamation:
+      description: Réclamation à jour
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReclamationDetail' }
+    SessionOuverte:
+      description: Session ouverte ; cookie `rt` posé
+      headers:
+        Set-Cookie:
+          description: '`rt=<refresh token>; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth`'
+          schema: { type: string }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SessionPersonnel' }
+    Parametres:
+      description: Paramètres de la banque
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ParametresBanque' }
+    Horaires:
+      description: Horaires ouvrés
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Horaires' }
+    UnUtilisateur:
+      description: Compte du personnel
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Utilisateur' }
+    UneBanque:
+      description: Banque
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/BanquePlateforme' }
+    Verification:
+      description: Résultat de la vérification de la chaîne
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/VerificationChaine' }
+
+  # ---------------------------------------------------------------------------
+  schemas:
+    # ---- Énumérations (identiques au modèle de données) -----------------------
+    StatutReclamation:
+      type: string
+      enum: [OUVERTE, EN_COURS, EN_ATTENTE_CLIENT, RESOLUE, CLOTUREE]
+    Priorite:
+      type: string
+      enum: [NORMALE, URGENTE]
+    CanalDepot:
+      type: string
+      enum: [QR_CODE, LIEN_WEB]
+    RoleUtilisateur:
+      type: string
+      enum: [SUPER_ADMIN, ADMIN_ENTREPRISE, SUPERVISEUR, AGENT]
+    RoleBanque:
+      type: string
+      description: Rôles attribuables par l'Admin Entreprise
+      enum: [ADMIN_ENTREPRISE, SUPERVISEUR, AGENT]
+    StatutUtilisateur:
+      type: string
+      enum: [INVITE, ACTIF, DESACTIVE]
+    TypeEvenement:
+      type: string
+      enum: [CREATION, PRISE_EN_CHARGE, QUESTION_AU_CLIENT, REPONSE_DU_CLIENT, RESOLUTION, CONFIRMATION, CONTESTATION,
+        CLOTURE_AUTOMATIQUE, CLOTURE_FORCEE, ASSIGNATION, CHANGEMENT_PRIORITE, ESCALADE, ALERTE_SLA_PREVENTIVE,
+        DEPASSEMENT_SLA, MESSAGE, PIECE_JOINTE]
+    ModeCloture:
+      type: string
+      enum: [CONFIRMATION_CLIENT, AUTOMATIQUE, FORCEE]
+    MotifClotureForcee:
+      type: string
+      enum: [DOUBLON, HORS_PERIMETRE, ABUS, AUTRE]
+    TypeCommentaire:
+      type: string
+      enum: [NOTE_INTERNE, REPONSE_AU_CLIENT, MESSAGE_DU_CLIENT]
+    TypeActeur:
+      type: string
+      enum: [CLIENT, UTILISATEUR, SYSTEME]
+    CanalOtp:
+      type: string
+      enum: [EMAIL, SMS]
+    ActionStatut:
+      type: string
+      description: Actions de la machine d'états (étape 4)
+      enum: [PRENDRE_EN_CHARGE, QUESTIONNER_CLIENT, REPRENDRE_SUR_REPONSE, RESOUDRE, CONFIRMER, CONTESTER,
+        CLOTURER_AUTOMATIQUEMENT, CLOTURER_DE_FORCE]
+    OperationTicket:
+      type: string
+      description: Opérations sans changement de statut (étape 4)
+      enum: [CONSULTER, ASSIGNER, CHANGER_PRIORITE, ESCALADER, NOTE_INTERNE, REPONDRE_AU_CLIENT, MESSAGE_DU_CLIENT]
+    EtatChrono:
+      type: string
+      description: |
+        État du chrono SLA, calculé par l'API à la lecture (étape 6) :
+        DANS_LES_DELAIS, ALERTE (seuil d'alerte de la banque franchi), DEPASSE (échéance passée),
+        EN_PAUSE (en attente du client), ARRETE (réclamation résolue ou clôturée).
+      enum: [DANS_LES_DELAIS, ALERTE, DEPASSE, EN_PAUSE, ARRETE]
+    CodeErreur:
+      type: string
+      description: Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
+      enum:
+        # Requête et accès
+        - VALIDATION
+        - NON_AUTHENTIFIE
+        - JETON_INVALIDE
+        - INTERDIT
+        - INTROUVABLE
+        - TROP_DE_REQUETES
+        - CONFLIT_IDEMPOTENCE
+        # Authentification
+        - IDENTIFIANTS_INVALIDES
+        - COMPTE_VERROUILLE
+        - CODE_TOTP_INVALIDE
+        - MOT_DE_PASSE_TROP_FAIBLE
+        - CODE_OTP_INVALIDE
+        - CODE_OTP_EXPIRE
+        - TROP_DE_TENTATIVES
+        # Machine d'états (étape 4)
+        - TRANSITION_INTERDITE
+        - ACTEUR_NON_AUTORISE
+        - AUCUN_AGENT_ASSIGNE
+        - DELAI_DE_CONTESTATION_DEPASSE
+        - CLOTURE_AUTOMATIQUE_PREMATUREE
+        # Dépôt et messages
+        - BANQUE_SUSPENDUE
+        - POINT_DE_DEPOT_INACTIF
+        - CATEGORIE_INVALIDE
+        - CONTACT_REQUIS
+        - CONTACT_INVALIDE
+        - DESCRIPTION_REQUISE
+        - CONSENTEMENT_REQUIS
+        - ANTI_ROBOT_REFUSE
+        - MESSAGE_VIDE
+        - PRECISION_REQUISE
+        - AGENT_INVALIDE
+        # Fichiers
+        - FICHIER_TROP_VOLUMINEUX
+        - TYPE_DE_FICHIER_NON_SUPPORTE
+        - TROP_DE_FICHIERS
+        # Paramétrage et plateforme
+        - PLAFOND_AGENTS_ATTEINT
+        - EMAIL_DEJA_UTILISE
+        - NOM_DEJA_UTILISE
+        - CODE_DEJA_UTILISE
+        - PREFIXE_DEJA_UTILISE
+        - SLUG_DEJA_UTILISE
+        - QR_CODE_SANS_AGENCE
+        - SUPERVISEUR_INVALIDE
+
+    # ---- Communs -----------------------------------------------------------------
+    Probleme:
+      type: object
+      description: Erreur au format RFC 9457
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri-reference, examples: ['/erreurs/transition-interdite'] }
+        title: { type: string, examples: ['Action impossible dans le statut actuel'] }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string, examples: ['RESOUDRE est impossible depuis le statut OUVERTE'] }
+        instance: { type: string, examples: ['/api/v1/banque/reclamations/0199.../resolution'] }
+        code: { $ref: '#/components/schemas/CodeErreur' }
+        erreurs:
+          type: array
+          description: Détail par champ (code VALIDATION)
+          items: { $ref: '#/components/schemas/ErreurChamp' }
+    ErreurChamp:
+      type: object
+      required: [champ, message]
+      properties:
+        champ: { type: string, examples: ['telephone'] }
+        message: { type: string, examples: ['Numéro de téléphone invalide'] }
+    Pagination:
+      type: object
+      required: [page, parPage, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        parPage: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+    ReferenceNommee:
+      type: object
+      required: [id, nom]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string }
+    Sante:
+      type: object
+      required: [statut, base, redis, version]
+      properties:
+        statut: { type: string, enum: [ok, degrade] }
+        base: { type: string, enum: [ok, indisponible] }
+        redis: { type: string, enum: [ok, indisponible] }
+        version: { type: string, examples: ['1.0.0'] }
+    Horodatage:
+      type: string
+      format: date-time
+      examples: ['2026-09-25T10:00:00Z']
+    HorodatageFacultatif:
+      type: [string, 'null']
+      format: date-time
+    Couleur:
+      type: [string, 'null']
+      pattern: '^#[0-9A-Fa-f]{6}$'
+      examples: ['#0B5FFF']
+    PieceJointe:
+      type: object
+      required: [id, nomFichier, typeMime, tailleOctets, creeLe]
+      properties:
+        id: { type: string, format: uuid }
+        nomFichier: { type: string, examples: ['releve.pdf'] }
+        typeMime: { type: string, examples: ['application/pdf'] }
+        tailleOctets: { type: integer, minimum: 1 }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+    Fichiers:
+      type: array
+      description: 5 fichiers au plus, 5 Mo chacun, JPEG, PNG, WebP ou PDF
+      maxItems: 5
+      items: { type: string, format: binary }
+
+    # ---- Public : dépôt et suivi -----------------------------------------------------
+    BanquePublique:
+      type: object
+      required: [nom, slug, logoUrl, couleurPrimaire, couleurSecondaire]
+      properties:
+        nom: { type: string, examples: ['Banque Alpha'] }
+        slug: { type: string, examples: ['alpha'] }
+        logoUrl: { type: [string, 'null'], format: uri-reference }
+        couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
+        couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
+    FormulaireDepot:
+      type: object
+      required: [banque, canal, agence, agences, categories, politiqueDonnees, fichiers]
+      properties:
+        banque: { $ref: '#/components/schemas/BanquePublique' }
+        canal: { $ref: '#/components/schemas/CanalDepot' }
+        agence:
+          description: Agence du QR code ; vide pour un lien web
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        agences:
+          type: array
+          description: Agences proposées au client quand le point n'en a pas (choix facultatif)
+          items: { $ref: '#/components/schemas/ReferenceNommee' }
+        categories:
+          type: array
+          items:
+            type: object
+            required: [id, nom, description]
+            properties:
+              id: { type: string, format: uuid }
+              nom: { type: string, examples: ['Carte bancaire'] }
+              description: { type: [string, 'null'] }
+        politiqueDonnees:
+          type: object
+          required: [version, url]
+          properties:
+            version: { type: string, examples: ['2026-09'] }
+            url: { type: string, format: uri-reference }
+        fichiers:
+          type: object
+          required: [maxFichiers, maxOctets, types]
+          properties:
+            maxFichiers: { type: integer, const: 5 }
+            maxOctets: { type: integer, examples: [5242880] }
+            types:
+              type: array
+              items: { type: string }
+              examples: [['image/jpeg', 'image/png', 'image/webp', 'application/pdf']]
+    DepotReclamation:
+      type: object
+      description: Un e-mail ou un téléphone au moins (arbitrage 1)
+      required: [categorieId, description, nom, consentement, versionPolitique]
+      anyOf:
+        - required: [email]
+        - required: [telephone]
+      properties:
+        categorieId: { type: string, format: uuid }
+        agenceId: { type: string, format: uuid, description: "Seulement si le point de dépôt n'a pas d'agence" }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        nom: { type: string, minLength: 2, maxLength: 160, examples: ['Yao Kouassi'] }
+        email: { type: string, format: email, maxLength: 254 }
+        telephone: { type: string, maxLength: 25, description: "Format libre, normalisé en E.164 (+225 par défaut)", examples: ['07 08 09 10 11'] }
+        consentement: { type: boolean, const: true, description: "Acceptation de la politique de données (ARTCI)" }
+        versionPolitique: { type: string, maxLength: 20, examples: ['2026-09'] }
+        jetonAntiRobot: { type: string, maxLength: 4096, description: "Jeton du mécanisme anti-robot (à choisir, point ouvert)" }
+        fichiers: { $ref: '#/components/schemas/Fichiers' }
+    AccuseDepot:
+      type: object
+      required: [numero, lienSuivi, jetonSuivi]
+      properties:
+        numero: { type: string, pattern: '^[A-Z0-9]{2,10}-[0-9]{4}-[0-9]{6}$', examples: ['ALP-2026-000042'] }
+        lienSuivi: { type: string, format: uri, examples: ['https://alpha.reclamations.example/suivi/Qm9uam91ckJhbnF1ZUFscGhh'] }
+        jetonSuivi: { type: string }
+    EtapeSuivi:
+      type: object
+      required: [type, statut, date]
+      properties:
+        type: { $ref: '#/components/schemas/TypeEvenement' }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        date: { $ref: '#/components/schemas/Horodatage' }
+    SuiviPublic:
+      type: object
+      description: Chronologie seule — ni description, ni messages, ni coordonnées
+      required: [numero, statut, categorie, creeLe, banque, etapes]
+      properties:
+        numero: { type: string, examples: ['ALP-2026-000042'] }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        categorie: { type: string, examples: ['Carte bancaire'] }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        banque: { $ref: '#/components/schemas/BanquePublique' }
+        etapes:
+          type: array
+          items: { $ref: '#/components/schemas/EtapeSuivi' }
+    DemandeOtp:
+      type: object
+      properties:
+        canal:
+          $ref: '#/components/schemas/CanalOtp'
+          description: Par défaut le SMS si le client a un téléphone, sinon l'e-mail
+    OtpEnvoye:
+      type: object
+      required: [canal, destinationMasquee, expireDans]
+      properties:
+        canal: { $ref: '#/components/schemas/CanalOtp' }
+        destinationMasquee: { type: string, examples: ['+225 07 •• •• •• 11', 'y••••@exemple.ci'] }
+        expireDans: { type: integer, description: "Secondes", examples: [600] }
+    VerificationOtp:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, pattern: '^[0-9]{6}$' }
+    SessionClient:
+      type: object
+      required: [jetonClient, expireDans]
+      properties:
+        jetonClient: { type: string }
+        expireDans: { type: integer, examples: [1800] }
+
+    # ---- Espace client ------------------------------------------------------------------
+    ReclamationClientResume:
+      type: object
+      required: [id, numero, statut, categorie, creeLe]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        categorie: { type: string }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+    MessageVisible:
+      type: object
+      description: Réponse de la banque ou message du client (jamais une note interne)
+      required: [id, type, contenu, auteur, creeLe, piecesJointes]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [REPONSE_AU_CLIENT, MESSAGE_DU_CLIENT] }
+        contenu: { type: string }
+        auteur: { type: string, enum: [BANQUE, CLIENT] }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        piecesJointes:
+          type: array
+          items: { $ref: '#/components/schemas/PieceJointe' }
+    ReclamationClient:
+      type: object
+      required: [id, numero, statut, categorie, description, creeLe, clotureAutoPrevueLe, messages, piecesJointes, etapes, actionsPossibles,
+        operationsPossibles]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        categorie: { type: string }
+        description: { type: string }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        clotureAutoPrevueLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Fin du délai pour confirmer ou contester
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/MessageVisible' }
+        piecesJointes:
+          type: array
+          description: Fichiers du dépôt
+          items: { $ref: '#/components/schemas/PieceJointe' }
+        etapes:
+          type: array
+          items: { $ref: '#/components/schemas/EtapeSuivi' }
+        actionsPossibles:
+          type: array
+          description: Boutons à afficher (ex. CONFIRMER, CONTESTER)
+          items: { $ref: '#/components/schemas/ActionStatut' }
+        operationsPossibles:
+          type: array
+          description: "Opérations permises au client : CONSULTER, et MESSAGE_DU_CLIENT tant que la réclamation n'est pas résolue"
+          items: { $ref: '#/components/schemas/OperationTicket' }
+    NouveauMessage:
+      type: object
+      required: [contenu]
+      properties:
+        contenu: { type: string, minLength: 1, maxLength: 5000 }
+        fichiers: { $ref: '#/components/schemas/Fichiers' }
+    Contestation:
+      type: object
+      required: [motif]
+      properties:
+        motif: { type: string, minLength: 1, maxLength: 5000 }
+
+    # ---- Authentification -----------------------------------------------------------
+    MotDePasse:
+      type: string
+      minLength: 12
+      maxLength: 128
+      description: 12 caractères au moins ; refusé s'il figure dans une liste de mots de passe courants
+    Connexion:
+      type: object
+      required: [email, motDePasse]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        motDePasse: { type: string, maxLength: 128 }
+    EtapeTotp:
+      type: object
+      required: [etape, jetonIntermediaire, expireDans]
+      properties:
+        etape:
+          type: string
+          enum: [TOTP_REQUIS, ENROLEMENT_TOTP_REQUIS]
+          description: ENROLEMENT_TOTP_REQUIS après une réinitialisation du TOTP par l'Admin Entreprise
+        jetonIntermediaire: { type: string, description: "Valable 5 minutes, pour la seconde étape seulement" }
+        expireDans: { type: integer, examples: [300] }
+        enrolement:
+          $ref: '#/components/schemas/EnrolementTotp'
+          description: Présent quand etape = ENROLEMENT_TOTP_REQUIS
+    CodeTotp:
+      type: object
+      required: [jetonIntermediaire, code]
+      properties:
+        jetonIntermediaire: { type: string }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+    DefinitionMotDePasse:
+      type: object
+      required: [jeton, motDePasse]
+      properties:
+        jeton: { type: string, description: "Jeton reçu par e-mail (invitation ou réinitialisation)" }
+        motDePasse: { $ref: '#/components/schemas/MotDePasse' }
+    EnrolementTotp:
+      type: object
+      required: [jetonIntermediaire, otpauthUrl, secret, qrCodeDataUrl]
+      properties:
+        jetonIntermediaire: { type: string }
+        otpauthUrl: { type: string, examples: ['otpauth://totp/Reclamations:agent@alpha.ci?secret=…&issuer=Reclamations'] }
+        secret: { type: string, description: "Secret en base32, pour une saisie manuelle" }
+        qrCodeDataUrl: { type: string, description: 'Image PNG en data: URL' }
+    Moi:
+      type: object
+      required: [id, email, nom, prenom, role, banque]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        nom: { type: string }
+        prenom: { type: string }
+        role: { $ref: '#/components/schemas/RoleUtilisateur' }
+        banque:
+          description: Vide pour un Super Admin
+          oneOf:
+            - type: object
+              required: [id, nom, slug, fuseauHoraire]
+              properties:
+                id: { type: string, format: uuid }
+                nom: { type: string }
+                slug: { type: string }
+                fuseauHoraire: { type: string, examples: ['Africa/Abidjan'] }
+            - type: 'null'
+    SessionPersonnel:
+      type: object
+      required: [jetonAcces, expireDans, utilisateur]
+      properties:
+        jetonAcces: { type: string }
+        expireDans: { type: integer, examples: [900] }
+        utilisateur: { $ref: '#/components/schemas/Moi' }
+
+    # ---- Banque : réclamations --------------------------------------------------------
+    ReclamationResume:
+      type: object
+      required: [id, numero, statut, priorite, canal, categorie, agence, agent, client, creeLe, echeanceSlaLe, enRetard, escaladee, sla]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string, examples: ['ALP-2026-000042'] }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        priorite: { $ref: '#/components/schemas/Priorite' }
+        canal: { $ref: '#/components/schemas/CanalDepot' }
+        categorie: { $ref: '#/components/schemas/ReferenceNommee' }
+        agence:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        client:
+          type: object
+          required: [nom]
+          properties:
+            nom: { type: string }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        echeanceSlaLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Vide pendant la pause « En attente client » et après la résolution
+        enRetard: { type: boolean }
+        escaladee: { type: boolean }
+        sla: { $ref: '#/components/schemas/SlaResume' }
+    SlaResume:
+      type: object
+      description: Chrono d'une réclamation dans les files, de quoi dessiner sa jauge sans recalculer le temps ouvré
+      required: [etat, delaiCibleMinutes, minutesRestantes]
+      properties:
+        etat: { $ref: '#/components/schemas/EtatChrono' }
+        delaiCibleMinutes: { type: integer, minimum: 0, description: "Minutes ouvrées" }
+        minutesRestantes:
+          type: [integer, 'null']
+          description: "Minutes ouvrées avant l'échéance, négatives après ; figées pendant la pause ; vides une fois le chrono arrêté"
+    PageReclamations:
+      type: object
+      required: [donnees, pagination, compteurs]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/ReclamationResume' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        compteurs:
+          type: object
+          description: "Réclamations non clôturées de chaque file, pour l'utilisateur connecté et sans les autres filtres : les pastilles des onglets"
+          required: [recues, assignees, urgentes, enRetard, escaladees]
+          properties:
+            recues: { type: integer, minimum: 0, description: "Non assignées (0 pour un agent)" }
+            assignees: { type: integer, minimum: 0, description: "Assignées à l'utilisateur connecté" }
+            urgentes: { type: integer, minimum: 0 }
+            enRetard: { type: integer, minimum: 0 }
+            escaladees: { type: integer, minimum: 0 }
+    EtatSla:
+      type: object
+      required: [etat, delaiCibleMinutes, echeanceLe, alertePreventiveLe, enPauseDepuis, minutesRestantes, enRetard, respecte]
+      properties:
+        etat: { $ref: '#/components/schemas/EtatChrono' }
+        delaiCibleMinutes: { type: integer, description: "Minutes ouvrées, copiées de la catégorie au dépôt" }
+        echeanceLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        alertePreventiveLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        enPauseDepuis: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        minutesRestantes:
+          type: [integer, 'null']
+          description: "Minutes ouvrées avant l'échéance : calculées à la lecture quand le chrono tourne (négatives après l'échéance), figées pendant la pause et à la résolution"
+        enRetard: { type: boolean }
+        respecte: { type: [boolean, 'null'], description: "Verdict à la résolution" }
+    Jalons:
+      type: object
+      required: [prisEnChargeLe, premiereReponseLe, resolueLe, clotureLe, clotureAutoPrevueLe, escaladeeLe]
+      properties:
+        prisEnChargeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        premiereReponseLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        resolueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        clotureLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        clotureAutoPrevueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        escaladeeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+    InfosCloture:
+      type: object
+      required: [mode, motif, precision, par]
+      properties:
+        mode: { $ref: '#/components/schemas/ModeCloture' }
+        motif:
+          oneOf:
+            - $ref: '#/components/schemas/MotifClotureForcee'
+            - type: 'null'
+        precision: { type: [string, 'null'] }
+        par:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+    ActeurVisible:
+      type: object
+      required: [type, nom]
+      properties:
+        type: { $ref: '#/components/schemas/TypeActeur' }
+        nom: { type: [string, 'null'], description: "Nom du membre du personnel ; vide pour le client et le système" }
+    Message:
+      type: object
+      required: [id, type, contenu, auteur, creeLe, piecesJointes]
+      properties:
+        id: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/TypeCommentaire' }
+        contenu: { type: string }
+        auteur: { $ref: '#/components/schemas/ActeurVisible' }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        piecesJointes:
+          type: array
+          items: { $ref: '#/components/schemas/PieceJointe' }
+    Evenement:
+      type: object
+      required: [type, statutAvant, statutApres, acteur, visibleClient, date]
+      properties:
+        type: { $ref: '#/components/schemas/TypeEvenement' }
+        statutAvant:
+          oneOf:
+            - $ref: '#/components/schemas/StatutReclamation'
+            - type: 'null'
+        statutApres:
+          oneOf:
+            - $ref: '#/components/schemas/StatutReclamation'
+            - type: 'null'
+        acteur: { $ref: '#/components/schemas/ActeurVisible' }
+        visibleClient: { type: boolean }
+        date: { $ref: '#/components/schemas/Horodatage' }
+    ReclamationDetail:
+      type: object
+      required: [id, numero, statut, priorite, canal, description, categorie, agence, pointDepot, agent, escaladeeVers, client,
+        creeLe, sla, jalons, cloture, nbReouvertures, messages, piecesJointes, chronologie, actionsPossibles, operationsPossibles]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        priorite: { $ref: '#/components/schemas/Priorite' }
+        canal: { $ref: '#/components/schemas/CanalDepot' }
+        description: { type: string }
+        categorie: { $ref: '#/components/schemas/ReferenceNommee' }
+        agence:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        pointDepot:
+          type: object
+          required: [id, libelle]
+          properties:
+            id: { type: string, format: uuid }
+            libelle: { type: string }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        escaladeeVers:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        client:
+          type: object
+          required: [id, nom, email, telephone]
+          properties:
+            id: { type: string, format: uuid }
+            nom: { type: string }
+            email: { type: [string, 'null'] }
+            telephone: { type: [string, 'null'] }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        sla: { $ref: '#/components/schemas/EtatSla' }
+        jalons: { $ref: '#/components/schemas/Jalons' }
+        cloture:
+          oneOf:
+            - $ref: '#/components/schemas/InfosCloture'
+            - type: 'null'
+        nbReouvertures: { type: integer, minimum: 0 }
+        messages:
+          type: array
+          description: Notes internes comprises
+          items: { $ref: '#/components/schemas/Message' }
+        piecesJointes:
+          type: array
+          description: Fichiers du dépôt
+          items: { $ref: '#/components/schemas/PieceJointe' }
+        chronologie:
+          type: array
+          items: { $ref: '#/components/schemas/Evenement' }
+        actionsPossibles:
+          type: array
+          description: Transitions permises à l'utilisateur connecté
+          items: { $ref: '#/components/schemas/ActionStatut' }
+        operationsPossibles:
+          type: array
+          description: Opérations permises à l'utilisateur connecté
+          items: { $ref: '#/components/schemas/OperationTicket' }
+    ReponseAuClient:
+      type: object
+      required: [contenu]
+      properties:
+        contenu: { type: string, minLength: 1, maxLength: 5000 }
+        attendreReponse:
+          type: boolean
+          default: false
+          description: Passe le ticket « En attente client » (question) et suspend le chrono SLA
+        fichiers: { $ref: '#/components/schemas/Fichiers' }
+
+    # ---- Tableau de bord ----------------------------------------------------------------
+    Volume:
+      type: object
+      required: [cle, libelle, total]
+      properties:
+        cle: { type: string }
+        libelle: { type: string }
+        total: { type: integer, minimum: 0 }
+    Indicateurs:
+      type: object
+      description: Définitions du §6.6 ; délais en minutes ouvrées
+      required: [du, au, total, parStatut, parCategorie, parCanal, parAgence, delaiPremiereReponseMoyenMinutes,
+        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact]
+      properties:
+        du: { $ref: '#/components/schemas/Horodatage' }
+        au: { $ref: '#/components/schemas/Horodatage' }
+        total: { type: integer, minimum: 0 }
+        parStatut:
+          type: array
+          items: { $ref: '#/components/schemas/Volume' }
+        parCategorie:
+          type: array
+          items: { $ref: '#/components/schemas/Volume' }
+        parCanal:
+          type: array
+          items: { $ref: '#/components/schemas/Volume' }
+        parAgence:
+          type: array
+          items: { $ref: '#/components/schemas/Volume' }
+        delaiPremiereReponseMoyenMinutes: { type: [number, 'null'] }
+        delaiResolutionMoyenMinutes: { type: [number, 'null'] }
+        tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Part des réclamations résolues avant leur échéance" }
+        tauxResolutionPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Sans attente client, sans escalade, sans réouverture" }
+
+    # ---- Notifications in-app --------------------------------------------------------------
+    NotificationInApp:
+      type: object
+      required: [id, modele, sujet, contenu, reclamationId, creeLe, lueLe]
+      properties:
+        id: { type: string, format: uuid }
+        modele: { type: string, examples: ['sla.alerte_preventive'] }
+        sujet: { type: [string, 'null'] }
+        contenu: { type: string }
+        reclamationId: { type: [string, 'null'], format: uuid }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        lueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+    PageNotifications:
+      type: object
+      required: [donnees, pagination, nonLues]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationInApp' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        nonLues: { type: integer, minimum: 0 }
+
+    # ---- Paramétrage ----------------------------------------------------------------------
+    ParametresBanque:
+      type: object
+      required: [nom, slug, prefixeTickets, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
+        smsChaqueChangementStatut, couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
+      properties:
+        nom: { type: string }
+        slug: { type: string }
+        prefixeTickets: { type: string }
+        fuseauHoraire: { type: string }
+        seuilAlerteSlaPourcent: { type: integer, minimum: 1, maximum: 99 }
+        delaiClotureAutoJours: { type: integer, minimum: 1, maximum: 60 }
+        smsChaqueChangementStatut: { type: boolean }
+        couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
+        couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
+        logoUrl: { type: [string, 'null'], format: uri-reference }
+        emailContact: { type: [string, 'null'], format: email }
+        plan:
+          type: object
+          required: [nom, plafondAgents, plafondTicketsMois]
+          properties:
+            nom: { type: string }
+            plafondAgents: { type: [integer, 'null'], description: "Vide = illimité" }
+            plafondTicketsMois: { type: [integer, 'null'], description: "Vide = illimité" }
+        consommation:
+          type: object
+          required: [agents, ticketsCeMois]
+          properties:
+            agents: { type: integer, description: "Agents et superviseurs non désactivés" }
+            ticketsCeMois: { type: integer }
+    ModificationApparence:
+      type: object
+      minProperties: 1
+      properties:
+        couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
+        couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
+        emailContact: { type: [string, 'null'], format: email, maxLength: 254 }
+    Categorie:
+      type: object
+      required: [id, nom, description, prioriteParDefaut, delaiCibleMinutes, ordre, active]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string }
+        description: { type: [string, 'null'] }
+        prioriteParDefaut: { $ref: '#/components/schemas/Priorite' }
+        delaiCibleMinutes: { type: integer, minimum: 1, description: "Minutes ouvrées" }
+        ordre: { type: integer }
+        active: { type: boolean }
+    EcritureCategorie:
+      type: object
+      required: [nom, delaiCibleMinutes]
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 1000 }
+        prioriteParDefaut: { $ref: '#/components/schemas/Priorite' }
+        delaiCibleMinutes: { type: integer, minimum: 1, maximum: 525600 }
+        ordre: { type: integer, default: 0 }
+    ModificationCategorie:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 1000 }
+        prioriteParDefaut: { $ref: '#/components/schemas/Priorite' }
+        delaiCibleMinutes: { type: integer, minimum: 1, maximum: 525600 }
+        ordre: { type: integer }
+        active: { type: boolean }
+    Agence:
+      type: object
+      required: [id, code, nom, ville, adresse, active]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, examples: ['AG01'] }
+        nom: { type: string, examples: ['Plateau'] }
+        ville: { type: [string, 'null'] }
+        adresse: { type: [string, 'null'] }
+        active: { type: boolean }
+    EcritureAgence:
+      type: object
+      required: [code, nom]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 20 }
+        nom: { type: string, minLength: 2, maxLength: 160 }
+        ville: { type: [string, 'null'], maxLength: 120 }
+        adresse: { type: [string, 'null'], maxLength: 255 }
+    ModificationAgence:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 160 }
+        ville: { type: [string, 'null'], maxLength: 120 }
+        adresse: { type: [string, 'null'], maxLength: 255 }
+        active: { type: boolean }
+    PointDepot:
+      type: object
+      required: [id, code, canal, libelle, agence, actif, urlDepot]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, examples: ['7K3QX9P2MA'] }
+        canal: { $ref: '#/components/schemas/CanalDepot' }
+        libelle: { type: string }
+        agence:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        actif: { type: boolean }
+        urlDepot: { type: string, format: uri, description: "Adresse encodée dans le QR code ou à placer sur le site" }
+    EcriturePointDepot:
+      type: object
+      required: [canal, libelle]
+      properties:
+        canal: { $ref: '#/components/schemas/CanalDepot' }
+        libelle: { type: string, minLength: 2, maxLength: 160 }
+        agenceId: { type: [string, 'null'], format: uuid, description: "Obligatoire pour un QR code" }
+    ModificationPointDepot:
+      type: object
+      minProperties: 1
+      properties:
+        libelle: { type: string, minLength: 2, maxLength: 160 }
+        agenceId: { type: [string, 'null'], format: uuid }
+        actif: { type: boolean }
+    Plage:
+      type: object
+      required: [jourSemaine, debut, fin]
+      properties:
+        jourSemaine: { type: integer, minimum: 1, maximum: 7, description: "1 = lundi … 7 = dimanche" }
+        debut: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$', examples: ['08:00'] }
+        fin: { type: string, pattern: '^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$', examples: ['12:00'] }
+    Horaires:
+      type: object
+      required: [fuseauHoraire, plages]
+      properties:
+        fuseauHoraire: { type: string, examples: ['Africa/Abidjan'] }
+        plages:
+          type: array
+          items: { $ref: '#/components/schemas/Plage' }
+    JourFerie:
+      type: object
+      required: [id, date, libelle, recurrent]
+      properties:
+        id: { type: string, format: uuid }
+        date: { type: string, format: date, examples: ['2026-08-07'] }
+        libelle: { type: string, examples: ["Fête de l'Indépendance"] }
+        recurrent: { type: boolean, description: "Répété chaque année au même jour" }
+    EcritureJourFerie:
+      type: object
+      required: [date, libelle]
+      properties:
+        date: { type: string, format: date }
+        libelle: { type: string, minLength: 2, maxLength: 120 }
+        recurrent: { type: boolean, default: false }
+
+    # ---- Personnel -------------------------------------------------------------------------
+    Utilisateur:
+      type: object
+      required: [id, email, nom, prenom, telephone, role, statut, superviseur, totpActif, derniereConnexionLe, verrouilleJusquA]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        nom: { type: string }
+        prenom: { type: string }
+        telephone: { type: [string, 'null'] }
+        role: { $ref: '#/components/schemas/RoleUtilisateur' }
+        statut: { $ref: '#/components/schemas/StatutUtilisateur' }
+        superviseur:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        totpActif: { type: boolean }
+        derniereConnexionLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        verrouilleJusquA: { $ref: '#/components/schemas/HorodatageFacultatif' }
+    PageUtilisateurs:
+      type: object
+      required: [donnees, pagination]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/Utilisateur' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+    IdentitePersonne:
+      type: object
+      required: [email, nom, prenom]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        nom: { type: string, minLength: 1, maxLength: 120 }
+        prenom: { type: string, minLength: 1, maxLength: 120 }
+        telephone: { type: [string, 'null'], maxLength: 25 }
+    InvitationUtilisateur:
+      allOf:
+        - $ref: '#/components/schemas/IdentitePersonne'
+        - type: object
+          required: [role]
+          properties:
+            role: { $ref: '#/components/schemas/RoleBanque' }
+            superviseurId: { type: [string, 'null'], format: uuid, description: "Équipe d'un agent" }
+    ModificationUtilisateur:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 1, maxLength: 120 }
+        prenom: { type: string, minLength: 1, maxLength: 120 }
+        telephone: { type: [string, 'null'], maxLength: 25 }
+        role: { $ref: '#/components/schemas/RoleBanque' }
+        superviseurId: { type: [string, 'null'], format: uuid }
+
+    # ---- Audit -------------------------------------------------------------------------------
+    LigneAudit:
+      type: object
+      required: [id, chaine, rang, horodatage, acteur, action, entite, entiteId, donnees, ip]
+      properties:
+        id: { type: string, description: "Identifiant technique (entier)" }
+        chaine: { type: string, examples: ['banque:0199…', 'plateforme'] }
+        rang: { type: integer, minimum: 1 }
+        horodatage: { $ref: '#/components/schemas/Horodatage' }
+        acteur:
+          type: object
+          required: [type, id, libelle, role]
+          properties:
+            type: { $ref: '#/components/schemas/TypeActeur' }
+            id: { type: [string, 'null'], format: uuid }
+            libelle: { type: [string, 'null'], description: "Identité figée au moment de l'action (jamais le nom d'un client)" }
+            role: { type: [string, 'null'] }
+        action: { type: string, examples: ['reclamation.resolution'] }
+        entite: { type: [string, 'null'] }
+        entiteId: { type: [string, 'null'] }
+        donnees: { type: [object, 'null'], additionalProperties: true, description: "Identifiants et statuts seulement" }
+        ip: { type: [string, 'null'] }
+    PageAudit:
+      type: object
+      required: [donnees, pagination]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/LigneAudit' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+    VerificationChaine:
+      type: object
+      required: [chaine, valide, lignes, premiereRupture]
+      properties:
+        chaine: { type: string }
+        valide: { type: boolean }
+        lignes: { type: integer, minimum: 0 }
+        premiereRupture: { type: [integer, 'null'], description: "Rang de la première ligne altérée ou manquante" }
+
+    # ---- Plateforme ----------------------------------------------------------------------------
+    Plan:
+      type: object
+      required: [id, code, nom, description, plafondAgents, plafondTicketsMois, actif]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, examples: ['ESSENTIEL'] }
+        nom: { type: string }
+        description: { type: [string, 'null'] }
+        plafondAgents: { type: [integer, 'null'], minimum: 1, description: "Vide = illimité ; bloque les invitations" }
+        plafondTicketsMois: { type: [integer, 'null'], minimum: 1, description: "Vide = illimité ; jamais bloquant pour un dépôt" }
+        actif: { type: boolean }
+    EcriturePlan:
+      type: object
+      required: [code, nom]
+      properties:
+        code: { type: string, pattern: '^[A-Z0-9_]{2,40}$' }
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        description: { type: [string, 'null'] }
+        plafondAgents: { type: [integer, 'null'], minimum: 1 }
+        plafondTicketsMois: { type: [integer, 'null'], minimum: 1 }
+    ModificationPlan:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        description: { type: [string, 'null'] }
+        plafondAgents: { type: [integer, 'null'], minimum: 1 }
+        plafondTicketsMois: { type: [integer, 'null'], minimum: 1 }
+        actif: { type: boolean }
+    BanquePlateforme:
+      type: object
+      required: [id, nom, slug, prefixeTickets, plan, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
+        smsChaqueChangementStatut, suspendueLe, motifSuspension, creeLe, consommation]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string }
+        slug: { type: string }
+        prefixeTickets: { type: string }
+        plan: { $ref: '#/components/schemas/ReferenceNommee' }
+        fuseauHoraire: { type: string }
+        seuilAlerteSlaPourcent: { type: integer }
+        delaiClotureAutoJours: { type: integer }
+        smsChaqueChangementStatut: { type: boolean }
+        suspendueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        motifSuspension: { type: [string, 'null'] }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        consommation:
+          type: object
+          required: [agents, ticketsCeMois]
+          properties:
+            agents: { type: integer }
+            ticketsCeMois: { type: integer }
+    PageBanques:
+      type: object
+      required: [donnees, pagination]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/BanquePlateforme' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+    CreationBanque:
+      type: object
+      required: [nom, slug, prefixeTickets, planId, administrateur]
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 160 }
+        slug: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', description: "Adresse du portail" }
+        prefixeTickets: { type: string, pattern: '^[A-Z0-9]{2,10}$' }
+        planId: { type: string, format: uuid }
+        fuseauHoraire: { type: string, default: Africa/Abidjan }
+        administrateur: { $ref: '#/components/schemas/IdentitePersonne' }
+    ModificationBanque:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 160 }
+        planId: { type: string, format: uuid }
+        fuseauHoraire: { type: string }
+        seuilAlerteSlaPourcent: { type: integer, minimum: 1, maximum: 99 }
+        delaiClotureAutoJours: { type: integer, minimum: 1, maximum: 60 }
+        smsChaqueChangementStatut: { type: boolean }
+    IndicateursPlateforme:
+      type: object
+      required: [du, au, banques]
+      properties:
+        du: { $ref: '#/components/schemas/Horodatage' }
+        au: { $ref: '#/components/schemas/Horodatage' }
+        banques:
+          type: array
+          items:
+            type: object
+            required: [banque, total, parStatut, urgentes, tauxRespectSla, tauxResolutionPremierContact]
+            properties:
+              banque: { $ref: '#/components/schemas/ReferenceNommee' }
+              total: { type: integer }
+              parStatut:
+                type: array
+                items: { $ref: '#/components/schemas/Volume' }
+              urgentes: { type: integer }
+              tauxRespectSla: { type: [number, 'null'] }
+              tauxResolutionPremierContact: { type: [number, 'null'] }
+    FacturationSms:
+      type: object
+      required: [mois, banques]
+      properties:
+        mois: { type: string, examples: ['2026-09'] }
+        banques:
+          type: array
+          items:
+            type: object
+            required: [banque, sms, segments, echecs]
+            properties:
+              banque: { $ref: '#/components/schemas/ReferenceNommee' }
+              sms: { type: integer, description: "SMS envoyés" }
+              segments: { type: integer, description: "Segments facturés par la passerelle" }
+              echecs: { type: integer }

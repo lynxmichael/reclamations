@@ -1,0 +1,15 @@
+sequenceDiagram
+  participant N as Navigateur (agent de A)
+  participant API as API NestJS
+  participant X as Extension Prisma
+  participant PG as PostgreSQL
+  N->>API: GET /reclamations/:id (JWT)
+  API->>API: garde : rôle AGENT, banque A
+  API->>X: reclamation.findUnique(id)
+  X->>PG: BEGIN
+  X->>PG: set_config(role = acces_banque, tenant = A)
+  X->>PG: SELECT … WHERE id = :id
+  PG-->>X: RLS : lignes de A seulement
+  X->>PG: COMMIT (rôle et tenant effacés)
+  X-->>API: réclamation, ou null si elle est à B
+  API-->>N: 200, ou 404

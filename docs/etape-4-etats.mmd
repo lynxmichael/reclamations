@@ -1,0 +1,13 @@
+stateDiagram-v2
+  direction LR
+  [*] --> OUVERTE : dépôt (client)
+  OUVERTE --> EN_COURS : prise en charge (agent assigné, superviseur)
+  EN_COURS --> EN_ATTENTE_CLIENT : question au client · chrono en pause
+  EN_ATTENTE_CLIENT --> EN_COURS : réponse du client · chrono repris
+  EN_COURS --> RESOLUE : résolution (agent assigné, superviseur)
+  RESOLUE --> CLOTUREE : confirmation (client) ou 5 jours (système)
+  RESOLUE --> EN_COURS : contestation (client, avant 5 jours)
+  OUVERTE --> CLOTUREE : clôture forcée (superviseur)
+  EN_COURS --> CLOTUREE : clôture forcée
+  EN_ATTENTE_CLIENT --> CLOTUREE : clôture forcée
+  CLOTUREE --> [*]

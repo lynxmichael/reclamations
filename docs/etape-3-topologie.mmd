@@ -1,0 +1,27 @@
+flowchart LR
+  subgraph Internet
+    C["Client final<br/>QR code, lien de suivi"]
+    P["Personnel des banques<br/>back-office"]
+  end
+  subgraph VPS["VPS Contabo · Docker Compose"]
+    K["Caddy<br/>HTTPS Let's Encrypt"]
+    W["web<br/>React compilé"]
+    A["api<br/>NestJS"]
+    WK["worker<br/>NestJS + BullMQ"]
+    PG[("PostgreSQL 16<br/>RLS par banque")]
+    R[("Redis 8<br/>files BullMQ")]
+    S["sauvegarde<br/>pg_dump quotidien"]
+  end
+  C --> K
+  P --> K
+  K --> W
+  K --> A
+  A --> PG
+  A --> R
+  R --> WK
+  WK --> PG
+  WK --> M["SMTP transactionnel"]
+  WK --> SMS["Passerelle SMS Makor"]
+  A --> O[("Stockage S3<br/>pièces jointes")]
+  PG -. "pg_dump" .-> S
+  S --> O

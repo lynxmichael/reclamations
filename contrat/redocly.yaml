@@ -1,0 +1,13 @@
+# Règles de vérification du contrat (npx redocly lint)
+extends:
+  - recommended
+rules:
+  # Les exemples de serveurs utilisent un domaine réservé (.example) tant que le domaine n'est pas choisi
+  no-server-example.com: off
+  # Chaque opération déclare ses réponses d'erreur utiles, pas forcément toutes
+  operation-4xx-response: error
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-summary: error
+  tag-description: error
+  info-license-strict: off

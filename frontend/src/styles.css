@@ -1,0 +1,100 @@
+@import "tailwindcss";
+@import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
+
+/*
+ * Système visuel (étape 6, décision E3)
+ *
+ * - Une seule famille, Atkinson Hyperlegible Next : dessinée pour la lisibilité (chiffres et
+ *   lettres qu'on ne confond pas : 0/O, 1/l/I), utile pour un numéro de ticket ou un code OTP
+ *   lu sur un petit écran. Auto-hébergée (aucun appel à un service externe).
+ * - Le portail et le back-office prennent la couleur de la banque (--marque). Le texte posé
+ *   dessus (--sur-marque) est choisi automatiquement, blanc ou encre, pour rester lisible.
+ * - Les statuts, la priorité et le chrono SLA ont des couleurs fixes, identiques pour toutes
+ *   les banques, et sont toujours doublés d'un libellé et d'une icône (jamais la couleur seule).
+ */
+
+@theme {
+  --font-sans: "Atkinson Hyperlegible Next Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-encre: #17212b;
+  --color-encre-2: #465261;
+  --color-encre-3: #69737f;
+  --color-trait: #dde2e7;
+  --color-trait-fort: #c2c9d1;
+  --color-fond: #f1f3f5;
+  --color-surface: #ffffff;
+  --color-focus: #1d5fd6;
+
+  /* Console de la plateforme (Super Admin) : distincte de toute banque */
+  --color-console: #3b3a8a;
+  --color-console-doux: #ecebf7;
+
+  /* Statuts d'une réclamation */
+  --color-ouverte: #1d5fd6;
+  --color-ouverte-doux: #e7effc;
+  --color-en-cours: #5a3fc0;
+  --color-en-cours-doux: #efebfa;
+  --color-attente: #9a5a06;
+  --color-attente-doux: #fcf1df;
+  --color-resolue: #147a3b;
+  --color-resolue-doux: #e3f3e8;
+  --color-cloturee: #59636f;
+  --color-cloturee-doux: #edeff1;
+
+  /* Priorité et chrono SLA */
+  --color-urgent: #bf2530;
+  --color-urgent-doux: #fbe9ea;
+  --color-alerte: #b26b00;
+  --color-alerte-doux: #fdf0da;
+  --color-delai: #147a3b;
+  --color-pause: #6b7684;
+}
+
+/* Couleurs de la banque, fixées par styleMarque() sur le cadre de chaque écran */
+@theme inline {
+  --color-marque: var(--marque);
+  --color-sur-marque: var(--sur-marque);
+  --color-marque-texte: var(--marque-texte);
+  --color-marque-doux: color-mix(in oklab, var(--marque) 11%, white);
+  --color-marque-trait: color-mix(in oklab, var(--marque) 30%, white);
+  --color-marque-fonce: color-mix(in oklab, var(--marque) 78%, black);
+}
+
+:root {
+  --marque: #2f4858;
+  --sur-marque: #ffffff;
+  --marque-texte: #2f4858;
+  color: var(--color-encre);
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  background: #e4e8ec;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.chiffres {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Temps figé : hachures du chrono en pause */
+.hachures {
+  background-image: repeating-linear-gradient(135deg, currentColor 0 1.5px, transparent 1.5px 6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,47 @@
+import { normaliserCalendrier } from '../../domaine/temps-ouvre/calendrier.js';
+import type { ParametresSla } from '../../domaine/reclamation/sla.js';
+import type { ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+
+export interface ParametresBanque {
+  readonly banque: {
+    readonly id: string;
+    readonly nom: string;
+    readonly slug: string;
+    readonly prefixeTickets: string;
+    readonly fuseauHoraire: string;
+    readonly smsChaqueChangementStatut: boolean;
+    readonly suspendueLe: Date | null;
+    readonly plafondTicketsMois: number | null;
+  };
+  readonly sla: ParametresSla;
+}
+
+/** Paramètres de la banque courante (contexte banque : la RLS ne laisse voir que la sienne). */
+export async function chargerParametres(tx: ClientTransaction, tenantId: string): Promise<ParametresBanque> {
+  const [banque, plages, joursFeries] = await Promise.all([
+    tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: { select: { plafondTicketsMois: true } } } }),
+    tx.horaireOuvre.findMany({ select: { jourSemaine: true, debutMinute: true, finMinute: true } }),
+    tx.jourFerie.findMany({ select: { date: true, recurrent: true } }),
+  ]);
+  return {
+    banque: {
+      id: banque.id,
+      nom: banque.nom,
+      slug: banque.slug,
+      prefixeTickets: banque.prefixeTickets,
+      fuseauHoraire: banque.fuseauHoraire,
+      smsChaqueChangementStatut: banque.smsChaqueChangementStatut,
+      suspendueLe: banque.suspendueLe,
+      plafondTicketsMois: banque.plan.plafondTicketsMois,
+    },
+    sla: {
+      calendrier: normaliserCalendrier({
+        fuseauHoraire: banque.fuseauHoraire,
+        plages,
+        joursFeries: joursFeries.map((j) => ({ date: j.date.toISOString().slice(0, 10), recurrent: j.recurrent })),
+      }),
+      seuilAlertePourcent: banque.seuilAlerteSlaPourcent,
+      delaiClotureAutoJours: banque.delaiClotureAutoJours,
+    },
+  };
+}

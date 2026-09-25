@@ -1,0 +1,44 @@
+{
+  "name": "@reclamations/backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plateforme de gestion des réclamations — API NestJS (Makor Telecoms, Solution 1)",
+  "scripts": {
+    "prisma:format": "prisma format",
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "test": "vitest run",
+    "contrat:verifier": "redocly lint ../contrat/openapi.yaml --config ../contrat/redocly.yaml",
+    "contrat:types": "openapi-typescript ../contrat/openapi.yaml -o src/contrat/api.d.ts",
+    "contrat:doc": "redocly build-docs ../contrat/openapi.yaml --config ../contrat/redocly.yaml -o ../docs/api/index.html",
+    "verifier:integrite": "tsx scripts/verifier-integrite.ts",
+    "verifier:securite": "tsx scripts/verifier-securite.ts",
+    "verifier:cycle-de-vie": "tsx scripts/verifier-cycle-de-vie.ts",
+    "verifier": "npm run -s verifier:integrite && npm run -s verifier:securite && npm run -s verifier:cycle-de-vie",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.54.3",
+    "@types/luxon": "^3.7.5",
+    "@types/node": "^22.20.4",
+    "dotenv": "^18.0.3",
+    "openapi-typescript": "^7.13.0",
+    "prisma": "7.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.2",
+    "yaml": "^2.9.1"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "luxon": "^3.7.2",
+    "pg": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

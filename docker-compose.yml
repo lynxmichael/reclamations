@@ -1,0 +1,114 @@
+# Environnement de développement — Plateforme de gestion des réclamations
+#
+#   docker compose up -d                  démarre PostgreSQL 16 et Redis 8
+#   docker compose run --rm verification  contrat d'API, tests unitaires, migrations sur une base
+#                                         jetable et vérifications (intégrité, sécurité, cycle de vie)
+#   docker compose up -d swagger          documentation Swagger du contrat : http://localhost:8081
+#   docker compose run --rm maquettes     maquettes des écrans : tests, puis docs/maquettes/index.html
+#   docker compose down                   arrête (ajouter -v pour effacer les données)
+#
+# L'API et les workers s'ajouteront ici à l'étape 7, l'application frontend à l'étape 8. La production
+# (VPS Contabo) aura son propre fichier, docker-compose.prod.yml, livré avec l'application.
+
+name: reclamations
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      # Propriétaire des tables : sert aux migrations, jamais à l'application
+      POSTGRES_USER: ${POSTGRES_USER:-reclamations}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reclamations}
+      POSTGRES_DB: reclamations_dev
+      # Mot de passe du rôle de connexion de l'application (reclamations_app)
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-reclamations_app}
+      # Tri et comparaisons en français (é, è, ç…) grâce à ICU
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=icu --icu-locale=fr-FR --locale=C.UTF-8
+      TZ: UTC
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts exécutés une seule fois, à la création du volume : bases et rôles
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d reclamations_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Files d'attente BullMQ (envois, alertes SLA, clôture automatique) à partir de l'étape 4
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # noeviction : BullMQ exige que Redis ne supprime jamais une clé pour libérer de la mémoire
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Outil ponctuel (profil « outils ») : lancé seulement par `docker compose run --rm verification`.
+  # Vérifie le contrat d'API (étape 5), réinitialise la base jetable reclamations_verif, y applique
+  # les migrations, lance les tests unitaires, puis les vérifications sur PostgreSQL :
+  # intégrité (étape 2), sécurité (étape 3), cycle de vie et SLA (étape 4).
+  verification:
+    image: node:22-bookworm
+    profiles: ["outils"]
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-reclamations}:${POSTGRES_PASSWORD:-reclamations}@postgres:5432/reclamations_verif
+      APP_DATABASE_URL: postgresql://reclamations_app:${APP_DB_PASSWORD:-reclamations_app}@postgres:5432/reclamations_verif
+    volumes:
+      - ./backend:/app
+      - ./contrat:/contrat:ro
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "npm ci --no-audit --no-fund
+      && npm run contrat:verifier
+      && npx prisma migrate reset --force
+      && npm test
+      && npm run verifier"
+
+  # Maquettes des écrans (étape 6, profil « outils ») : types, tests contre le contrat et la machine
+  # d'états, puis reconstruction de docs/maquettes/index.html (page unique, lisible sans connexion).
+  maquettes:
+    image: node:22-bookworm
+    profiles: ["outils"]
+    working_dir: /depot/frontend
+    volumes:
+      - ./:/depot
+      - frontend_node_modules:/depot/frontend/node_modules
+    command: >
+      sh -c "npm ci --no-audit --no-fund
+      && npm run typecheck
+      && npm test
+      && npm run build:maquettes"
+
+  # Documentation Swagger du contrat d'API (profil « docs ») : docker compose up -d swagger
+  swagger:
+    image: swaggerapi/swagger-ui:v5.32.15
+    profiles: ["docs"]
+    environment:
+      SWAGGER_JSON: /contrat/openapi.yaml
+      DOC_EXPANSION: none
+      DEFAULT_MODELS_EXPAND_DEPTH: "0"
+    volumes:
+      - ./contrat:/contrat:ro
+    ports:
+      - "${SWAGGER_PORT:-8081}:8080"
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_node_modules:
+  frontend_node_modules:

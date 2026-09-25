@@ -1,0 +1,311 @@
+/**
+ * Réclamations de la Banque Alpha au vendredi 25/09/2026 15:10.
+ * Horaires : lun–ven 08:00–12:00 et 14:00–17:30. Les minutes restantes et les échéances sont
+ * calculées à la main avec ces horaires (même méthode que l'exemple vérifié de l'étape 4).
+ */
+import type { S } from '../../api/types';
+import { id, t } from './commun';
+import { ADJOUA, AYA, FATOU, IBRAHIM, MAMADOU, SERGE, agence, categorie, ref } from './parametrage';
+
+type Resume = S<'ReclamationResume'>;
+
+function resume(
+  n: number,
+  r: Omit<Resume, 'id' | 'numero' | 'enRetard' | 'escaladee' | 'echeanceSlaLe'> & { echeanceSlaLe?: string | null; escaladee?: boolean },
+): Resume {
+  return {
+    id: id('reclamation', n),
+    numero: `ALP-2026-${String(n).padStart(6, '0')}`,
+    ...r,
+    echeanceSlaLe: r.echeanceSlaLe ?? null,
+    enRetard: r.sla.etat === 'DEPASSE',
+    escaladee: r.escaladee ?? false,
+  };
+}
+
+export const FILE: Resume[] = [
+  resume(2452, {
+    statut: 'OUVERTE', priorite: 'URGENTE', canal: 'QR_CODE', categorie: categorie(5), agence: agence(1), agent: null,
+    client: { nom: 'Adama Sanogo' }, creeLe: t('25/09 14:32'), echeanceSlaLe: t('28/09 09:02'),
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 240, minutesRestantes: 202 },
+  }),
+  resume(2451, {
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(3), agence: null, agent: null,
+    client: { nom: 'Marie-Laure Yapi' }, creeLe: t('25/09 11:05'), echeanceSlaLe: t('28/09 11:35'),
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 480, minutesRestantes: 355 },
+  }),
+  resume(2450, {
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(2), agence: agence(2), agent: null,
+    client: { nom: 'Seydou Koné' }, creeLe: t('24/09 16:40'), echeanceSlaLe: t('30/09 09:50'),
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 1440, minutesRestantes: 1080 },
+  }),
+  resume(2449, {
+    statut: 'EN_COURS', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(1), agence: agence(3), agent: ref(MAMADOU),
+    client: { nom: 'Awa Bamba' }, creeLe: t('23/09 09:00'), echeanceSlaLe: t('25/09 10:00'), escaladee: true,
+    sla: { etat: 'DEPASSE', delaiCibleMinutes: 960, minutesRestantes: -190 },
+  }),
+  resume(2448, {
+    statut: 'EN_COURS', priorite: 'URGENTE', canal: 'QR_CODE', categorie: categorie(5), agence: agence(1), agent: ref(AYA),
+    client: { nom: 'Jean-Baptiste Kacou' }, creeLe: t('25/09 10:00'), echeanceSlaLe: t('25/09 16:00'),
+    sla: { etat: 'ALERTE', delaiCibleMinutes: 240, minutesRestantes: 50 },
+  }),
+  resume(2447, {
+    statut: 'EN_ATTENTE_CLIENT', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(4), agence: agence(1), agent: ref(ADJOUA),
+    client: { nom: 'Rokia Diallo' }, creeLe: t('22/09 10:30'),
+    sla: { etat: 'EN_PAUSE', delaiCibleMinutes: 2400, minutesRestantes: 1470 },
+  }),
+  resume(2446, {
+    statut: 'EN_COURS', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(6), agence: agence(2), agent: ref(IBRAHIM),
+    client: { nom: 'Christelle Amani' }, creeLe: t('21/09 15:00'), echeanceSlaLe: t('28/09 17:30'),
+    sla: { etat: 'ALERTE', delaiCibleMinutes: 2400, minutesRestantes: 590 },
+  }),
+  resume(2445, {
+    statut: 'RESOLUE', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(2), agence: null, agent: ref(MAMADOU),
+    client: { nom: 'Fabrice Ehui' }, creeLe: t('18/09 09:40'),
+    sla: { etat: 'ARRETE', delaiCibleMinutes: 1440, minutesRestantes: null },
+  }),
+  resume(2444, {
+    statut: 'EN_COURS', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(7), agence: agence(5), agent: ref(IBRAHIM),
+    client: { nom: 'Nadège Kouamé' }, creeLe: t('24/09 14:20'), echeanceSlaLe: '2026-10-06T14:20:00Z',
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 3600, minutesRestantes: 3100 },
+  }),
+  resume(2443, {
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(3), agence: null, agent: ref(ADJOUA),
+    client: { nom: 'Paul-Henri Assi' }, creeLe: t('25/09 09:30'), echeanceSlaLe: t('28/09 10:00'),
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 480, minutesRestantes: 260 },
+  }),
+  resume(2442, {
+    statut: 'EN_COURS', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(1), agence: agence(1), agent: ref(AYA),
+    client: { nom: 'Yao Kouassi' }, creeLe: t('24/09 09:12'), echeanceSlaLe: t('28/09 17:22'),
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 960, minutesRestantes: 582 },
+  }),
+  resume(2441, {
+    statut: 'EN_ATTENTE_CLIENT', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(1), agence: agence(4), agent: ref(AYA),
+    client: { nom: 'Sylvie Dro' }, creeLe: t('23/09 14:30'),
+    sla: { etat: 'EN_PAUSE', delaiCibleMinutes: 960, minutesRestantes: 480 },
+  }),
+  resume(2439, {
+    statut: 'CLOTUREE', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(4), agence: agence(1), agent: ref(ADJOUA),
+    client: { nom: 'Hervé Tanoh' }, creeLe: t('15/09 11:20'),
+    sla: { etat: 'ARRETE', delaiCibleMinutes: 2400, minutesRestantes: null },
+  }),
+  resume(2438, {
+    statut: 'EN_COURS', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(2), agence: null, agent: ref(AYA),
+    client: { nom: 'Salimata Touré' }, creeLe: t('21/09 10:00'), echeanceSlaLe: t('24/09 11:30'), escaladee: true,
+    sla: { etat: 'DEPASSE', delaiCibleMinutes: 1440, minutesRestantes: -550 },
+  }),
+];
+
+/** Compteurs des onglets, dérivés de la file (réclamations non clôturées). */
+export function compteurs(file: Resume[], moiId: string | null): S<'PageReclamations'>['compteurs'] {
+  const actives = file.filter((r) => r.statut !== 'CLOTUREE');
+  return {
+    recues: moiId === null ? actives.filter((r) => r.agent === null).length : 0,
+    assignees: actives.filter((r) => r.agent?.id === moiId).length,
+    urgentes: actives.filter((r) => r.priorite === 'URGENTE').length,
+    enRetard: actives.filter((r) => r.enRetard).length,
+    escaladees: actives.filter((r) => r.escaladee).length,
+  };
+}
+
+/** Vue du superviseur (Serge Kouadio) : toute la banque. */
+export const PAGE_SUPERVISEUR: S<'PageReclamations'> = {
+  donnees: FILE,
+  pagination: { page: 1, parPage: 25, total: FILE.length },
+  compteurs: { ...compteurs(FILE, null), assignees: 0 },
+};
+
+/** Vue de l'agent (Aya Konan) : seulement ses réclamations. */
+const fileAya = FILE.filter((r) => r.agent?.id === AYA.id);
+export const PAGE_AGENT: S<'PageReclamations'> = {
+  donnees: fileAya,
+  pagination: { page: 1, parPage: 25, total: fileAya.length },
+  compteurs: compteurs(fileAya, AYA.id),
+};
+
+/* ------------------------------------------------------------ Fiche ALP-2026-002442 */
+
+const client = { type: 'CLIENT' as const, nom: null };
+const aya = { type: 'UTILISATEUR' as const, nom: 'Aya Konan' };
+const serge = { type: 'UTILISATEUR' as const, nom: 'Serge Kouadio' };
+
+export const PHOTO_TICKET: S<'PieceJointe'> = {
+  id: id('piece', 1), nomFichier: 'ticket-distributeur.jpg', typeMime: 'image/jpeg', tailleOctets: 1_258_291, creeLe: t('24/09 18:02'),
+};
+
+export const DESCRIPTION_42 =
+  "Mercredi soir vers 19 h, j'ai voulu retirer 50 000 FCFA au distributeur de l'agence du Plateau. " +
+  "Le distributeur n'a pas donné les billets, mais mon compte a été débité. J'ai gardé le ticket.";
+
+const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPossibles'> = {
+  id: id('reclamation', 2442),
+  numero: 'ALP-2026-002442',
+  statut: 'EN_COURS',
+  priorite: 'NORMALE',
+  canal: 'QR_CODE',
+  description: DESCRIPTION_42,
+  categorie: categorie(1),
+  agence: agence(1),
+  pointDepot: { id: id('point', 1), libelle: "Hall d'accueil" },
+  agent: ref(AYA),
+  escaladeeVers: null,
+  client: { id: id('client', 1), nom: 'Yao Kouassi', email: 'yao.kouassi@exemple.ci', telephone: '+2250708091011' },
+  creeLe: t('24/09 09:12'),
+  sla: {
+    etat: 'DANS_LES_DELAIS',
+    delaiCibleMinutes: 960,
+    echeanceLe: t('28/09 17:22'),
+    alertePreventiveLe: t('28/09 11:22'),
+    enPauseDepuis: null,
+    minutesRestantes: 582,
+    enRetard: false,
+    respecte: null,
+  },
+  jalons: {
+    prisEnChargeLe: t('24/09 10:05'),
+    premiereReponseLe: t('24/09 10:20'),
+    resolueLe: null,
+    clotureLe: null,
+    clotureAutoPrevueLe: null,
+    escaladeeLe: null,
+  },
+  cloture: null,
+  nbReouvertures: 0,
+  messages: [
+    {
+      id: id('message', 1), type: 'REPONSE_AU_CLIENT', auteur: aya, creeLe: t('24/09 10:20'), piecesJointes: [],
+      contenu:
+        'Bonjour M. Kouassi, merci pour votre signalement. Pour retrouver l\'opération, pouvez-vous nous envoyer une photo du ticket du distributeur et nous confirmer l\'heure du retrait ?',
+    },
+    {
+      id: id('message', 2), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('24/09 18:02'), piecesJointes: [PHOTO_TICKET],
+      contenu: 'Bonsoir, voici le ticket. Le retrait a eu lieu mercredi 23 vers 19 h 10.',
+    },
+    {
+      id: id('message', 3), type: 'NOTE_INTERNE', auteur: aya, creeLe: t('25/09 08:30'), piecesJointes: [],
+      contenu: 'Journal du distributeur GAB-0412 demandé à la monétique. Opération du 23/09 à 19:11, 50 000 FCFA, anomalie de distribution d\'après le ticket.',
+    },
+    {
+      id: id('message', 4), type: 'NOTE_INTERNE', auteur: serge, creeLe: t('25/09 11:40'), piecesJointes: [],
+      contenu: 'La monétique confirme l\'anomalie. Tu peux lancer la régularisation et résoudre.',
+    },
+  ],
+  piecesJointes: [],
+  chronologie: [
+    { type: 'CREATION', statutAvant: null, statutApres: 'OUVERTE', acteur: client, visibleClient: true, date: t('24/09 09:12') },
+    { type: 'ASSIGNATION', statutAvant: null, statutApres: null, acteur: serge, visibleClient: false, date: t('24/09 09:40') },
+    { type: 'PRISE_EN_CHARGE', statutAvant: 'OUVERTE', statutApres: 'EN_COURS', acteur: aya, visibleClient: true, date: t('24/09 10:05') },
+    { type: 'QUESTION_AU_CLIENT', statutAvant: 'EN_COURS', statutApres: 'EN_ATTENTE_CLIENT', acteur: aya, visibleClient: true, date: t('24/09 10:20') },
+    { type: 'REPONSE_DU_CLIENT', statutAvant: 'EN_ATTENTE_CLIENT', statutApres: 'EN_COURS', acteur: client, visibleClient: true, date: t('24/09 18:02') },
+  ],
+};
+
+/**
+ * Les boutons dépendent de l'utilisateur connecté : l'API calcule actionsPossibles et
+ * operationsPossibles avec la machine d'états de l'étape 4 (vérifié par les tests).
+ */
+export const FICHE_42: Record<'AGENT' | 'SUPERVISEUR' | 'ADMIN_ENTREPRISE', S<'ReclamationDetail'>> = {
+  AGENT: {
+    ...ficheBase,
+    actionsPossibles: ['QUESTIONNER_CLIENT', 'RESOUDRE'],
+    operationsPossibles: ['CONSULTER', 'CHANGER_PRIORITE', 'ESCALADER', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT'],
+  },
+  SUPERVISEUR: {
+    ...ficheBase,
+    actionsPossibles: ['QUESTIONNER_CLIENT', 'RESOUDRE', 'CLOTURER_DE_FORCE'],
+    operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT'],
+  },
+  ADMIN_ENTREPRISE: {
+    ...ficheBase,
+    actionsPossibles: [],
+    operationsPossibles: ['CONSULTER'],
+  },
+};
+
+/** Agents proposés à l'assignation (listerUtilisateurs, rôle AGENT, statut ACTIF). */
+export const AGENTS_ASSIGNABLES = [AYA, MAMADOU, ADJOUA, IBRAHIM].map(ref);
+
+/* ------------------------------------------------------------ Notifications in-app */
+
+export const NOTIFICATIONS_AGENT: S<'PageNotifications'> = {
+  donnees: [
+    { id: id('notification', 4), modele: 'sla.alerte_preventive', sujet: 'Seuil d\'alerte atteint', contenu: 'ALP-2026-002448 : 75 % du délai consommé, échéance aujourd\'hui à 16:00.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 15:00'), lueLe: null },
+    { id: id('notification', 3), modele: 'agent.assignation', sujet: 'Nouvelle réclamation assignée', contenu: 'ALP-2026-002448 (Fraude suspectée) vous a été assignée par Serge Kouadio.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 10:04'), lueLe: null },
+    { id: id('notification', 2), modele: 'reclamation.urgente', sujet: 'Réclamation urgente', contenu: 'ALP-2026-002448, Fraude suspectée, déposée à l\'agence Plateau.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 10:00'), lueLe: t('25/09 10:06') },
+    { id: id('notification', 1), modele: 'agent.message_client', sujet: 'Message du client', contenu: 'Le client a répondu sur ALP-2026-002442.', reclamationId: id('reclamation', 2442), creeLe: t('24/09 18:02'), lueLe: t('25/09 08:01') },
+  ],
+  pagination: { page: 1, parPage: 20, total: 4 },
+  nonLues: 2,
+};
+
+/* ------------------------------------------------------------ Tableau de bord (§6.6) */
+
+export const INDICATEURS: S<'Indicateurs'> = {
+  du: '2026-09-01T00:00:00Z',
+  au: '2026-09-25T23:59:59Z',
+  total: 312,
+  parStatut: [
+    { cle: 'OUVERTE', libelle: 'Ouverte', total: 9 },
+    { cle: 'EN_COURS', libelle: 'En cours', total: 21 },
+    { cle: 'EN_ATTENTE_CLIENT', libelle: 'En attente client', total: 6 },
+    { cle: 'RESOLUE', libelle: 'Résolue', total: 14 },
+    { cle: 'CLOTUREE', libelle: 'Clôturée', total: 262 },
+  ],
+  parCategorie: [
+    { cle: id('categorie', 1), libelle: 'Carte bancaire', total: 98 },
+    { cle: id('categorie', 2), libelle: 'Virement et transfert', total: 71 },
+    { cle: id('categorie', 3), libelle: 'Banque mobile', total: 54 },
+    { cle: id('categorie', 4), libelle: 'Frais et prélèvements', total: 39 },
+    { cle: id('categorie', 6), libelle: 'Accueil en agence', total: 24 },
+    { cle: id('categorie', 7), libelle: 'Crédit', total: 15 },
+    { cle: id('categorie', 5), libelle: 'Fraude suspectée', total: 11 },
+  ],
+  parCanal: [
+    { cle: 'QR_CODE', libelle: 'QR code en agence', total: 201 },
+    { cle: 'LIEN_WEB', libelle: 'Lien web', total: 111 },
+  ],
+  parAgence: [
+    { cle: id('agence', 1), libelle: 'Plateau', total: 88 },
+    { cle: id('agence', 2), libelle: 'Cocody Angré', total: 57 },
+    { cle: id('agence', 3), libelle: 'Yopougon Siporex', total: 49 },
+    { cle: id('agence', 4), libelle: 'Treichville', total: 21 },
+    { cle: id('agence', 5), libelle: 'Bouaké Commerce', total: 18 },
+    { cle: 'aucune', libelle: 'Sans agence (lien web)', total: 79 },
+  ],
+  delaiPremiereReponseMoyenMinutes: 104,
+  delaiResolutionMoyenMinutes: 1386,
+  tauxRespectSla: 0.87,
+  tauxResolutionPremierContact: 0.43,
+};
+
+/* ------------------------------------------------------------ Journal d'audit */
+
+const CHAINE = `banque:${id('banque', 1)}`;
+type Ligne = S<'LigneAudit'>;
+const ligne = (rang: number, horodatage: string, acteur: Ligne['acteur'], action: string, entite: string | null, entiteId: string | null, donnees: Ligne['donnees'], ip: string | null): Ligne => ({
+  id: String(90_000 + rang), chaine: CHAINE, rang, horodatage, acteur, action, entite, entiteId, donnees, ip,
+});
+const u = (p: { id: string; prenom: string; nom: string }, role: string) => ({ type: 'UTILISATEUR' as const, id: p.id, libelle: `${p.prenom} ${p.nom}`, role });
+const systeme = { type: 'SYSTEME' as const, id: null, libelle: null, role: null };
+const clientAudit = { type: 'CLIENT' as const, id: id('client', 7), libelle: null, role: null };
+
+export const JOURNAL: S<'PageAudit'> = {
+  donnees: [
+    ligne(4812, t('25/09 15:02'), u(SERGE, 'SUPERVISEUR'), 'reclamation.assignation', 'reclamation', id('reclamation', 2450), { agentId: IBRAHIM.id }, '10.20.4.17'),
+    ligne(4811, t('25/09 15:00'), systeme, 'sla.alerte_preventive', 'reclamation', id('reclamation', 2448), { seuil: 75 }, null),
+    ligne(4810, t('25/09 14:32'), clientAudit, 'reclamation.depot', 'reclamation', id('reclamation', 2452), { statut: 'OUVERTE', priorite: 'URGENTE' }, '102.67.12.9'),
+    ligne(4809, t('25/09 14:20'), u(MAMADOU, 'AGENT'), 'utilisateur.verrouillage', 'utilisateur', MAMADOU.id, { echecs: 5 }, '10.20.4.33'),
+    ligne(4808, t('25/09 11:40'), u(SERGE, 'SUPERVISEUR'), 'reclamation.note_interne', 'reclamation', id('reclamation', 2442), null, '10.20.4.17'),
+    ligne(4807, t('25/09 10:00'), systeme, 'sla.depassement', 'reclamation', id('reclamation', 2449), { escaladeeVers: SERGE.id }, null),
+    ligne(4806, t('25/09 09:14'), u(FATOU, 'ADMIN_ENTREPRISE'), 'categorie.modification', 'categorie', id('categorie', 3), { delaiCibleMinutes: [600, 480] }, '10.20.4.2'),
+    ligne(4805, t('25/09 08:05'), u(FATOU, 'ADMIN_ENTREPRISE'), 'utilisateur.connexion', 'utilisateur', FATOU.id, null, '10.20.4.2'),
+  ],
+  pagination: { page: 1, parPage: 50, total: 4812 },
+};
+
+export const VERIFICATION_CHAINE: S<'VerificationChaine'> = {
+  chaine: CHAINE,
+  valide: true,
+  lignes: 4812,
+  premiereRupture: null,
+};
