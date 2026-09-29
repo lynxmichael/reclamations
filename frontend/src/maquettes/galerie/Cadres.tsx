@@ -8,12 +8,24 @@ export const LARGEUR_TELEPHONE = 390;
 export const HAUTEUR_TELEPHONE = 844;
 export const LARGEUR_BUREAU = 1280;
 
-export function Telephone({ couleur, children }: { couleur: string | null; children: ReactNode }) {
+export function Telephone({
+  couleur,
+  children,
+  heure = '15:10',
+  superposition,
+}: {
+  couleur: string | null;
+  children: ReactNode;
+  /** Heure de la barre d'état (horloge de la démo) */
+  heure?: string;
+  /** Au-dessus de l'écran : notification SMS de la démo */
+  superposition?: ReactNode;
+}) {
   return (
     <div className="max-w-full rounded-[56px] bg-[#1d2127] p-[11px] shadow-[0_30px_60px_-20px_rgb(23_33_43/0.45)] max-[440px]:rounded-none max-[440px]:p-0 max-[440px]:shadow-none" style={{ width: LARGEUR_TELEPHONE + 22 }}>
       <div className="relative flex flex-col overflow-hidden rounded-[45px] bg-white max-[440px]:rounded-none" style={{ height: HAUTEUR_TELEPHONE }}>
         <div style={styleMarque(couleur)} className="flex h-11 shrink-0 items-center justify-between bg-marque px-8 text-[15px] font-semibold text-sur-marque">
-          <span className="chiffres">15:10</span>
+          <span className="chiffres">{heure}</span>
           <span aria-hidden className="absolute top-2.5 left-1/2 h-[26px] w-[104px] -translate-x-1/2 rounded-full bg-[#1d2127]" />
           <span className="flex items-center gap-1.5" aria-hidden>
             <SignalHigh size={16} strokeWidth={2.6} />
@@ -21,7 +33,10 @@ export function Telephone({ couleur, children }: { couleur: string | null; child
             <BatteryFull size={20} strokeWidth={2} />
           </span>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [&>*]:shrink-0 [&>*]:grow">{children}</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [&>*]:shrink-0 [&>*]:grow" data-ecran-telephone>
+          {children}
+        </div>
+        {superposition}
       </div>
     </div>
   );

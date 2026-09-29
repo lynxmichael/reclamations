@@ -99,7 +99,20 @@ export function Activite({ indicateurs, sms }: { indicateurs: S<'IndicateursPlat
   );
 }
 
-export function Alertes({ alertes, maintenant }: { alertes: S<'PageNotifications'>; maintenant: string }) {
+export function Alertes({
+  alertes,
+  maintenant,
+  surLire,
+  surToutLire,
+  occupe,
+}: {
+  alertes: S<'PageNotifications'>;
+  maintenant: string;
+  /** Étape 8 : marquerNotificationPlateformeLue */
+  surLire?: (n: S<'PageNotifications'>['donnees'][number]) => void;
+  surToutLire?: () => void;
+  occupe?: boolean;
+}) {
   return (
     <div className="flex max-w-3xl flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
@@ -107,9 +120,10 @@ export function Alertes({ alertes, maintenant }: { alertes: S<'PageNotifications
           <h1 className="text-[26px] font-bold tracking-tight">Alertes</h1>
           <p className="mt-1 text-[15px] text-encre-3">Réclamations urgentes et plafonds dépassés, dans toutes les banques.</p>
         </div>
-        <Bouton>Tout marquer comme lu</Bouton>
+        <Bouton onClick={surToutLire} disabled={occupe || alertes.nonLues === 0}>Tout marquer comme lu</Bouton>
       </div>
       <ul className="overflow-hidden rounded-xl border border-trait bg-surface">
+        {alertes.donnees.length === 0 && <li className="px-5 py-10 text-center text-[15px] text-encre-3">Aucune alerte pour l'instant.</li>}
         {alertes.donnees.map((n) => (
           <li key={n.id} className={cx('flex gap-4 border-b border-trait px-5 py-4 last:border-0', !n.lueLe && 'bg-marque-doux/50')}>
             <span aria-hidden className={cx('mt-2 h-2.5 w-2.5 shrink-0 rounded-full', n.lueLe ? 'bg-trait-fort' : n.modele === 'plateforme.urgente' ? 'bg-urgent' : 'bg-alerte')} />
@@ -120,6 +134,11 @@ export function Alertes({ alertes, maintenant }: { alertes: S<'PageNotifications
               </div>
               <p className="chiffres mt-0.5 text-[15px] text-encre-2">{n.contenu}</p>
             </div>
+            {surLire && !n.lueLe && (
+              <button type="button" onClick={() => surLire(n)} disabled={occupe} className="shrink-0 self-center rounded-lg px-2.5 py-1.5 text-sm font-semibold text-marque-texte hover:bg-surface">
+                Marquer comme lue
+              </button>
+            )}
           </li>
         ))}
       </ul>

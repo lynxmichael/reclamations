@@ -31,6 +31,15 @@ export interface Trace {
   readonly userAgent?: string;
 }
 
+/** Fichier déjà écrit dans le stockage, à rattacher à la réclamation dans la transaction. */
+export interface FichierStocke {
+  readonly cleStockage: string;
+  readonly nomFichier: string;
+  readonly typeMime: string;
+  readonly tailleOctets: number;
+  readonly empreinteSha256: string;
+}
+
 export interface EntreeDepot {
   readonly tenantId: string;
   readonly pointDepotId: string;
@@ -40,6 +49,8 @@ export interface EntreeDepot {
   readonly agenceId?: string | null;
   readonly client: { readonly nom: string; readonly email?: string | null; readonly telephone?: string | null };
   readonly consentementVersion: string;
+  /** Pièces jointes du dépôt (5 au plus, déjà contrôlées et stockées) */
+  readonly fichiers?: readonly FichierStocke[];
 }
 
 type Ticket = Reclamation & { categorie: { nom: string } };
@@ -112,6 +123,7 @@ export class CycleDeVie {
 
       const acteur: Acteur = { type: 'CLIENT', clientId: client.id };
       await this.evenement(tx, reclamation, 'CREATION', acteur, maintenant, { statutApres: 'OUVERTE' });
+      await this.joindre(tx, reclamation, null, entree.fichiers, acteur, maintenant, true);
       const envois = this.envois(tx, reclamation, p, maintenant);
       await envois.client('client.depot');
       if (reclamation.priorite === 'URGENTE') {
@@ -207,12 +219,16 @@ export class CycleDeVie {
    * Réponse au client. Depuis « Ouverte », l'agent prend d'abord le ticket en charge.
    * Avec `attendreReponse`, le ticket passe « En attente client » et le chrono SLA s'arrête.
    */
-  async repondreAuClient(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, options: { attendreReponse?: boolean } = {}, trace?: Trace) {
+  async repondreAuClient(
+    tenantId: string, reclamationId: string, acteur: Acteur, contenu: string,
+    options: { attendreReponse?: boolean; fichiers?: readonly FichierStocke[] } = {}, trace?: Trace,
+  ) {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierOperation('REPONDRE_AU_CLIENT', etat(t), acteur));
       if (t.statut === 'OUVERTE') t = await this.transition(tx, t, 'PRENDRE_EN_CHARGE', acteur, maintenant, { prisEnChargeLe: maintenant });
       const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, contenu);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
+      await this.joindre(tx, t, message.id, options.fichiers, acteur, maintenant, true);
       t = await this.noterPremiereReponse(tx, t, p, maintenant);
       if (options.attendreReponse && t.statut === 'EN_COURS') {
         t = await this.transition(tx, t, 'QUESTIONNER_CLIENT', acteur, maintenant, { ...slaEnPause(maintenant, t, p.sla), passeEnAttenteClient: true });
@@ -225,22 +241,24 @@ export class CycleDeVie {
     });
   }
 
-  async noteInterne(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace) {
+  async noteInterne(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace, fichiers?: readonly FichierStocke[]) {
     return this.surTicket(tenantId, reclamationId, async (tx, t, _p, maintenant) => {
       exiger(verifierOperation('NOTE_INTERNE', etat(t), acteur));
       const note = await this.commentaire(tx, t, 'NOTE_INTERNE', acteur, contenu);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: false, donnees: { commentaireId: note.id } });
+      await this.joindre(tx, t, note.id, fichiers, acteur, maintenant, false);
       await this.auditer(tx, t, acteur, 'reclamation.note_interne', {}, trace);
       return { commentaireId: note.id };
     });
   }
 
   /** Message du client. S'il était attendu, le ticket repart « En cours » et le chrono reprend. */
-  async messageDuClient(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace) {
+  async messageDuClient(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace, fichiers?: readonly FichierStocke[]) {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierOperation('MESSAGE_DU_CLIENT', etat(t), acteur));
       const message = await this.commentaire(tx, t, 'MESSAGE_DU_CLIENT', acteur, contenu);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
+      await this.joindre(tx, t, message.id, fichiers, acteur, maintenant, true);
       if (t.statut === 'EN_ATTENTE_CLIENT') {
         t = await this.transition(tx, t, 'REPRENDRE_SUR_REPONSE', acteur, maintenant, slaALaReprise(maintenant, t, p.sla));
       }
@@ -409,6 +427,25 @@ export class CycleDeVie {
         auteurUtilisateurId: type === 'MESSAGE_DU_CLIENT' ? null : acteur.type === 'UTILISATEUR' ? acteur.id : null,
       },
     });
+  }
+
+  /** Pièces jointes d'un dépôt (commentaire vide) ou d'un message, avec un événement PIECE_JOINTE. */
+  private async joindre(
+    tx: ClientTransaction, t: { id: string; tenantId: string }, commentaireId: string | null,
+    fichiers: readonly FichierStocke[] | undefined, acteur: Acteur, maintenant: Date, visibleClient: boolean,
+  ) {
+    if (!fichiers?.length) return;
+    if (acteur.type === 'SYSTEME') throw new Error('Le système ne dépose pas de fichier');
+    await tx.pieceJointe.createMany({
+      data: fichiers.map((f) => ({
+        tenantId: t.tenantId, reclamationId: t.id, commentaireId,
+        nomFichier: f.nomFichier, typeMime: f.typeMime, tailleOctets: f.tailleOctets,
+        cleStockage: f.cleStockage, empreinteSha256: f.empreinteSha256,
+        deposeParType: acteur.type, deposeParUtilisateurId: acteur.type === 'UTILISATEUR' ? acteur.id : null,
+        creeLe: maintenant,
+      })),
+    });
+    await this.evenement(tx, t, 'PIECE_JOINTE', acteur, maintenant, { visibleClient, donnees: { commentaireId, nombre: fichiers.length } });
   }
 
   async evenement(

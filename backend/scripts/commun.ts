@@ -18,9 +18,19 @@ export function urlBaseJetable(variable: 'DATABASE_URL' | 'APP_DATABASE_URL'): s
   return url;
 }
 
+/**
+ * Durée maximale d'une transaction des vérifications. Vider la base (TRUNCATE de 19 tables)
+ * peut prendre plus de 15 s sur un poste lent : le défaut de Prisma (5 s) faisait échouer
+ * la vérification sans raison liée au code vérifié.
+ */
+export const DELAI_TRANSACTION_VERIFICATION = 120_000;
+
 /** Client du propriétaire des tables (superutilisateur du conteneur) : prépare les données. */
 export function clientProprietaire() {
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString: urlBaseJetable('DATABASE_URL') }) });
+  return new PrismaClient({
+    adapter: new PrismaPg({ connectionString: urlBaseJetable('DATABASE_URL') }),
+    transactionOptions: { maxWait: 30_000, timeout: DELAI_TRANSACTION_VERIFICATION },
+  });
 }
 export type ClientProprietaire = ReturnType<typeof clientProprietaire>;
 

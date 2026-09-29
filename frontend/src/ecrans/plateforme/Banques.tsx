@@ -1,11 +1,26 @@
 /**
- * Banques clientes (listerBanques, suspendreBanque, reactiverBanque) et création d'une banque
- * avec son premier Admin Entreprise en une seule opération (creerBanque, décision C13).
+ * Banques clientes (listerBanques, modifierBanque, suspendreBanque, reactiverBanque) et création
+ * d'une banque avec son premier Admin Entreprise en une seule opération (creerBanque, décision C13).
  */
-import { CirclePause, Info, Plus, X } from 'lucide-react';
+import { useState } from 'react';
+import { CirclePause, Info, Plus } from 'lucide-react';
 import type { S } from '../../api/types';
-import { Bouton, Champ, LogoBanque, Saisie, cx } from '../../ui/composants';
+import { Dialogue } from '../../ui/Dialogue';
+import { Bouton, Champ, Liste, LogoBanque, Saisie, Texte, cx } from '../../ui/composants';
 import { date, nombre } from '../../ui/format';
+
+type Issue = void | boolean | Promise<boolean>;
+
+export interface ActionsBanques {
+  creer: (v: S<'CreationBanque'>) => Issue;
+  modifier: (id: string, v: S<'ModificationBanque'>) => Issue;
+  suspendre: (id: string, motif: string) => Issue;
+  reactiver: (id: string) => Issue;
+  occupe?: boolean;
+  erreurs?: Record<string, string>;
+}
+
+const FUSEAUX = ['Africa/Abidjan', 'Africa/Dakar', 'Africa/Lagos', 'Africa/Douala', 'Africa/Kinshasa', 'Africa/Casablanca', 'Europe/Paris'];
 
 function Conso({ valeur, plafond }: { valeur: number; plafond: number | null }) {
   const depasse = plafond !== null && valeur > plafond;
@@ -24,16 +39,32 @@ function Conso({ valeur, plafond }: { valeur: number; plafond: number | null }) 
   );
 }
 
-export function Banques({ page, plans, creation }: { page: S<'PageBanques'>; plans: S<'Plan'>[]; creation?: boolean }) {
+export function Banques({
+  page,
+  plans,
+  creation,
+  actions,
+  adresse = (slug) => `${slug}.reclamations.example`,
+}: {
+  page: S<'PageBanques'>;
+  plans: S<'Plan'>[];
+  creation?: boolean;
+  actions?: ActionsBanques;
+  /** Adresse du portail d'une banque */
+  adresse?: (slug: string) => string;
+}) {
+  const [nouvelle, setNouvelle] = useState(!!creation);
+  const [ouverte, setOuverte] = useState<string | null>(null);
   const plan = (id: string) => plans.find((p) => p.id === id);
+  const banque = page.donnees.find((b) => b.id === ouverte) ?? null;
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-[26px] font-bold tracking-tight">Banques</h1>
-          <p className="mt-1 text-[15px] text-encre-3">{page.pagination.total} banques clientes. Consommation du mois en cours.</p>
+          <p className="mt-1 text-[15px] text-encre-3">{page.pagination.total} banque{page.pagination.total > 1 ? 's' : ''} cliente{page.pagination.total > 1 ? 's' : ''}. Consommation du mois en cours.</p>
         </div>
-        <Bouton variante="principal" icone={<Plus aria-hidden size={17} />}>Nouvelle banque</Bouton>
+        <Bouton variante="principal" icone={<Plus aria-hidden size={17} />} onClick={() => setNouvelle(true)}>Nouvelle banque</Bouton>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-trait bg-surface">
@@ -59,7 +90,7 @@ export function Banques({ page, plans, creation }: { page: S<'PageBanques'>; pla
                       <LogoBanque nom={b.nom} logoUrl={null} taille={34} />
                       <div className="leading-snug">
                         <div className="font-semibold">{b.nom}</div>
-                        <div className="text-sm text-encre-3">{b.slug}.reclamations.example</div>
+                        <div className="text-sm text-encre-3">{adresse(b.slug)}</div>
                       </div>
                     </div>
                   </td>
@@ -84,74 +115,205 @@ export function Banques({ page, plans, creation }: { page: S<'PageBanques'>; pla
                     )}
                   </td>
                   <td className="py-3.5 pr-5 text-right">
-                    <Bouton taille="petit" variante="discret">Ouvrir</Bouton>
+                    <Bouton taille="petit" variante="discret" onClick={() => setOuverte(b.id)} aria-label={`Ouvrir ${b.nom}`}>Ouvrir</Bouton>
                   </td>
                 </tr>
               );
             })}
+            {page.donnees.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-5 py-10 text-center text-encre-3">Aucune banque cliente pour l'instant.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {creation && <NouvelleBanque plans={plans} />}
+      {nouvelle && <NouvelleBanque plans={plans.filter((p) => p.actif)} actions={actions} adresse={adresse} surFermer={() => setNouvelle(false)} />}
+      {banque && actions && <FicheBanque key={banque.id} b={banque} plans={plans} actions={actions} surFermer={() => setOuverte(null)} />}
     </div>
   );
 }
 
-function NouvelleBanque({ plans }: { plans: S<'Plan'>[] }) {
+function NouvelleBanque({ plans, actions, adresse, surFermer }: { plans: S<'Plan'>[]; actions?: ActionsBanques; adresse: (slug: string) => string; surFermer: () => void }) {
+  const demo = !actions;
+  const [nom, setNom] = useState(demo ? 'Banque Kora' : '');
+  const [slug, setSlug] = useState(demo ? 'kora' : '');
+  const [prefixe, setPrefixe] = useState(demo ? 'KOR' : '');
+  const [planId, setPlanId] = useState(plans[0]?.id ?? '');
+  const [prenom, setPrenom] = useState(demo ? 'Nathalie' : '');
+  const [nomAdmin, setNomAdmin] = useState(demo ? 'Yéo' : '');
+  const [email, setEmail] = useState(demo ? 'nathalie.yeo@banque-kora.example' : '');
+  const [telephone, setTelephone] = useState('');
+  const [{ slug: suggestionSlug, prefixe: suggestionPrefixe }, setSuggestions] = useState({ slug: '', prefixe: '' });
+  const e = actions?.erreurs ?? {};
+  const valide = nom.trim().length >= 2 && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(slug) && /^[A-Z0-9]{2,10}$/.test(prefixe) && planId && prenom.trim() && nomAdmin.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const suggerer = (n: string) => {
+    setNom(n);
+    const base = n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/^(banque|caisse)\s+/, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug || slug === suggestionSlug) setSlug(base.slice(0, 63));
+    if (!prefixe || prefixe === suggestionPrefixe) setPrefixe(base.replace(/-/g, '').slice(0, 3).toUpperCase());
+    setSuggestions({ slug: base.slice(0, 63), prefixe: base.replace(/-/g, '').slice(0, 3).toUpperCase() });
+  };
+  const creer = async () => {
+    const issue = await actions?.creer({
+      nom: nom.trim(),
+      slug,
+      prefixeTickets: prefixe,
+      planId,
+      fuseauHoraire: 'Africa/Abidjan',
+      administrateur: { prenom: prenom.trim(), nom: nomAdmin.trim(), email: email.trim().toLowerCase(), telephone: telephone.trim() || null },
+    });
+    if (issue !== false) surFermer();
+  };
   return (
-    <div className="absolute inset-0 z-30 flex justify-end bg-encre/30">
-      <aside role="dialog" aria-modal="true" aria-label="Nouvelle banque" className="flex h-full w-[520px] flex-col bg-surface shadow-[-16px_0_48px_rgb(23_33_43/0.18)]">
-        <div className="flex items-center justify-between border-b border-trait px-6 py-4">
-          <h2 className="text-xl font-bold">Nouvelle banque</h2>
-          <button type="button" aria-label="Fermer" className="rounded p-1 text-encre-3 hover:bg-fond"><X size={20} /></button>
-        </div>
-        <form className="flex flex-1 flex-col gap-6 overflow-auto px-6 py-5" onSubmit={(e) => e.preventDefault()}>
-          <fieldset className="flex flex-col gap-4">
-            <legend className="mb-1 text-[17px] font-bold">La banque</legend>
-            <Champ libelle="Nom">{(id) => <Saisie id={id} defaultValue="Banque Kora" />}</Champ>
-            <div className="grid grid-cols-[minmax(0,1fr)_130px] gap-3">
-              <Champ libelle="Adresse du portail" aide="kora.reclamations.example">
-                {(id, d) => <Saisie id={id} aria-describedby={d} defaultValue="kora" />}
-              </Champ>
-              <Champ libelle="Préfixe" aide="KOR-2026-000001">
-                {(id, d) => <Saisie id={id} aria-describedby={d} defaultValue="KOR" className="chiffres uppercase" />}
-              </Champ>
+    <Dialogue
+      cote
+      cadre={demo}
+      titre="Nouvelle banque"
+      surFermer={surFermer}
+      pied={
+        <>
+          <Bouton variante="discret" onClick={surFermer}>Annuler</Bouton>
+          <Bouton variante="principal" disabled={!demo && (!valide || actions.occupe)} onClick={() => void creer()}>Créer la banque et inviter l'Admin</Bouton>
+        </>
+      }
+    >
+      <form className="flex flex-col gap-6" onSubmit={(x) => x.preventDefault()}>
+        <fieldset className="flex flex-col gap-4">
+          <legend className="mb-1 text-[17px] font-bold">La banque</legend>
+          <Champ libelle="Nom" erreur={e.nom}>{(id) => <Saisie id={id} value={nom} onChange={(x) => suggerer(x.target.value)} maxLength={160} />}</Champ>
+          <div className="grid grid-cols-[minmax(0,1fr)_130px] gap-3">
+            <Champ libelle="Adresse du portail" aide={slug ? adresse(slug) : 'lettres minuscules, chiffres, tirets'} erreur={e.slug}>
+              {(id, d) => <Saisie id={id} aria-describedby={d} value={slug} onChange={(x) => setSlug(x.target.value.toLowerCase().trim())} maxLength={63} invalide={!!e.slug} />}
+            </Champ>
+            <Champ libelle="Préfixe" aide={prefixe ? `${prefixe}-${new Date().getFullYear()}-000001` : '2 à 10 caractères'} erreur={e.prefixeTickets}>
+              {(id, d) => <Saisie id={id} aria-describedby={d} value={prefixe} onChange={(x) => setPrefixe(x.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} maxLength={10} className="chiffres uppercase" invalide={!!e.prefixeTickets} />}
+            </Champ>
+          </div>
+          <fieldset>
+            <legend className="text-[15px] font-semibold">Plan</legend>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {plans.map((p) => (
+                <label key={p.id} className={cx('flex cursor-pointer flex-col gap-0.5 rounded-lg border px-3 py-2.5', p.id === planId ? 'border-marque bg-marque-doux ring-1 ring-marque' : 'border-trait-fort')}>
+                  <input type="radio" name="plan" checked={p.id === planId} onChange={() => setPlanId(p.id)} className="sr-only" />
+                  <span className="font-semibold">{p.nom}</span>
+                  <span className="chiffres text-sm text-encre-3">
+                    {p.plafondAgents === null ? 'Agents illimités' : `${p.plafondAgents} agents`}, {p.plafondTicketsMois === null ? 'réclamations illimitées' : `${nombre(p.plafondTicketsMois)} récl./mois`}
+                  </span>
+                </label>
+              ))}
             </div>
-            <fieldset>
-              <legend className="text-[15px] font-semibold">Plan</legend>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {plans.map((p, i) => (
-                  <label key={p.id} className={cx('flex cursor-pointer flex-col gap-0.5 rounded-lg border px-3 py-2.5', i === 0 ? 'border-marque bg-marque-doux ring-1 ring-marque' : 'border-trait-fort')}>
-                    <input type="radio" name="plan" defaultChecked={i === 0} className="sr-only" />
-                    <span className="font-semibold">{p.nom}</span>
-                    <span className="chiffres text-sm text-encre-3">{p.plafondAgents === null ? 'Sans plafond' : `${p.plafondAgents} agents, ${nombre(p.plafondTicketsMois ?? 0)} récl./mois`}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
           </fieldset>
+        </fieldset>
 
-          <fieldset className="flex flex-col gap-4">
-            <legend className="mb-1 text-[17px] font-bold">Son premier Admin Entreprise</legend>
-            <div className="grid grid-cols-2 gap-3">
-              <Champ libelle="Prénom">{(id) => <Saisie id={id} defaultValue="Nathalie" />}</Champ>
-              <Champ libelle="Nom">{(id) => <Saisie id={id} defaultValue="Yéo" />}</Champ>
-            </div>
-            <Champ libelle="E-mail professionnel">{(id) => <Saisie id={id} type="email" defaultValue="nathalie.yeo@banque-kora.example" />}</Champ>
-            <Champ libelle="Téléphone" facultatif>{(id) => <Saisie id={id} type="tel" />}</Champ>
-          </fieldset>
+        <fieldset className="flex flex-col gap-4">
+          <legend className="mb-1 text-[17px] font-bold">Son premier Admin Entreprise</legend>
+          <div className="grid grid-cols-2 gap-3">
+            <Champ libelle="Prénom">{(id) => <Saisie id={id} value={prenom} onChange={(x) => setPrenom(x.target.value)} />}</Champ>
+            <Champ libelle="Nom">{(id) => <Saisie id={id} value={nomAdmin} onChange={(x) => setNomAdmin(x.target.value)} />}</Champ>
+          </div>
+          <Champ libelle="E-mail professionnel" erreur={e.email}>{(id) => <Saisie id={id} type="email" value={email} onChange={(x) => setEmail(x.target.value)} invalide={!!e.email} />}</Champ>
+          <Champ libelle="Téléphone" facultatif>{(id) => <Saisie id={id} type="tel" value={telephone} onChange={(x) => setTelephone(x.target.value)} />}</Champ>
+        </fieldset>
 
-          <p className="flex gap-2.5 rounded-lg bg-fond p-3 text-sm leading-relaxed text-encre-2">
-            <Info aria-hidden size={17} className="mt-0.5 shrink-0 text-encre-3" />
-            La banque démarre avec les horaires lun–ven 08:00–17:00, le fuseau d'Abidjan, une alerte à 75 % et la clôture automatique après 5 jours. L'Admin reçoit une invitation par e-mail pour choisir son mot de passe.
-          </p>
-        </form>
-        <div className="flex justify-end gap-2 border-t border-trait px-6 py-4">
-          <Bouton variante="discret">Annuler</Bouton>
-          <Bouton variante="principal">Créer la banque et inviter l'Admin</Bouton>
-        </div>
-      </aside>
-    </div>
+        <p className="flex gap-2.5 rounded-lg bg-fond p-3 text-sm leading-relaxed text-encre-2">
+          <Info aria-hidden size={17} className="mt-0.5 shrink-0 text-encre-3" />
+          La banque démarre avec les horaires lun–ven 08:00–17:00, le fuseau d'Abidjan, une alerte à 75 % et la clôture automatique après 5 jours. L'Admin reçoit une invitation par e-mail pour choisir son mot de passe.
+        </p>
+      </form>
+    </Dialogue>
+  );
+}
+
+function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'>; plans: S<'Plan'>[]; actions: ActionsBanques; surFermer: () => void }) {
+  const [nom, setNom] = useState(b.nom);
+  const [planId, setPlanId] = useState(b.plan.id);
+  const [fuseau, setFuseau] = useState(b.fuseauHoraire);
+  const [seuil, setSeuil] = useState(String(b.seuilAlerteSlaPourcent));
+  const [delai, setDelai] = useState(String(b.delaiClotureAutoJours));
+  const [sms, setSms] = useState(b.smsChaqueChangementStatut);
+  const [motif, setMotif] = useState('');
+  const e = actions.erreurs ?? {};
+  const valide = nom.trim().length >= 2 && Number(seuil) >= 1 && Number(seuil) <= 99 && Number(delai) >= 1 && Number(delai) <= 60;
+  const enregistrer = async () => {
+    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms });
+    if (issue !== false) surFermer();
+  };
+  return (
+    <Dialogue
+      cote
+      titre={b.nom}
+      description={`Cliente depuis le ${date(b.creeLe)} · préfixe ${b.prefixeTickets}`}
+      surFermer={surFermer}
+      pied={
+        <>
+          <Bouton variante="discret" onClick={surFermer}>Fermer</Bouton>
+          <Bouton variante="principal" disabled={!valide || actions.occupe} onClick={() => void enregistrer()}>Enregistrer les réglages</Bouton>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-6">
+        <fieldset className="flex flex-col gap-4">
+          <legend className="mb-1 text-[17px] font-bold">Contrat et réglages (décision C12)</legend>
+          <Champ libelle="Nom" erreur={e.nom}>{(id) => <Saisie id={id} value={nom} onChange={(x) => setNom(x.target.value)} maxLength={160} />}</Champ>
+          <div className="grid grid-cols-2 gap-3">
+            <Champ libelle="Plan" erreur={e.planId}>
+              {(id) => (
+                <Liste id={id} value={planId} onChange={(x) => setPlanId(x.target.value)}>
+                  {plans.filter((p) => p.actif || p.id === b.plan.id).map((p) => (
+                    <option key={p.id} value={p.id}>{p.nom}</option>
+                  ))}
+                </Liste>
+              )}
+            </Champ>
+            <Champ libelle="Fuseau horaire" erreur={e.fuseauHoraire}>
+              {(id) => (
+                <Liste id={id} value={fuseau} onChange={(x) => setFuseau(x.target.value)}>
+                  {[...new Set([fuseau, ...FUSEAUX])].map((f) => (
+                    <option key={f} value={f}>{f.replace('_', ' ')}</option>
+                  ))}
+                </Liste>
+              )}
+            </Champ>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Champ libelle="Seuil d'alerte SLA (%)" aide="Alerte préventive à ce pourcentage du délai" erreur={e.seuilAlerteSlaPourcent}>
+              {(id, d) => <Saisie id={id} aria-describedby={d} inputMode="numeric" value={seuil} onChange={(x) => setSeuil(x.target.value.replace(/\D/g, ''))} className="chiffres" />}
+            </Champ>
+            <Champ libelle="Clôture automatique (jours)" aide="Sans réponse du client après la résolution" erreur={e.delaiClotureAutoJours}>
+              {(id, d) => <Saisie id={id} aria-describedby={d} inputMode="numeric" value={delai} onChange={(x) => setDelai(x.target.value.replace(/\D/g, ''))} className="chiffres" />}
+            </Champ>
+          </div>
+          <label className="flex items-start gap-2.5 text-[15px]">
+            <input type="checkbox" checked={sms} onChange={(x) => setSms(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              SMS au client à chaque changement de statut
+              <span className="block text-sm text-encre-3">Sinon, au dépôt et à la résolution seulement. Chaque SMS est refacturé à la banque.</span>
+            </span>
+          </label>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-3 rounded-xl border border-trait p-4">
+          <legend className="px-1 text-[17px] font-bold">{b.suspendueLe ? 'Banque suspendue' : 'Suspendre la banque'}</legend>
+          {b.suspendueLe ? (
+            <>
+              <p className="text-[15px] leading-relaxed text-encre-2">
+                Suspendue le {date(b.suspendueLe)} : {b.motifSuspension}. Son portail et sa console sont fermés ; ses données sont conservées.
+              </p>
+              <Bouton className="self-start" disabled={actions.occupe} onClick={() => void actions.reactiver(b.id)}>Réactiver la banque</Bouton>
+            </>
+          ) : (
+            <>
+              <p className="text-[15px] leading-relaxed text-encre-2">Le portail n'accepte plus de réclamations et le personnel ne peut plus se connecter. Les données sont conservées et la réactivation rétablit tout.</p>
+              <Champ libelle="Motif" erreur={e.motif}>{(id) => <Texte id={id} rows={2} className="min-h-0" value={motif} onChange={(x) => setMotif(x.target.value)} maxLength={500} placeholder="Ex. impayé du mois d'août" />}</Champ>
+              <Bouton variante="danger" className="self-start" disabled={!motif.trim() || actions.occupe} onClick={() => void actions.suspendre(b.id, motif.trim())}>
+                Suspendre
+              </Bouton>
+            </>
+          )}
+        </fieldset>
+      </div>
+    </Dialogue>
   );
 }

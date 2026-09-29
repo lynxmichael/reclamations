@@ -1,0 +1,228 @@
+/**
+ * Lecture d'une réclamation et mise en forme selon le contrat : fiche du personnel
+ * (ReclamationDetail), ligne des files (ReclamationResume), vue du client (ReclamationClient),
+ * chronologie publique (EtapeSuivi). Le chrono SLA est calculé à la lecture, en minutes ouvrées.
+ */
+import type { components } from '../../contrat/api.js';
+import type { Prisma } from '../../generated/prisma/client.js';
+import { OPERATIONS, TRANSITIONS, verifierOperation, verifierTransition, type Acteur, type ActionStatut, type Operation } from '../../domaine/reclamation/machine.js';
+import { estEnRetard } from '../../domaine/reclamation/sla.js';
+import { minutesOuvreesEntre, type CalendrierNormalise } from '../../domaine/temps-ouvre/calendrier.js';
+import { etat } from '../../application/reclamations/cycle-de-vie.js';
+import type { ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import { introuvable } from '../../infrastructure/contrat/probleme.js';
+
+type S<N extends keyof components['schemas']> = components['schemas'][N];
+
+export const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
+export const nomComplet = (u: { prenom: string; nom: string }) => `${u.prenom} ${u.nom}`;
+const reference = (u: { id: string; prenom: string; nom: string } | null) => (u ? { id: u.id, nom: nomComplet(u) } : null);
+
+const PERSONNE = { select: { id: true, nom: true, prenom: true } } as const;
+const PIECE = { select: { id: true, nomFichier: true, typeMime: true, tailleOctets: true, creeLe: true } } as const;
+
+export const INCLUSION_FICHE = {
+  categorie: { select: { id: true, nom: true } },
+  agence: { select: { id: true, nom: true } },
+  pointDepot: { select: { id: true, libelle: true } },
+  agent: PERSONNE,
+  escaladeeVers: PERSONNE,
+  cloturePar: PERSONNE,
+  client: { select: { id: true, nom: true, email: true, telephone: true } },
+  commentaires: {
+    orderBy: [{ creeLe: 'asc' }, { id: 'asc' }],
+    include: { auteurUtilisateur: { select: { nom: true, prenom: true } }, piecesJointes: { ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] } },
+  },
+  piecesJointes: { where: { commentaireId: null }, ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] },
+  evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: { acteurUtilisateur: { select: { nom: true, prenom: true } } } },
+} satisfies Prisma.ReclamationInclude;
+
+export type TicketComplet = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_FICHE }>;
+
+const piece = (p: { id: string; nomFichier: string; typeMime: string; tailleOctets: number; creeLe: Date }): S<'PieceJointe'> =>
+  ({ id: p.id, nomFichier: p.nomFichier, typeMime: p.typeMime, tailleOctets: p.tailleOctets, creeLe: p.creeLe.toISOString() });
+
+// ---------------------------------------------------------------------------
+//  Chrono SLA
+// ---------------------------------------------------------------------------
+
+type ChampsChrono = Pick<TicketComplet, 'statut' | 'echeanceSlaLe' | 'alertePreventiveLe' | 'slaSuspenduLe' | 'slaMinutesRestantes'>;
+
+export function chrono(t: ChampsChrono, maintenant: Date, cal: CalendrierNormalise): { etat: S<'EtatChrono'>; minutesRestantes: number | null } {
+  if (t.statut === 'RESOLUE' || t.statut === 'CLOTUREE') {
+    return { etat: 'ARRETE', minutesRestantes: t.statut === 'RESOLUE' ? t.slaMinutesRestantes : null };
+  }
+  if (t.slaSuspenduLe) return { etat: 'EN_PAUSE', minutesRestantes: t.slaMinutesRestantes };
+  if (!t.echeanceSlaLe) return { etat: 'DANS_LES_DELAIS', minutesRestantes: t.slaMinutesRestantes };
+  const restantes = t.echeanceSlaLe > maintenant
+    ? Math.floor(minutesOuvreesEntre(maintenant, t.echeanceSlaLe, cal))
+    : -Math.ceil(minutesOuvreesEntre(t.echeanceSlaLe, maintenant, cal));
+  const e = t.echeanceSlaLe <= maintenant ? 'DEPASSE' : t.alertePreventiveLe && t.alertePreventiveLe <= maintenant ? 'ALERTE' : 'DANS_LES_DELAIS';
+  return { etat: e, minutesRestantes: restantes };
+}
+
+const enCours = (statut: string) => statut === 'OUVERTE' || statut === 'EN_COURS' || statut === 'EN_ATTENTE_CLIENT';
+
+// ---------------------------------------------------------------------------
+//  Actions permises (machine d'états de l'étape 4)
+// ---------------------------------------------------------------------------
+
+type EtatMachine = Parameters<typeof verifierTransition>[1];
+
+export function actionsPossibles(e: EtatMachine, acteur: Acteur, maintenant: Date): ActionStatut[] {
+  return (Object.keys(TRANSITIONS) as ActionStatut[]).filter((a) => verifierTransition(a, e, acteur, maintenant).ok);
+}
+
+export function operationsPossibles(e: EtatMachine, acteur: Acteur): Operation[] {
+  return (Object.keys(OPERATIONS) as Operation[]).filter((o) => verifierOperation(o, e, acteur).ok);
+}
+
+// ---------------------------------------------------------------------------
+//  Fiche du personnel
+// ---------------------------------------------------------------------------
+
+/**
+ * Fiche d'une réclamation pour un membre du personnel. Un agent ne lit que les tickets qui lui
+ * sont assignés : les autres lui répondent 404 (décision C5), comme ceux d'une autre banque.
+ */
+export async function lireFiche(tx: ClientTransaction, id: string, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise): Promise<S<'ReclamationDetail'>> {
+  const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
+  if (!t || !verifierOperation('CONSULTER', etat(t), acteur).ok) throw introuvable('Réclamation introuvable');
+  return fiche(t, acteur, maintenant, cal);
+}
+
+export function fiche(t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise): S<'ReclamationDetail'> {
+  const c = chrono(t, maintenant, cal);
+  const qui = (type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME', u: { nom: string; prenom: string } | null): S<'ActeurVisible'> =>
+    ({ type, nom: type === 'UTILISATEUR' && u ? nomComplet(u) : null });
+  return {
+    id: t.id,
+    numero: t.numero,
+    statut: t.statut,
+    priorite: t.priorite,
+    canal: t.canal,
+    description: t.description,
+    categorie: { id: t.categorie.id, nom: t.categorie.nom },
+    agence: t.agence ? { id: t.agence.id, nom: t.agence.nom } : null,
+    pointDepot: { id: t.pointDepot.id, libelle: t.pointDepot.libelle },
+    agent: reference(t.agent),
+    escaladeeVers: reference(t.escaladeeVers),
+    client: { id: t.client.id, nom: t.client.nom, email: t.client.email, telephone: t.client.telephone },
+    creeLe: t.creeLe.toISOString(),
+    sla: {
+      etat: c.etat,
+      delaiCibleMinutes: t.delaiCibleMinutes,
+      echeanceLe: iso(t.echeanceSlaLe),
+      alertePreventiveLe: iso(t.alertePreventiveLe),
+      enPauseDepuis: iso(t.slaSuspenduLe),
+      minutesRestantes: c.minutesRestantes,
+      enRetard: enCours(t.statut) && estEnRetard(t, maintenant),
+      respecte: t.slaRespecte,
+    },
+    jalons: {
+      prisEnChargeLe: iso(t.prisEnChargeLe),
+      premiereReponseLe: iso(t.premiereReponseLe),
+      resolueLe: iso(t.resolueLe),
+      clotureLe: iso(t.clotureLe),
+      clotureAutoPrevueLe: iso(t.clotureAutoPrevueLe),
+      escaladeeLe: iso(t.escaladeeLe),
+    },
+    cloture: t.modeCloture
+      ? { mode: t.modeCloture, motif: t.motifClotureForcee, precision: t.commentaireCloture, par: reference(t.cloturePar) }
+      : null,
+    nbReouvertures: t.nbReouvertures,
+    messages: t.commentaires.map((m) => ({
+      id: m.id,
+      type: m.type,
+      contenu: m.contenu,
+      auteur: m.type === 'MESSAGE_DU_CLIENT' ? qui('CLIENT', null) : qui('UTILISATEUR', m.auteurUtilisateur),
+      creeLe: m.creeLe.toISOString(),
+      piecesJointes: m.piecesJointes.map(piece),
+    })),
+    piecesJointes: t.piecesJointes.map(piece),
+    chronologie: t.evenements.map((e) => ({
+      type: e.type,
+      statutAvant: e.statutAvant,
+      statutApres: e.statutApres,
+      acteur: qui(e.acteurType, e.acteurUtilisateur),
+      visibleClient: e.visibleClient,
+      date: e.creeLe.toISOString(),
+    })),
+    actionsPossibles: actionsPossibles(etat(t), acteur, maintenant),
+    operationsPossibles: operationsPossibles(etat(t), acteur),
+  };
+}
+
+// ---------------------------------------------------------------------------
+//  Ligne des files
+// ---------------------------------------------------------------------------
+
+export const INCLUSION_RESUME = {
+  categorie: { select: { id: true, nom: true } },
+  agence: { select: { id: true, nom: true } },
+  agent: PERSONNE,
+  client: { select: { nom: true } },
+} satisfies Prisma.ReclamationInclude;
+
+export type TicketResume = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_RESUME }>;
+
+export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormalise): S<'ReclamationResume'> {
+  const c = chrono(t, maintenant, cal);
+  return {
+    id: t.id,
+    numero: t.numero,
+    statut: t.statut,
+    priorite: t.priorite,
+    canal: t.canal,
+    categorie: { id: t.categorie.id, nom: t.categorie.nom },
+    agence: t.agence ? { id: t.agence.id, nom: t.agence.nom } : null,
+    agent: reference(t.agent),
+    client: { nom: t.client.nom },
+    creeLe: t.creeLe.toISOString(),
+    echeanceSlaLe: c.etat === 'EN_PAUSE' || c.etat === 'ARRETE' ? null : iso(t.echeanceSlaLe),
+    enRetard: enCours(t.statut) && estEnRetard(t, maintenant),
+    escaladee: t.escaladeeVersId !== null || t.escaladeeLe !== null,
+    sla: { etat: c.etat, delaiCibleMinutes: t.delaiCibleMinutes, minutesRestantes: c.etat === 'ARRETE' ? null : c.minutesRestantes },
+  };
+}
+
+// ---------------------------------------------------------------------------
+//  Vue du client
+// ---------------------------------------------------------------------------
+
+/** Étapes visibles du client : changements de statut seulement, horodatés. */
+export function etapesSuivi(evenements: readonly { visibleClient: boolean; statutApres: TicketComplet['statut'] | null; type: TicketComplet['evenements'][number]['type']; creeLe: Date }[]): S<'EtapeSuivi'>[] {
+  return evenements
+    .filter((e) => e.visibleClient && e.statutApres)
+    .map((e) => ({ type: e.type, statut: e.statutApres!, date: e.creeLe.toISOString() }));
+}
+
+/** Réclamation vue par son client : jamais de note interne ni de pièce jointe d'une note. */
+export async function lireVueClient(tx: ClientTransaction, id: string, clientId: string, maintenant: Date): Promise<S<'ReclamationClient'>> {
+  const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
+  if (!t || t.clientId !== clientId) throw introuvable('Réclamation introuvable');
+  const acteur: Acteur = { type: 'CLIENT', clientId };
+  return {
+    id: t.id,
+    numero: t.numero,
+    statut: t.statut,
+    categorie: t.categorie.nom,
+    description: t.description,
+    creeLe: t.creeLe.toISOString(),
+    clotureAutoPrevueLe: t.statut === 'RESOLUE' ? iso(t.clotureAutoPrevueLe) : null,
+    messages: t.commentaires
+      .filter((m) => m.type !== 'NOTE_INTERNE')
+      .map((m) => ({
+        id: m.id,
+        type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
+        contenu: m.contenu,
+        auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' as const : 'BANQUE' as const,
+        creeLe: m.creeLe.toISOString(),
+        piecesJointes: m.piecesJointes.map(piece),
+      })),
+    piecesJointes: t.piecesJointes.map(piece),
+    etapes: etapesSuivi(t.evenements),
+    actionsPossibles: actionsPossibles(etat(t), acteur, maintenant),
+    operationsPossibles: operationsPossibles(etat(t), acteur),
+  };
+}

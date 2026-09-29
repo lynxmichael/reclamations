@@ -9,7 +9,7 @@ import { date } from '../../ui/format';
 import { CadrePortail } from './CadrePortail';
 import { Etapes } from './Etapes';
 
-export function Suivi({ suivi }: { suivi: S<'SuiviPublic'> }) {
+export function Suivi({ suivi, surDemanderCode }: { suivi: S<'SuiviPublic'>; surDemanderCode?: (canal?: 'EMAIL') => void }) {
   return (
     <CadrePortail banque={suivi.banque}>
       <div className="px-5 pt-6 pb-8">
@@ -35,10 +35,10 @@ export function Suivi({ suivi }: { suivi: S<'SuiviPublic'> }) {
           <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
             Pour protéger vos informations, nous envoyons d'abord un code à 6 chiffres au téléphone donné lors du dépôt, ou à votre e-mail si vous n'avez pas donné de téléphone.
           </p>
-          <Bouton variante="principal" taille="grand" className="mt-4 w-full">
+          <Bouton variante="principal" taille="grand" className="mt-4 w-full" onClick={() => surDemanderCode?.()} data-visite="demander-code">
             Recevoir un code
           </Bouton>
-          <button type="button" className="mt-3 w-full py-1.5 text-[15px] font-semibold text-marque-texte underline-offset-2 hover:underline">
+          <button type="button" onClick={() => surDemanderCode?.('EMAIL')} className="mt-3 w-full py-1.5 text-[15px] font-semibold text-marque-texte underline-offset-2 hover:underline">
             Je préfère le recevoir par e-mail
           </button>
         </section>

@@ -1,0 +1,16 @@
+# Contexte de construction des images : backend/ et contrat/ (API, worker, migrations),
+# frontend/, contrat/ et docker/caddy/ (image web)
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+backend/src/generated
+backend/var
+frontend/test-results
+frontend/playwright-report
+docs
+docker/postgres/data
+*.zip
+.git

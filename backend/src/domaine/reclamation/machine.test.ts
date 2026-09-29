@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { StatutReclamation } from '../../generated/prisma/enums.js';
+import type { StatutReclamation } from '../enumerations.js';
 import {
   actionsPossibles, OPERATIONS, TRANSITIONS, verifierOperation, verifierTransition,
   type Acteur, type ActionStatut, type EtatTicket, type Operation,
@@ -65,6 +65,12 @@ describe('conditions particulières', () => {
   it('la prise en charge exige un agent assigné, même pour un superviseur', () => {
     const v = verifierTransition('PRENDRE_EN_CHARGE', ticket('OUVERTE', { agentId: null }), ACTEURS.SUPERVISEUR, maintenant);
     expect(v).toMatchObject({ ok: false, code: 'AUCUN_AGENT_ASSIGNE' });
+  });
+  it('répondre depuis « Ouverte » vaut prise en charge : refusé tant qu\'aucun agent n\'est assigné', () => {
+    expect(verifierOperation('REPONDRE_AU_CLIENT', ticket('OUVERTE', { agentId: null }), ACTEURS.SUPERVISEUR))
+      .toMatchObject({ ok: false, code: 'AUCUN_AGENT_ASSIGNE' });
+    expect(verifierOperation('REPONDRE_AU_CLIENT', ticket('EN_COURS', { agentId: null }), ACTEURS.SUPERVISEUR).ok).toBe(true);
+    expect(verifierOperation('NOTE_INTERNE', ticket('OUVERTE', { agentId: null }), ACTEURS.SUPERVISEUR).ok).toBe(true);
   });
   it('la contestation est refusée une fois le délai de clôture écoulé', () => {
     const v = verifierTransition('CONTESTER', ticket('RESOLUE', { clotureAutoPrevueLe: hier }), ACTEURS.CLIENT, maintenant);

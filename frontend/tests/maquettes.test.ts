@@ -8,12 +8,10 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Ajv2020 } from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
 import openapiTS, { astToString } from 'openapi-typescript';
 import { describe, expect, it } from 'vitest';
 import { EXEMPLES } from '../src/maquettes/donnees';
-import { CHEMIN_CONTRAT, contrat } from './contrat';
+import { CHEMIN_CONTRAT, validateur } from './contrat';
 import { MAINTENANT, id } from '../src/maquettes/donnees/commun';
 import { AYA, SERGE, FATOU } from '../src/maquettes/donnees/parametrage';
 import { FICHE_42 } from '../src/maquettes/donnees/reclamations';
@@ -21,34 +19,7 @@ import { MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE } from '../src/maquette
 import { OPERATIONS, actionsPossibles, verifierOperation } from '../../backend/src/domaine/reclamation/machine';
 import type { Acteur, EtatTicket, Operation } from '../../backend/src/domaine/reclamation/machine';
 
-
-/** Mode strict : un objet décrit par ses propriétés n'en accepte pas d'autres. */
-function durcir(document: typeof contrat) {
-  const copie = structuredClone(document);
-  const dansAllOf = new Set<string>();
-  const parcourir = (n: unknown, visite: (o: Record<string, unknown>) => void) => {
-    if (Array.isArray(n)) n.forEach((e) => parcourir(e, visite));
-    else if (n && typeof n === 'object') {
-      visite(n as Record<string, unknown>);
-      Object.values(n).forEach((e) => parcourir(e, visite));
-    }
-  };
-  parcourir(copie.components, (o) => {
-    if (Array.isArray(o.allOf)) for (const s of o.allOf as { $ref?: string }[]) if (s.$ref) dansAllOf.add(s.$ref.split('/').pop()!);
-  });
-  for (const [nom, schema] of Object.entries(copie.components.schemas)) {
-    if (dansAllOf.has(nom)) continue;
-    parcourir(schema, (o) => {
-      if (o.properties && o.additionalProperties === undefined && !o.allOf) o.additionalProperties = false;
-    });
-  }
-  return copie;
-}
-
-const ajv = new Ajv2020({ strict: false, allErrors: true });
-addFormats(ajv);
-ajv.addFormat('binary', true);
-ajv.addSchema(durcir(contrat), 'contrat');
+const ajv = validateur;
 
 describe('données des maquettes conformes au contrat', () => {
   it.each(EXEMPLES.map((e) => [e.nom, e] as const))('%s', (_nom, e) => {

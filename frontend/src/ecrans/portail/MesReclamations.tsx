@@ -8,19 +8,29 @@ import { BadgeStatut } from '../../ui/composants';
 import { date } from '../../ui/format';
 import { CadrePortail } from './CadrePortail';
 
-export function Deconnexion() {
+export function Deconnexion({ surQuitter }: { surQuitter?: () => void }) {
   return (
-    <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold hover:bg-sur-marque/15">
+    <button type="button" onClick={surQuitter} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold hover:bg-sur-marque/15">
       <LogOut aria-hidden size={16} />
       Quitter
     </button>
   );
 }
 
-export function MesReclamations({ banque, reclamations }: { banque: S<'BanquePublique'>; reclamations: S<'ReclamationClientResume'>[] }) {
+export function MesReclamations({
+  banque,
+  reclamations,
+  surOuvrir,
+  surQuitter,
+}: {
+  banque: S<'BanquePublique'>;
+  reclamations: S<'ReclamationClientResume'>[];
+  surOuvrir?: (id: string) => void;
+  surQuitter?: () => void;
+}) {
   const aConfirmer = reclamations.filter((r) => r.statut === 'RESOLUE').length;
   return (
-    <CadrePortail banque={banque} action={<Deconnexion />}>
+    <CadrePortail banque={banque} action={<Deconnexion surQuitter={surQuitter} />}>
       <div className="px-5 pt-6 pb-10">
         <h1 className="text-[26px] leading-tight font-bold tracking-tight">Vos réclamations</h1>
         <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
@@ -33,6 +43,13 @@ export function MesReclamations({ banque, reclamations }: { banque: S<'BanquePub
             <li key={r.id}>
               <a
                 href={`#${r.id}`}
+                data-visite={`ouvrir-${r.numero}`}
+                onClick={(e) => {
+                  if (surOuvrir) {
+                    e.preventDefault();
+                    surOuvrir(r.id);
+                  }
+                }}
                 className="flex items-center gap-3 rounded-xl border border-trait px-4 py-4 hover:border-encre-3 has-[.a-confirmer]:border-resolue/40 has-[.a-confirmer]:bg-resolue-doux/40"
               >
                 <div className="min-w-0 flex-1">

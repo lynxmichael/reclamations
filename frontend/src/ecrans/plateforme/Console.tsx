@@ -4,7 +4,7 @@
  * (arbitrage 4, droits par colonne de l'étape 3).
  */
 import type { ReactNode } from 'react';
-import { Bell, Building2, ChartColumn, Layers, ScrollText, ShieldUser } from 'lucide-react';
+import { Bell, Building2, ChartColumn, Layers, LogOut, ScrollText, ShieldUser } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, Pastille, cx } from '../../ui/composants';
 import { styleMarque } from '../../ui/marque';
@@ -21,7 +21,26 @@ const LIENS: { cle: PageConsole; libelle: string; icone: typeof Bell }[] = [
   { cle: 'administrateurs', libelle: 'Super Admins', icone: ShieldUser },
 ];
 
-export function CadreConsole({ page, moi, alertes, children }: { page: PageConsole; moi: S<'Moi'>; alertes: number; children: ReactNode }) {
+export function CadreConsole({
+  page,
+  moi,
+  alertes,
+  children,
+  pages,
+  lienDe,
+  surNaviguer,
+  surDeconnexion,
+}: {
+  page: PageConsole;
+  moi: S<'Moi'>;
+  alertes: number;
+  children: ReactNode;
+  /** Pages offertes (étape 8 : sans « Activité et SMS », qui arrive avec le reporting de l'étape 9) */
+  pages?: PageConsole[];
+  lienDe?: (page: PageConsole) => string;
+  surNaviguer?: (page: PageConsole) => void;
+  surDeconnexion?: () => void;
+}) {
   const nom = `${moi.prenom} ${moi.nom}`;
   return (
     <div style={styleMarque(COULEUR_CONSOLE)} className="relative flex min-h-full flex-col bg-fond text-encre">
@@ -31,10 +50,16 @@ export function CadreConsole({ page, moi, alertes, children }: { page: PageConso
           <div className="text-xs opacity-80">Makor Telecoms</div>
         </div>
         <nav aria-label="Menu principal" className="flex h-full items-stretch gap-1">
-          {LIENS.map((l) => (
+          {LIENS.filter((l) => !pages || pages.includes(l.cle)).map((l) => (
             <a
               key={l.cle}
-              href={`#${l.cle}`}
+              href={lienDe ? lienDe(l.cle) : `#${l.cle}`}
+              onClick={(e) => {
+                if (surNaviguer && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                  e.preventDefault();
+                  surNaviguer(l.cle);
+                }
+              }}
               aria-current={l.cle === page ? 'page' : undefined}
               className={cx(
                 'flex items-center gap-2 border-b-[3px] px-3 text-[15px]',
@@ -53,6 +78,11 @@ export function CadreConsole({ page, moi, alertes, children }: { page: PageConso
             <div className="text-[15px] font-semibold">{nom}</div>
             <div className="text-xs opacity-80">Super Admin</div>
           </div>
+          {surDeconnexion && (
+            <button type="button" onClick={surDeconnexion} aria-label="Se déconnecter" title="Se déconnecter" className="ml-1 rounded-lg p-2 opacity-80 hover:bg-white/10 hover:opacity-100">
+              <LogOut size={18} />
+            </button>
+          )}
         </div>
       </header>
       <main className="min-w-0 flex-1 px-8 py-7">{children}</main>

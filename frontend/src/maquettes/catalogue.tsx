@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import type { S } from '../api/types';
 import { Accuse } from '../ecrans/portail/Accuse';
 import { CodeOtp } from '../ecrans/portail/CodeOtp';
-import { Depot } from '../ecrans/portail/Depot';
+import { Depot, fichierExemple } from '../ecrans/portail/Depot';
 import { MaReclamation } from '../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../ecrans/portail/MesReclamations';
 import { Suivi } from '../ecrans/portail/Suivi';
@@ -164,7 +164,7 @@ export const ECRANS: Ecran[] = [
             telephone: '07 08 09 10 11',
             email: 'yao.kouassi@exemple.ci',
             consentement: true,
-            fichiers: [{ nom: 'ticket-distributeur.jpg', taille: 1_258_291 }],
+            fichiers: [fichierExemple('ticket-distributeur.jpg', 1_258_291)],
           }}
         />
       ),

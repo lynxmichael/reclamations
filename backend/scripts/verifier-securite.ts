@@ -11,11 +11,11 @@
  */
 import { clientEn, contexte, creerClientBase, transactionEn } from '../src/infrastructure/base-de-donnees/index.js';
 import {
-  CompteRendu, clientProprietaire, codePublic, creerBanque, creerPlan, donneesReclamation, jeton, priseEnCharge, urlBaseJetable, viderLaBase,
+  CompteRendu, DELAI_TRANSACTION_VERIFICATION, clientProprietaire, codePublic, creerBanque, creerPlan, donneesReclamation, jeton, priseEnCharge, urlBaseJetable, viderLaBase,
 } from './commun.js';
 
 const proprietaire = clientProprietaire();
-const base = creerClientBase(urlBaseJetable('APP_DATABASE_URL'));
+const base = creerClientBase(urlBaseJetable('APP_DATABASE_URL'), { delaiTransaction: DELAI_TRANSACTION_VERIFICATION });
 const cr = new CompteRendu();
 
 function verifier(condition: unknown, message: string): asserts condition {

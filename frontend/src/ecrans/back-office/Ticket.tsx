@@ -6,9 +6,10 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowUpRight, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, Paperclip, Phone, QrCode, SendHorizontal, UserRound, X,
+  ArrowUpRight, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, Phone, QrCode, SendHorizontal, UserRound, X,
 } from 'lucide-react';
 import type { S } from '../../api/types';
+import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Liste, Panneau, Texte, cx } from '../../ui/composants';
 import { dateCourte, dateHeure } from '../../ui/format';
 import { JaugeFiche } from '../../ui/JaugeSla';
@@ -16,6 +17,24 @@ import { CANAL, EVENEMENT, MOTIF_CLOTURE } from '../../ui/libelles';
 import { PieceJointe } from '../portail/MaReclamation';
 
 export type Fenetre = 'aucune' | 'resoudre' | 'cloturer';
+
+/** Résultat d'une action : false (ou une promesse de false) si elle a échoué, et la saisie est gardée. */
+type Issue = void | boolean | Promise<boolean>;
+
+/** Démo cliquable et application (étape 8) : chaque bouton de la fiche appelle une opération du contrat. */
+export interface ActionsFiche {
+  retour?: () => void;
+  prendreEnCharge?: () => void;
+  assigner?: (agentId: string) => void;
+  repondre?: (contenu: string, attendreReponse: boolean, fichiers: File[]) => Issue;
+  note?: (contenu: string, fichiers: File[]) => Issue;
+  resoudre?: (contenu: string) => Issue;
+  priorite?: () => void;
+  escalader?: () => void;
+  cloturer?: (motif: S<'MotifClotureForcee'>, precision: string) => Issue;
+  /** Une action est en cours : ses boutons attendent */
+  occupe?: boolean;
+}
 
 function Message({ m, nomClient }: { m: S<'ReclamationDetail'>['messages'][number]; nomClient: string }) {
   const note = m.type === 'NOTE_INTERNE';
@@ -46,13 +65,21 @@ function Message({ m, nomClient }: { m: S<'ReclamationDetail'>['messages'][numbe
   );
 }
 
-function Redaction({ r }: { r: S<'ReclamationDetail'> }) {
+function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; actions?: ActionsFiche; suggestion?: string }) {
   const peutRepondre = r.operationsPossibles.includes('REPONDRE_AU_CLIENT');
   const peutNoter = r.operationsPossibles.includes('NOTE_INTERNE');
-  const peutQuestionner = r.actionsPossibles.includes('QUESTIONNER_CLIENT');
-  const [mode, setMode] = useState<'reponse' | 'note'>(peutRepondre ? 'reponse' : 'note');
+  // Depuis « Ouverte », répondre prend la réclamation en charge (S1) : la question reste possible ensuite
+  const peutQuestionner = r.actionsPossibles.includes('QUESTIONNER_CLIENT') || (r.statut === 'OUVERTE' && peutRepondre);
+  // Onglet choisi ; sans choix, la réponse quand elle devient possible (après une assignation)
+  const [choix, setMode] = useState<'reponse' | 'note' | null>(null);
+  const mode = peutRepondre ? (choix ?? 'reponse') : 'note';
+  const [texte, setTexte] = useState(suggestion ?? '');
+  const [attendre, setAttendre] = useState(false);
+  const [fichiers, setFichiers] = useState<File[]>([]);
   if (!peutRepondre && !peutNoter) return null;
   const note = mode === 'note';
+  // Répondre depuis « Ouverte » prend en charge : il faut d'abord un agent assigné
+  const attendAgent = !peutRepondre && r.statut === 'OUVERTE' && !r.agent;
   return (
     <div className={cx('rounded-xl border', note ? 'border-attente/35 bg-attente-doux/50' : 'border-trait-fort bg-surface')}>
       <div role="tablist" className="flex gap-1 border-b border-inherit px-3 pt-2">
@@ -73,21 +100,40 @@ function Redaction({ r }: { r: S<'ReclamationDetail'> }) {
         <Texte
           id="redaction"
           rows={4}
+          value={texte}
+          onChange={(e) => setTexte(e.target.value)}
+          data-visite="redaction"
           className={note ? 'border-attente/35 bg-surface' : undefined}
           placeholder={note ? 'Visible seulement par l\'équipe de la banque' : `Votre réponse à ${r.client.nom}, envoyée par e-mail et SMS`}
         />
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <Bouton variante="discret" taille="petit" icone={<Paperclip aria-hidden size={15} />}>Joindre un fichier</Bouton>
+        <div className="mt-3 flex flex-wrap items-start gap-3">
+          <div className="min-w-0 basis-full sm:basis-auto">
+            <ChoixFichiers fichiers={fichiers} surChangement={setFichiers} libelle="Joindre un fichier" compact />
+          </div>
           {!note && peutQuestionner && (
             <label className="inline-flex items-center gap-2 text-sm text-encre-2">
-              <input type="checkbox" className="h-4 w-4 accent-[var(--marque)]" />
+              <input type="checkbox" checked={attendre} onChange={(e) => setAttendre(e.target.checked)} className="h-4 w-4 accent-[var(--marque)]" />
               Attendre la réponse du client <span className="text-encre-3">(le chrono SLA se met en pause)</span>
             </label>
           )}
-          <Bouton variante={note ? 'secondaire' : 'principal'} className="ml-auto" icone={<SendHorizontal aria-hidden size={16} />}>
-            {note ? 'Ajouter la note' : 'Envoyer au client'}
+          <Bouton
+            variante={note ? 'secondaire' : 'principal'}
+            className="ml-auto"
+            icone={<SendHorizontal aria-hidden size={16} />}
+            disabled={!texte.trim() || actions?.occupe}
+            data-visite="envoyer-reponse"
+            onClick={async () => {
+              const issue = await (note ? actions?.note?.(texte, fichiers) : actions?.repondre?.(texte, attendre, fichiers));
+              if (issue === false) return;
+              setTexte('');
+              setAttendre(false);
+              setFichiers([]);
+            }}
+          >
+            {actions?.occupe ? 'Envoi…' : note ? 'Ajouter la note' : 'Envoyer au client'}
           </Bouton>
         </div>
+        {attendAgent && <p className="mt-3 text-sm text-encre-3">Pour répondre au client, assignez d'abord la réclamation à un agent.</p>}
       </div>
     </div>
   );
@@ -102,9 +148,9 @@ function Info({ libelle, children }: { libelle: string; children: ReactNode }) {
   );
 }
 
-function Dialogue({ titre, children, surFermer }: { titre: string; children: ReactNode; surFermer?: () => void }) {
+function Dialogue({ titre, children, surFermer, ecran }: { titre: string; children: ReactNode; surFermer?: () => void; ecran?: boolean }) {
   return (
-    <div className="absolute inset-0 z-30 flex items-start justify-center bg-encre/35 pt-24">
+    <div className={cx('inset-0 z-30 flex items-start justify-center bg-encre/35 pt-24', ecran ? 'fixed' : 'absolute')}>
       <div role="dialog" aria-modal="true" aria-label={titre} className="w-[520px] rounded-2xl bg-surface p-6 shadow-[0_24px_64px_rgb(23_33_43/0.28)]">
         <div className="flex items-start justify-between">
           <h2 className="text-xl font-bold">{titre}</h2>
@@ -124,6 +170,9 @@ export function Ticket({
   fenetre = 'aucune',
   delaiClotureJours,
   seuil,
+  actions,
+  suggestions,
+  ecran,
 }: {
   r: S<'ReclamationDetail'>;
   /** Agents actifs proposés à l'assignation (listerUtilisateurs), pour le superviseur */
@@ -131,15 +180,36 @@ export function Ticket({
   fenetre?: Fenetre;
   delaiClotureJours: number;
   seuil: number;
+  actions?: ActionsFiche;
+  /** Textes proposés (démo) : réponse au client, réponse finale */
+  suggestions?: { reponse?: string; resolution?: string };
+  /** Fenêtres de dialogue au-dessus de tout l'écran (application), plutôt que du cadre (démo) */
+  ecran?: boolean;
 }) {
   const [ouverte, setOuverte] = useState<Fenetre>(fenetre);
+  const [finale, setFinale] = useState(
+    suggestions?.resolution ??
+      (actions ? '' : undefined) ??
+      "Bonjour M. Kouassi, le distributeur n'a pas délivré les billets lors de votre retrait du 23/09. Les 50 000 FCFA ont été recrédités sur votre compte ce jour. Nous vous prions de nous excuser pour ce désagrément.",
+  );
+  const [motif, setMotif] = useState<S<'MotifClotureForcee'>>('DOUBLON');
+  const [precision, setPrecision] = useState(actions ? '' : 'Même réclamation que ALP-2026-002436, déposée la veille par le client.');
   const a = (x: S<'ActionStatut'>) => r.actionsPossibles.includes(x);
   const o = (x: S<'OperationTicket'>) => r.operationsPossibles.includes(x);
   const lectureSeule = r.actionsPossibles.length === 0 && r.operationsPossibles.every((x) => x === 'CONSULTER');
 
   return (
     <div className="flex flex-col gap-5">
-      <a href="#files" className="-ml-1 inline-flex w-fit items-center gap-1 text-[15px] font-semibold text-encre-2 hover:text-encre">
+      <a
+        href="#files"
+        onClick={(e) => {
+          if (actions?.retour) {
+            e.preventDefault();
+            actions.retour();
+          }
+        }}
+        className="-ml-1 inline-flex w-fit items-center gap-1 text-[15px] font-semibold text-encre-2 hover:text-encre"
+      >
         <ChevronLeft aria-hidden size={18} />
         Réclamations
       </a>
@@ -161,15 +231,15 @@ export function Ticket({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {o('CHANGER_PRIORITE') && (
-            <Bouton icone={<Flame aria-hidden size={16} />}>{r.priorite === 'URGENTE' ? 'Repasser en normal' : 'Passer en urgent'}</Bouton>
+            <Bouton icone={<Flame aria-hidden size={16} />} onClick={actions?.priorite}>{r.priorite === 'URGENTE' ? 'Repasser en normal' : 'Passer en urgent'}</Bouton>
           )}
-          {o('ESCALADER') && <Bouton icone={<ArrowUpRight aria-hidden size={16} />}>Escalader</Bouton>}
+          {o('ESCALADER') && <Bouton icone={<ArrowUpRight aria-hidden size={16} />} onClick={actions?.escalader}>Escalader</Bouton>}
           {a('CLOTURER_DE_FORCE') && (
             <Bouton variante="danger" onClick={() => setOuverte('cloturer')}>Clôturer de force</Bouton>
           )}
-          {a('PRENDRE_EN_CHARGE') && <Bouton variante="principal">Prendre en charge</Bouton>}
+          {a('PRENDRE_EN_CHARGE') && <Bouton variante="principal" onClick={actions?.prendreEnCharge} data-visite="prendre">Prendre en charge</Bouton>}
           {a('RESOUDRE') && (
-            <Bouton variante="principal" icone={<CircleCheck aria-hidden size={17} />} onClick={() => setOuverte('resoudre')}>
+            <Bouton variante="principal" icone={<CircleCheck aria-hidden size={17} />} onClick={() => setOuverte('resoudre')} data-visite="resoudre">
               Résoudre
             </Bouton>
           )}
@@ -210,7 +280,7 @@ export function Ticket({
             <ol className="flex flex-col gap-3">
               {r.messages.map((m) => <Message key={m.id} m={m} nomClient={r.client.nom} />)}
             </ol>
-            <Redaction r={r} />
+            <Redaction key={`${r.id}-${r.statut}-${r.messages.length}`} r={r} actions={actions} suggestion={suggestions?.reponse} />
           </section>
         </div>
 
@@ -237,7 +307,13 @@ export function Ticket({
             <dl className="-my-2.5 divide-y divide-trait">
               <Info libelle="Agent assigné">
                 {o('ASSIGNER') ? (
-                  <Liste defaultValue={r.agent?.id ?? ''} aria-label="Agent assigné" className="mt-1 h-10">
+                  <Liste
+                    value={r.agent?.id ?? ''}
+                    onChange={(e) => e.target.value && actions?.assigner?.(e.target.value)}
+                    aria-label="Agent assigné"
+                    data-visite="assigner"
+                    className="mt-1 h-10"
+                  >
                     <option value="">Non assignée</option>
                     {agents.map((ag) => (
                       <option key={ag.id} value={ag.id}>{ag.nom}</option>
@@ -285,7 +361,7 @@ export function Ticket({
       </div>
 
       {ouverte === 'resoudre' && a('RESOUDRE') && (
-        <Dialogue titre="Résoudre la réclamation" surFermer={() => setOuverte('aucune')}>
+        <Dialogue titre="Résoudre la réclamation" surFermer={() => setOuverte('aucune')} ecran={ecran}>
           <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
             Votre réponse finale part au client par e-mail et SMS. Il pourra confirmer ou contester pendant {delaiClotureJours} jours ; sans réponse, la réclamation sera clôturée.
           </p>
@@ -294,36 +370,56 @@ export function Ticket({
             id="finale"
             rows={5}
             className="mt-1.5"
-            defaultValue="Bonjour M. Kouassi, le distributeur n'a pas délivré les billets lors de votre retrait du 23/09. Les 50 000 FCFA ont été recrédités sur votre compte ce jour. Nous vous prions de nous excuser pour ce désagrément."
+            value={finale}
+            onChange={(e) => setFinale(e.target.value)}
           />
           <div className="mt-5 flex justify-end gap-2">
             <Bouton variante="discret" onClick={() => setOuverte('aucune')}>Annuler</Bouton>
-            <Bouton variante="principal" icone={<CircleCheck aria-hidden size={17} />}>Résoudre et envoyer</Bouton>
+            <Bouton
+              variante="principal"
+              icone={<CircleCheck aria-hidden size={17} />}
+              disabled={!finale.trim() || actions?.occupe}
+              data-visite="confirmer-resolution"
+              onClick={async () => {
+                if ((await actions?.resoudre?.(finale)) !== false) setOuverte('aucune');
+              }}
+            >
+              Résoudre et envoyer
+            </Bouton>
           </div>
         </Dialogue>
       )}
 
       {ouverte === 'cloturer' && a('CLOTURER_DE_FORCE') && (
-        <Dialogue titre="Clôturer de force" surFermer={() => setOuverte('aucune')}>
+        <Dialogue titre="Clôturer de force" surFermer={() => setOuverte('aucune')} ecran={ecran}>
           <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
             La réclamation sera clôturée sans l'accord du client, qui en sera informé. Cette action est inscrite au journal d'audit.
           </p>
           <fieldset className="mt-5">
             <legend className="text-[15px] font-semibold">Motif</legend>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              {(Object.keys(MOTIF_CLOTURE) as S<'MotifClotureForcee'>[]).map((m, i) => (
-                <label key={m} className={cx('flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[15px]', i === 0 ? 'border-urgent/50 bg-urgent-doux/50 font-semibold' : 'border-trait-fort')}>
-                  <input type="radio" name="motif" defaultChecked={i === 0} className="h-4 w-4 accent-[var(--color-urgent)]" />
+              {(Object.keys(MOTIF_CLOTURE) as S<'MotifClotureForcee'>[]).map((m) => (
+                <label key={m} className={cx('flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[15px]', motif === m ? 'border-urgent/50 bg-urgent-doux/50 font-semibold' : 'border-trait-fort')}>
+                  <input type="radio" name="motif" checked={motif === m} onChange={() => setMotif(m)} className="h-4 w-4 accent-[var(--color-urgent)]" />
                   {MOTIF_CLOTURE[m]}
                 </label>
               ))}
             </div>
           </fieldset>
           <label htmlFor="precision" className="mt-4 block text-[15px] font-semibold">Précision</label>
-          <Texte id="precision" rows={2} className="mt-1.5 min-h-0" defaultValue="Même réclamation que ALP-2026-002436, déposée la veille par le client." />
+          <Texte id="precision" rows={2} className="mt-1.5 min-h-0" value={precision} onChange={(e) => setPrecision(e.target.value)} placeholder="Par exemple : même réclamation déposée deux fois." />
           <div className="mt-5 flex justify-end gap-2">
             <Bouton variante="discret" onClick={() => setOuverte('aucune')}>Annuler</Bouton>
-            <Bouton variante="danger" className="!bg-urgent !text-white">Clôturer la réclamation</Bouton>
+            <Bouton
+              variante="danger"
+              className="!bg-urgent !text-white"
+              disabled={!precision.trim() || actions?.occupe}
+              onClick={async () => {
+                if ((await actions?.cloturer?.(motif, precision)) !== false) setOuverte('aucune');
+              }}
+            >
+              Clôturer la réclamation
+            </Bouton>
           </div>
         </Dialogue>
       )}

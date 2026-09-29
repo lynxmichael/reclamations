@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
     environment: 'node',
-    // Les tests du domaine sont purs : aucune base, aucun réseau
+    // Les tests unitaires sont purs : aucune base, aucun réseau (tests de bout en bout : vitest.e2e.config.mts)
     reporters: ['default'],
   },
 });

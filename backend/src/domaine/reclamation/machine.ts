@@ -9,7 +9,7 @@
  *                                   RESOLUE → EN_COURS (contestation)
  *   tout statut non clôturé → CLOTUREE (clôture forcée par un superviseur, motif obligatoire)
  */
-import type { RoleUtilisateur, StatutReclamation, TypeEvenement } from '../../generated/prisma/enums.js';
+import type { RoleUtilisateur, StatutReclamation, TypeEvenement } from '../enumerations.js';
 
 export type Acteur =
   | { readonly type: 'UTILISATEUR'; readonly id: string; readonly role: RoleUtilisateur; readonly libelle: string }
@@ -138,6 +138,10 @@ export function verifierOperation(operation: Operation, ticket: EtatTicket, acte
   const qualite = qualiteDe(acteur, ticket);
   if (!qualite || !def.par.includes(qualite)) {
     return refus('ACTEUR_NON_AUTORISE', `${operation} est réservé à : ${def.par.join(', ')}`);
+  }
+  // Répondre depuis OUVERTE prend le ticket en charge : même exigence qu'une prise en charge
+  if (operation === 'REPONDRE_AU_CLIENT' && ticket.statut === 'OUVERTE' && !ticket.agentId) {
+    return refus('AUCUN_AGENT_ASSIGNE', 'Le ticket doit d\'abord être assigné à un agent');
   }
   return OK;
 }

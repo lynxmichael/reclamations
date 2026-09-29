@@ -2,9 +2,10 @@
  * Cadre du portail client, aux couleurs de la banque (décision E2) : pensé d'abord pour un
  * téléphone, ouvert en scannant le QR code d'une agence.
  */
-import type { ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
 import type { S } from '../../api/types';
 import { LogoBanque } from '../../ui/composants';
+import { LienPolitique } from '../../ui/contextes';
 import { styleMarque } from '../../ui/marque';
 
 export function CadrePortail({
@@ -23,6 +24,7 @@ export function CadrePortail({
   /** Barre fixée en bas de l'écran (bouton d'envoi) */
   bas?: ReactNode;
 }) {
+  const lienPolitique = useContext(LienPolitique);
   return (
     <div style={styleMarque(banque.couleurPrimaire)} className="flex min-h-full flex-col bg-surface text-encre">
       <header className="bg-marque px-5 pt-4 pb-5 text-sur-marque">
@@ -39,7 +41,7 @@ export function CadrePortail({
       <main className="flex-1">{children}</main>
       <footer className="border-t border-trait px-5 pt-5 pb-8 text-sm leading-relaxed text-encre-3">
         Vos informations servent uniquement à traiter votre réclamation.{' '}
-        <a href="#politique" className="font-semibold text-marque-texte underline underline-offset-2">
+        <a href={lienPolitique} className="font-semibold text-marque-texte underline underline-offset-2">
           Politique de données
         </a>
       </footer>

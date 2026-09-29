@@ -1,0 +1,34 @@
+# =============================================================================
+#  Caddy — production sur le VPS Contabo (décision A9)
+#  HTTPS automatique (Let's Encrypt), en-têtes de sécurité, /api/* vers l'API NestJS, écrans.
+#
+#  - console.<domaine>  : console du personnel (banques et plateforme), /srv/console
+#  - <slug>.<domaine>   : portail d'une banque, /srv/portail ; certificat obtenu à la première
+#                         visite, après vérification auprès de l'API que ce nom est celui d'une
+#                         banque cliente
+#  Les deux applications et ce fichier sont copiés dans l'image web (frontend/Dockerfile) ; les
+#  blocs communs (sécurité, API, cache, CSP) sont dans commun.caddy.
+# =============================================================================
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://api:3000/interne/tls
+	}
+}
+
+import commun.caddy
+
+console.{$DOMAINE_PLATEFORME} {
+	import securite
+	import api
+	import application /srv/console
+}
+
+*.{$DOMAINE_PLATEFORME} {
+	tls {
+		on_demand
+	}
+	import securite
+	import api
+	import application /srv/portail
+}

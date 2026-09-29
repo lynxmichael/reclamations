@@ -1,6 +1,6 @@
 import { normaliserCalendrier } from '../../domaine/temps-ouvre/calendrier.js';
 import type { ParametresSla } from '../../domaine/reclamation/sla.js';
-import type { ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import { enSerie, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
 
 export interface ParametresBanque {
   readonly banque: {
@@ -18,10 +18,10 @@ export interface ParametresBanque {
 
 /** Paramètres de la banque courante (contexte banque : la RLS ne laisse voir que la sienne). */
 export async function chargerParametres(tx: ClientTransaction, tenantId: string): Promise<ParametresBanque> {
-  const [banque, plages, joursFeries] = await Promise.all([
-    tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: { select: { plafondTicketsMois: true } } } }),
-    tx.horaireOuvre.findMany({ select: { jourSemaine: true, debutMinute: true, finMinute: true } }),
-    tx.jourFerie.findMany({ select: { date: true, recurrent: true } }),
+  const [banque, plages, joursFeries] = await enSerie([
+    () => tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: { select: { plafondTicketsMois: true } } } }),
+    () => tx.horaireOuvre.findMany({ select: { jourSemaine: true, debutMinute: true, finMinute: true } }),
+    () => tx.jourFerie.findMany({ select: { date: true, recurrent: true } }),
   ]);
   return {
     banque: {

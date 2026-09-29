@@ -12,10 +12,10 @@ import { DateTime } from 'luxon';
 import { CycleDeVie, TachesSla } from '../src/application/reclamations/index.js';
 import type { Acteur } from '../src/domaine/reclamation/machine.js';
 import { contexte, creerClientBase, transactionEn } from '../src/infrastructure/base-de-donnees/index.js';
-import { CompteRendu, clientProprietaire, creerBanque, creerPlan, urlBaseJetable, viderLaBase, type BanqueDeTest } from './commun.js';
+import { CompteRendu, DELAI_TRANSACTION_VERIFICATION, clientProprietaire, creerBanque, creerPlan, urlBaseJetable, viderLaBase, type BanqueDeTest } from './commun.js';
 
 const proprietaire = clientProprietaire();
-const base = creerClientBase(urlBaseJetable('APP_DATABASE_URL'));
+const base = creerClientBase(urlBaseJetable('APP_DATABASE_URL'), { delaiTransaction: DELAI_TRANSACTION_VERIFICATION });
 const cr = new CompteRendu();
 
 const t = (texte: string) => DateTime.fromFormat(texte, 'yyyy-MM-dd HH:mm', { zone: 'Africa/Abidjan' }).toJSDate();

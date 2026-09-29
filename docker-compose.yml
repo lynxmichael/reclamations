@@ -1,16 +1,60 @@
 # Environnement de développement — Plateforme de gestion des réclamations
 #
-#   docker compose up -d                  démarre PostgreSQL 16 et Redis 8
-#   docker compose run --rm verification  contrat d'API, tests unitaires, migrations sur une base
-#                                         jetable et vérifications (intégrité, sécurité, cycle de vie)
-#   docker compose up -d swagger          documentation Swagger du contrat : http://localhost:8081
-#   docker compose run --rm maquettes     maquettes des écrans : tests, puis docs/maquettes/index.html
+#   docker compose up -d                  PostgreSQL 16, Redis 8, Mailpit, l'API et le worker, puis
+#                                         les écrans (installation et migrations d'abord, automatiquement)
+#   docker compose exec api npm run semer jeu de démonstration : deux banques, leur personnel
+#   docker compose exec api npm run totp -- <e-mail>   code TOTP d'un compte de démonstration
+#   docker compose logs -f api worker     journaux (les SMS de développement s'y affichent)
+#
+#     Console du personnel          : http://localhost:5173
+#     Portail d'une banque          : http://alpha.localhost:5174/d/<code du QR>  (slug de la banque)
+#     API et documentation Swagger  : http://localhost:3000/api/docs
+#     E-mails envoyés (Mailpit)     : http://localhost:8025
+#
+#   docker compose run --rm verification  contrat, tests unitaires, vérifications sur PostgreSQL
+#                                         (étapes 2 à 4), tests de bout en bout de l'API (étape 7)
+#   docker compose run --rm maquettes     écrans : types, tests, construction des deux applications,
+#                                         de docs/maquettes/ et de docs/demo/
+#   docker compose run --rm navigateur    écrans dans Chromium (Playwright) sur l'API réelle (étape 8)
+#   docker compose up -d swagger          documentation du contrat seule : http://localhost:8081
 #   docker compose down                   arrête (ajouter -v pour effacer les données)
 #
-# L'API et les workers s'ajouteront ici à l'étape 7, l'application frontend à l'étape 8. La production
-# (VPS Contabo) aura son propre fichier, docker-compose.prod.yml, livré avec l'application.
+# La production (VPS Contabo) a son propre fichier : docker-compose.prod.yml.
 
 name: reclamations
+
+x-frontend: &frontend
+  image: node:22-bookworm
+  working_dir: /depot/frontend
+  volumes:
+    - ./:/depot
+    - frontend_node_modules:/depot/frontend/node_modules
+
+x-backend: &backend
+  image: node:22-bookworm
+  working_dir: /depot/backend
+  environment: &environnement-backend
+    # Propriétaire des tables : migrations seulement
+    DATABASE_URL: postgresql://${POSTGRES_USER:-reclamations}:${POSTGRES_PASSWORD:-reclamations}@postgres:5432/reclamations_dev
+    # Rôle de l'application, sans droit propre (Row-Level Security)
+    APP_DATABASE_URL: postgresql://reclamations_app:${APP_DB_PASSWORD:-reclamations_app}@postgres:5432/reclamations_dev
+    REDIS_URL: redis://redis:6379
+    # Secrets de DÉVELOPPEMENT (refusés en production)
+    JWT_SECRET: developpement-uniquement-changer-en-production-0123456789
+    CLE_CHIFFREMENT_TOTP: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+    CLE_OTP: developpement-uniquement-cle-otp-0123456789abcdef
+    COOKIE_SECURE: "false"
+    SMTP_URL: smtp://mailpit:1025
+    STOCKAGE_DOSSIER: /donnees/fichiers
+    # Adresses des écrans dans les e-mails et SMS : serveurs Vite ci-dessous
+    URL_CONSOLE: http://localhost:${CONSOLE_PORT:-5173}
+    URL_PORTAIL: http://{slug}.localhost:${PORTAIL_PORT:-5174}
+    # Priment sur un éventuel backend/.env (lancement hors Docker), qui ne sert pas ici
+    PORT: "3000"
+  volumes:
+    - ./:/depot
+    - backend_node_modules:/depot/backend/node_modules
+    - fichiers_dev:/donnees/fichiers
 
 services:
   postgres:
@@ -54,45 +98,158 @@ services:
       timeout: 3s
       retries: 20
 
+  # E-mails de développement : tout ce que le worker envoie arrive ici (http://localhost:8025)
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+
+  # Installation du backend (npm ci, client Prisma), rôle de connexion de l'application (créé ou
+  # réaligné sur APP_DB_PASSWORD, même si le volume PostgreSQL est ancien), puis migrations, avant l'API
+  backend-installation:
+    <<: *backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npm ci --no-audit --no-fund && npm run -s roles:dev && npx prisma migrate deploy"
+
+  # API NestJS (étape 7), rechargée à chaque modification du code
+  api:
+    <<: *backend
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      backend-installation:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: npm run dev
+
+  # Worker : tâches SLA chaque minute, envoi des e-mails (Mailpit) et des SMS (journal)
+  worker:
+    <<: *backend
+    restart: unless-stopped
+    depends_on:
+      backend-installation:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    command: npm run dev:worker
+
+  # Installation des écrans (npm ci), avant les serveurs Vite
+  frontend-installation:
+    <<: *frontend
+    command: npm ci --no-audit --no-fund
+
+  # Console du personnel (étape 8), rechargée à chaque modification ; /api vers l'API
+  console:
+    <<: *frontend
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:3000
+    ports:
+      - "${CONSOLE_PORT:-5173}:5173"
+    depends_on:
+      frontend-installation:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+    command: npm run dev:console
+
+  # Portail client (étape 8) : http://<slug>.localhost:5174 ; /api vers l'API
+  portail:
+    <<: *frontend
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:3000
+    ports:
+      - "${PORTAIL_PORT:-5174}:5174"
+    depends_on:
+      frontend-installation:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+    command: npm run dev:portail
+
   # Outil ponctuel (profil « outils ») : lancé seulement par `docker compose run --rm verification`.
   # Vérifie le contrat d'API (étape 5), réinitialise la base jetable reclamations_verif, y applique
   # les migrations, lance les tests unitaires, puis les vérifications sur PostgreSQL :
-  # intégrité (étape 2), sécurité (étape 3), cycle de vie et SLA (étape 4).
+  # intégrité (étape 2), sécurité (étape 3), cycle de vie et SLA (étape 4) ; enfin les tests de bout
+  # en bout de l'API (étape 7) sur une base recréée, reclamations_e2e, et la base 15 de Redis.
   verification:
-    image: node:22-bookworm
+    <<: *backend
     profiles: ["outils"]
-    working_dir: /app
     environment:
+      <<: *environnement-backend
       DATABASE_URL: postgresql://${POSTGRES_USER:-reclamations}:${POSTGRES_PASSWORD:-reclamations}@postgres:5432/reclamations_verif
       APP_DATABASE_URL: postgresql://reclamations_app:${APP_DB_PASSWORD:-reclamations_app}@postgres:5432/reclamations_verif
+    # Ses propres node_modules : son « npm ci » ne doit pas vider ceux de l'API et du worker en marche
     volumes:
-      - ./backend:/app
-      - ./contrat:/contrat:ro
-      - backend_node_modules:/app/node_modules
+      - ./:/depot
+      - verification_node_modules:/depot/backend/node_modules
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: >
       sh -c "npm ci --no-audit --no-fund
       && npm run contrat:verifier
+      && npm run typecheck
+      && npm run -s roles:dev
       && npx prisma migrate reset --force
       && npm test
-      && npm run verifier"
+      && npm run verifier
+      && npm run test:e2e"
 
-  # Maquettes des écrans (étape 6, profil « outils ») : types, tests contre le contrat et la machine
-  # d'états, puis reconstruction de docs/maquettes/index.html (page unique, lisible sans connexion).
+  # Écrans (profil « outils ») : types, tests contre le contrat et la machine d'états, construction
+  # de la console et du portail (étape 8), puis de docs/maquettes/index.html et docs/demo/index.html
+  # (pages uniques, sans connexion, étape 6). Ses propres node_modules, comme « verification ».
   maquettes:
-    image: node:22-bookworm
+    <<: *frontend
     profiles: ["outils"]
-    working_dir: /depot/frontend
     volumes:
       - ./:/depot
-      - frontend_node_modules:/depot/frontend/node_modules
+      - maquettes_node_modules:/depot/frontend/node_modules
     command: >
       sh -c "npm ci --no-audit --no-fund
       && npm run typecheck
       && npm test
-      && npm run build:maquettes"
+      && npm run build"
+
+  # Écrans dans un vrai navigateur (étape 8, profil « outils ») : Playwright et Chromium. L'API de
+  # test tourne dans ce conteneur (port 3300, base jetable reclamations_navigateur, Redis base 14,
+  # sans worker : les tests lisent codes et liens dans la boîte d'envoi) ; la console et le portail
+  # construits pour la production sont servis par « vite preview » sous la CSP de production.
+  # Captures de la note d'étape : docker compose run --rm -e CAPTURES=1 navigateur
+  navigateur:
+    image: mcr.microsoft.com/playwright:v1.56.0-noble
+    profiles: ["outils"]
+    working_dir: /depot/frontend
+    init: true
+    shm_size: 1gb
+    environment:
+      <<: *environnement-backend
+      CI: "1"
+    volumes:
+      - ./:/depot
+      - navigateur_backend_node_modules:/depot/backend/node_modules
+      - navigateur_frontend_node_modules:/depot/frontend/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd /depot/backend && npm ci --no-audit --no-fund && npm run -s roles:dev
+      && cd /depot/frontend && npm ci --no-audit --no-fund
+      && npx playwright test"
 
   # Documentation Swagger du contrat d'API (profil « docs ») : docker compose up -d swagger
   swagger:
@@ -111,4 +268,9 @@ volumes:
   postgres_data:
   redis_data:
   backend_node_modules:
+  verification_node_modules:
   frontend_node_modules:
+  maquettes_node_modules:
+  navigateur_backend_node_modules:
+  navigateur_frontend_node_modules:
+  fichiers_dev:

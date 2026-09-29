@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -15,7 +19,28 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["vite/client", "node"]
+    "paths": {
+      "@domaine/*": [
+        "../backend/src/domaine/*"
+      ],
+      "luxon": [
+        "./node_modules/@types/luxon/index.d.ts"
+      ]
+    },
+    "types": [
+      "vite/client",
+      "node"
+    ]
   },
-  "include": ["src", "outils", "tests/contrat.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "outils",
+    "console/entree.ts",
+    "portail/entree.ts",
+    "tests/contrat.ts",
+    "tests/navigateur",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ]
 }

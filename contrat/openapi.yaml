@@ -228,6 +228,32 @@ paths:
         '422': { $ref: '#/components/responses/RegleMetier' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
+  /public/logos/{fichier}:
+    get:
+      tags: [Dépôt et suivi]
+      operationId: lireLogo
+      summary: Logo d'une banque (adresse donnée par logoUrl)
+      description: Le nom du fichier est aléatoire et change à chaque nouveau logo ; l'image peut donc être gardée en cache un an.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - name: fichier
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{16,64}\.(png|svg|webp)$', examples: ['Xq3h0Zk8b2mN4pLs.png'] }
+      responses:
+        '200':
+          description: Image du logo
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+            image/svg+xml:
+              schema: { type: string }
+            image/webp:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   # ===========================================================================
   #  Espace client (après OTP)
   # ===========================================================================
@@ -379,7 +405,7 @@ paths:
       summary: Première étape de connexion (e-mail et mot de passe)
       description: |
         Renvoie toujours une étape TOTP : la double authentification est obligatoire pour tout le personnel.
-        Après 5 échecs, le compte est verrouillé 15 minutes. 10 tentatives par 15 minutes et par adresse IP.
+        Après 5 échecs, le compte est verrouillé 15 minutes. 10 échecs par 15 minutes et par adresse IP (les connexions réussies ne comptent pas : le personnel d'une agence partage souvent la même adresse publique).
       x-roles: [PUBLIC]
       security: []
       requestBody:
@@ -395,6 +421,7 @@ paths:
               schema: { $ref: '#/components/schemas/EtapeTotp' }
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
         '423': { $ref: '#/components/responses/Verrouille' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
@@ -415,6 +442,8 @@ paths:
         '200': { $ref: '#/components/responses/SessionOuverte' }
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '423': { $ref: '#/components/responses/Verrouille' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
   /auth/invitation/acceptation:
@@ -454,6 +483,8 @@ paths:
         '200': { $ref: '#/components/responses/SessionOuverte' }
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '423': { $ref: '#/components/responses/Verrouille' }
 
   /auth/rafraichissement:
     post:
@@ -480,6 +511,7 @@ paths:
         '204':
           description: Session fermée, cookie effacé
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
 
   /auth/mot-de-passe/oubli:
     post:
@@ -537,6 +569,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Moi' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
 
   # ===========================================================================
   #  Banque : réclamations
@@ -622,6 +655,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Reclamation' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
 
   /banque/reclamations/{id}/prise-en-charge:
@@ -807,6 +841,7 @@ paths:
                 motif: { type: string, maxLength: 2000, description: "Ajouté en note interne" }
       responses:
         '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
@@ -856,6 +891,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Fichier' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
 
   # ===========================================================================
@@ -903,7 +939,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageNotifications' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
 
   /banque/notifications/{id}/lecture:
     post:
@@ -919,6 +957,7 @@ paths:
         '204':
           description: Notification lue
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
 
   /banque/notifications/lecture:
@@ -933,6 +972,7 @@ paths:
         '204':
           description: Notifications lues
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
 
   # ===========================================================================
   #  Banque : paramétrage (§6.7)
@@ -948,6 +988,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Parametres' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
     patch:
       tags: [Paramétrage]
       operationId: modifierApparence
@@ -986,6 +1027,7 @@ paths:
                 logo: { type: string, format: binary }
       responses:
         '200': { $ref: '#/components/responses/Parametres' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
         '413': { $ref: '#/components/responses/FichierTropVolumineux' }
@@ -1008,6 +1050,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Categorie' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
     post:
       tags: [Paramétrage]
       operationId: creerCategorie
@@ -1076,6 +1119,7 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Agence' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
     post:
       tags: [Paramétrage]
       operationId: creerAgence
@@ -1221,6 +1265,7 @@ paths:
               schema: { type: string, format: binary }
             image/svg+xml:
               schema: { type: string }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
@@ -1236,6 +1281,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/Horaires' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
     put:
       tags: [Paramétrage]
       operationId: remplacerHoraires
@@ -1283,7 +1329,9 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/JourFerie' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
     post:
       tags: [Paramétrage]
       operationId: ajouterJourFerie
@@ -1352,6 +1400,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageUtilisateurs' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
     post:
@@ -1514,6 +1563,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageAudit' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
@@ -1551,6 +1601,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageBanques' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
     post:
@@ -1790,6 +1841,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageAudit' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
@@ -1831,6 +1883,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PageNotifications' }
+        '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
@@ -2025,7 +2078,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
     Interdit:
-      description: Rôle insuffisant, ou banque suspendue
+      description: Rôle insuffisant, ou banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
@@ -2229,6 +2282,10 @@ components:
         - SLUG_DEJA_UTILISE
         - QR_CODE_SANS_AGENCE
         - SUPERVISEUR_INVALIDE
+        - INVITATION_DEJA_ACCEPTEE
+        - JOUR_FERIE_EXISTANT
+        # Serveur
+        - ERREUR_INTERNE
 
     # ---- Communs -----------------------------------------------------------------
     Probleme:

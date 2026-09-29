@@ -46,12 +46,19 @@ export const contexte = {
  * sont omis par défaut : seules les requêtes d'authentification les demandent explicitement
  * (omit: { motDePasseHash: false }), en contexte système.
  */
-export function creerClientBase(connectionString: string) {
+export function creerClientBase(connectionString: string, options: { delaiTransaction?: number } = {}) {
+  const timeout = options.delaiTransaction ?? DELAI_TRANSACTION_MS;
   return new PrismaClient({
     adapter: new PrismaPg({ connectionString }),
     omit: { utilisateur: { motDePasseHash: true, totpSecretChiffre: true } },
+    // S'applique à toutes les transactions, y compris celles de clientEn() : le défaut de Prisma
+    // (5 s) est trop court sur un poste de développement chargé (Docker Desktop).
+    transactionOptions: { maxWait: Math.min(timeout, 10_000), timeout },
   });
 }
+
+/** Durée maximale d'une transaction de l'API ou du worker ; les scripts de vérification en donnent plus. */
+export const DELAI_TRANSACTION_MS = 15_000;
 
 export type ClientBase = ReturnType<typeof creerClientBase>;
 
@@ -96,10 +103,11 @@ export async function transactionEn<T>(
   travail: (tx: ClientTransaction) => Promise<T>,
   options?: { timeout?: number },
 ): Promise<T> {
+  // Sans délai explicite, celui du client s'applique (creerClientBase)
   return base.$transaction(async (tx) => {
     await basculer(tx, ctx);
     return travail(tx);
-  }, { timeout: options?.timeout ?? 10_000 });
+  }, options?.timeout ? { timeout: options.timeout } : undefined);
 }
 
 /**
@@ -110,4 +118,14 @@ export async function transactionEn<T>(
 export async function basculer(tx: ClientTransaction, ctx: ContexteAcces): Promise<void> {
   const { role, tenant } = reglages(ctx);
   await tx.$executeRaw`SELECT set_config('role', ${role}, true), set_config('app.tenant_id', ${tenant}, true)`;
+}
+
+/**
+ * Plusieurs requêtes d'une même transaction, l'une après l'autre : une connexion PostgreSQL
+ * n'exécute qu'une requête à la fois (pg 9 refusera les requêtes simultanées sur un client).
+ */
+export async function enSerie<T extends readonly unknown[]>(taches: { readonly [K in keyof T]: () => Promise<T[K]> }): Promise<T> {
+  const resultats: unknown[] = [];
+  for (const tache of taches as readonly (() => Promise<unknown>)[]) resultats.push(await tache());
+  return resultats as unknown as T;
 }

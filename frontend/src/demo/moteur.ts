@@ -1,0 +1,1042 @@
+/**
+ * Moteur de la démo : une API simulée, dans le navigateur, qui répond comme l'API réelle
+ * (types du contrat) et applique les VRAIES règles du backend : machine d'états, chrono SLA en
+ * temps ouvré et normalisation des coordonnées sont importés de backend/src/domaine.
+ *
+ * Rien ne quitte le navigateur. L'horloge est simulée : on peut l'avancer pour montrer l'alerte
+ * à 75 %, le dépassement et l'escalade, puis la clôture automatique.
+ */
+import {
+  OPERATIONS, TRANSITIONS, verifierOperation, verifierTransition,
+  type Acteur, type ActionStatut, type EtatTicket, type Operation,
+} from '@domaine/reclamation/machine';
+import { delaiPremiereReponse, slaALaReprise, slaALaResolution, slaAuDepot, slaEnPause, type ParametresSla } from '@domaine/reclamation/sla';
+import { minutesOuvreesEntre, normaliserCalendrier, type CalendrierNormalise } from '@domaine/temps-ouvre/calendrier';
+import { normaliserEmail, normaliserTelephone } from '@domaine/contact';
+import type { S } from '../api/types';
+import { AGENCES, CATEGORIES, HORAIRES, JOURS_FERIES, PARAMETRES, PERSONNEL, POINTS_DEPOT } from '../maquettes/donnees/parametrage';
+import { DOMAINE } from '../maquettes/donnees/commun';
+
+/* ------------------------------------------------------------------ Types internes */
+
+type Statut = S<'StatutReclamation'>;
+type TypeEvt = S<'TypeEvenement'>;
+type Qui = { type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME'; id: string | null };
+
+interface Message {
+  id: string;
+  type: S<'TypeCommentaire'>;
+  contenu: string;
+  auteur: Qui;
+  creeLe: Date;
+  pieces: S<'PieceJointe'>[];
+}
+
+interface Evenement {
+  type: TypeEvt;
+  statutAvant: Statut | null;
+  statutApres: Statut | null;
+  acteur: Qui;
+  visibleClient: boolean;
+  date: Date;
+}
+
+export interface Ticket {
+  id: string;
+  numero: string;
+  jetonSuivi: string;
+  statut: Statut;
+  priorite: S<'Priorite'>;
+  canal: S<'CanalDepot'>;
+  categorieId: string;
+  agenceId: string | null;
+  pointId: string;
+  agentId: string | null;
+  escaladeeVersId: string | null;
+  clientId: string;
+  description: string;
+  pieces: S<'PieceJointe'>[];
+  creeLe: Date;
+  delaiCibleMinutes: number;
+  echeanceSlaLe: Date | null;
+  alertePreventiveLe: Date | null;
+  slaMinutesRestantes: number | null;
+  slaSuspenduLe: Date | null;
+  slaRespecte: boolean | null;
+  prisEnChargeLe: Date | null;
+  premiereReponseLe: Date | null;
+  resolueLe: Date | null;
+  clotureLe: Date | null;
+  clotureAutoPrevueLe: Date | null;
+  escaladeeLe: Date | null;
+  cloture: { mode: S<'ModeCloture'>; motif: S<'MotifClotureForcee'> | null; precision: string | null; parId: string | null } | null;
+  nbReouvertures: number;
+  aEteQuestionne: boolean;
+  alerteEnvoyee: boolean;
+  depassementSignale: boolean;
+  messages: Message[];
+  evenements: Evenement[];
+}
+
+interface Client {
+  id: string;
+  nom: string;
+  email: string | null;
+  telephone: string | null;
+}
+
+/** Message envoyé au client (SMS ou e-mail), affiché sur le téléphone de la démo. */
+export interface Envoi {
+  id: string;
+  clientId: string;
+  canal: 'SMS' | 'EMAIL';
+  destination: string;
+  texte: string;
+  date: Date;
+  lien: { jeton: string } | null;
+}
+
+interface NotificationInterne {
+  id: string;
+  destinataireId: string;
+  modele: string;
+  sujet: string;
+  contenu: string;
+  reclamationId: string | null;
+  creeLe: Date;
+  lueLe: Date | null;
+}
+
+interface LigneJournal {
+  rang: number;
+  horodatage: Date;
+  acteur: { type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME'; id: string | null; libelle: string | null; role: string | null };
+  action: string;
+  entite: string | null;
+  entiteId: string | null;
+  donnees: Record<string, unknown> | null;
+}
+
+export interface BanqueDemo {
+  nom: string;
+  slug: string;
+  prefixe: string;
+  couleur: string;
+  logoUrl: string | null;
+}
+
+export interface EntreeDepot {
+  categorieId: string;
+  agenceId?: string | null;
+  description: string;
+  nom: string;
+  telephone?: string;
+  email?: string;
+  consentement: boolean;
+  fichiers?: { nom: string; taille: number; type: string }[];
+}
+
+/* ------------------------------------------------------------------ Erreurs (RFC 9457) */
+
+export class ErreurDemo extends Error {
+  constructor(readonly probleme: S<'Probleme'>) {
+    super(probleme.title);
+  }
+}
+
+function erreur(status: number, code: S<'CodeErreur'>, title: string, detail?: string, erreurs?: S<'ErreurChamp'>[]): ErreurDemo {
+  return new ErreurDemo({
+    type: `/erreurs/${code.toLowerCase().replaceAll('_', '-')}`,
+    title,
+    status,
+    code,
+    ...(detail ? { detail } : {}),
+    ...(erreurs ? { erreurs } : {}),
+  });
+}
+
+const STATUT_REFUS: Record<string, number> = {
+  TRANSITION_INTERDITE: 409,
+  ACTEUR_NON_AUTORISE: 403,
+  AUCUN_AGENT_ASSIGNE: 422,
+  DELAI_DE_CONTESTATION_DEPASSE: 422,
+  CLOTURE_AUTOMATIQUE_PREMATUREE: 422,
+};
+
+/* ------------------------------------------------------------------ Outils */
+
+const MINUTE = 60_000;
+const hex = (n: number, l: number) => n.toString(16).padStart(l, '0');
+
+/** Générateur pseudo-aléatoire reproductible (mulberry32) : même historique à chaque ouverture. */
+export function aleatoire(graine: number) {
+  let a = graine >>> 0;
+  const suivant = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return {
+    nombre: suivant,
+    entier: (min: number, max: number) => min + Math.floor(suivant() * (max - min + 1)),
+    parmi: <T,>(liste: readonly T[]) => liste[Math.floor(suivant() * liste.length)]!,
+    pondere: <T,>(liste: readonly (readonly [T, number])[]) => {
+      const total = liste.reduce((s, [, p]) => s + p, 0);
+      let r = suivant() * total;
+      for (const [v, p] of liste) if ((r -= p) < 0) return v;
+      return liste[liste.length - 1]![0];
+    },
+  };
+}
+
+const minutesDe = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+
+/* ------------------------------------------------------------------ Le moteur */
+
+export const PERSONNES = {
+  admin: PERSONNEL.find((u) => u.role === 'ADMIN_ENTREPRISE')!,
+  superviseur: PERSONNEL.find((u) => u.prenom === 'Serge')!,
+  agent: PERSONNEL.find((u) => u.prenom === 'Aya')!,
+};
+
+export class Moteur {
+  readonly banque: BanqueDemo;
+  maintenant: Date;
+  readonly calendrier: CalendrierNormalise;
+  readonly sla: ParametresSla;
+
+  private tickets: Ticket[] = [];
+  private clients: Client[] = [];
+  readonly envois: Envoi[] = [];
+  private notifications: NotificationInterne[] = [];
+  private journal: LigneJournal[] = [];
+  private otp = new Map<string, { code: string; expire: Date; essais: number }>();
+  private sessions = new Map<string, string>();
+  private compteur: number;
+  private seq = 0;
+  private hasard = aleatoire(7);
+  private abonnes = new Set<() => void>();
+  version = 0;
+  /** Pendant le rejeu de l'historique, on ne prévient personne. */
+  private silencieux = false;
+
+  constructor(banque: BanqueDemo, maintenant: Date, compteurInitial = 2000) {
+    this.banque = banque;
+    this.maintenant = new Date(maintenant);
+    this.compteur = compteurInitial;
+    this.calendrier = normaliserCalendrier({
+      fuseauHoraire: HORAIRES.fuseauHoraire,
+      plages: HORAIRES.plages.map((p) => ({ jourSemaine: p.jourSemaine, debutMinute: minutesDe(p.debut), finMinute: minutesDe(p.fin) })),
+      joursFeries: JOURS_FERIES.map((j) => ({ date: j.date, recurrent: j.recurrent })),
+    });
+    this.sla = { calendrier: this.calendrier, seuilAlertePourcent: PARAMETRES.seuilAlerteSlaPourcent, delaiClotureAutoJours: PARAMETRES.delaiClotureAutoJours };
+  }
+
+  /* -------------------------------------------------------------- Abonnement (React) */
+
+  abonner = (f: () => void) => {
+    this.abonnes.add(f);
+    return () => this.abonnes.delete(f);
+  };
+  lireVersion = () => this.version;
+  private changer() {
+    this.version++;
+    if (!this.silencieux) for (const f of this.abonnes) f();
+  }
+  /** Exécute sans notifier à chaque étape (rejeu de l'historique), puis notifie une fois. */
+  enSilence(f: () => void) {
+    this.silencieux = true;
+    try {
+      f();
+    } finally {
+      this.silencieux = false;
+      this.changer();
+    }
+  }
+
+  /* -------------------------------------------------------------- Identifiants */
+
+  private nouvelId(prefixe: string) {
+    this.seq++;
+    return `0199${prefixe}-${hex(this.seq >> 16, 4)}-7${hex(this.seq & 0xfff, 3)}-8000-${hex(this.seq * 2654435761 >>> 0, 12)}`;
+  }
+
+  /* -------------------------------------------------------------- Personnes et acteurs */
+
+  personne(id: string | null) {
+    return id ? PERSONNEL.find((u) => u.id === id) ?? null : null;
+  }
+  private nomDe(id: string | null) {
+    const p = this.personne(id);
+    return p ? `${p.prenom} ${p.nom}` : null;
+  }
+  private acteurUtilisateur(id: string): Acteur {
+    const p = this.personne(id);
+    if (!p || p.statut !== 'ACTIF') throw erreur(401, 'NON_AUTHENTIFIE', 'Session inconnue');
+    return { type: 'UTILISATEUR', id: p.id, role: p.role, libelle: `${p.prenom} ${p.nom}` };
+  }
+  private superviseurs() {
+    return PERSONNEL.filter((u) => u.role === 'SUPERVISEUR' && u.statut === 'ACTIF');
+  }
+  private superviseurDe(agentId: string | null) {
+    const sup = this.personne(agentId)?.superviseur?.id;
+    return sup ?? this.superviseurs()[0]!.id;
+  }
+
+  /* -------------------------------------------------------------- Horloge */
+
+  /** Avance l'horloge, en déclenchant les tâches planifiées à l'instant exact où elles échoient. */
+  avancer(minutes: number) {
+    this.avancerJusqua(new Date(this.maintenant.getTime() + minutes * MINUTE));
+    this.changer();
+  }
+
+  avancerJusqua(cible: Date) {
+    for (let garde = 0; garde < 10_000; garde++) {
+      const prochaine = this.prochaineEcheance();
+      if (!prochaine || prochaine > cible) break;
+      if (prochaine > this.maintenant) this.maintenant = prochaine;
+      this.taches();
+    }
+    if (cible > this.maintenant) this.maintenant = new Date(cible);
+    this.taches();
+  }
+
+  /** Prochain instant où une tâche planifiée a quelque chose à faire. */
+  prochaineEcheance(): Date | null {
+    let min: number | null = null;
+    const voir = (d: Date | null) => {
+      if (d && (min === null || d.getTime() < min)) min = d.getTime();
+    };
+    for (const t of this.tickets) {
+      if (t.statut === 'OUVERTE' || t.statut === 'EN_COURS') {
+        if (!t.alerteEnvoyee) voir(t.alertePreventiveLe);
+        if (!t.depassementSignale) voir(t.echeanceSlaLe);
+      }
+      if (t.statut === 'RESOLUE') voir(t.clotureAutoPrevueLe);
+    }
+    return min === null ? null : new Date(min);
+  }
+
+  /** Prochain instant de l'alerte à 75 % ou de l'échéance d'une réclamation (pour la visite guidée). */
+  jalonsDe(id: string) {
+    const t = this.ticket(id);
+    return { alerte: t.alerteEnvoyee ? null : t.alertePreventiveLe, echeance: t.depassementSignale ? null : t.echeanceSlaLe, clotureAuto: t.clotureAutoPrevueLe };
+  }
+
+  /** Tâches planifiées de l'étape 4 : alerte préventive, dépassement + escalade, clôture automatique. */
+  private taches() {
+    const now = this.maintenant;
+    for (const t of this.tickets) {
+      if ((t.statut === 'OUVERTE' || t.statut === 'EN_COURS') && !t.alerteEnvoyee && t.alertePreventiveLe && t.alertePreventiveLe <= now) {
+        t.alerteEnvoyee = true;
+        this.evenement(t, 'ALERTE_SLA_PREVENTIVE', null, null, { type: 'SYSTEME', id: null }, false);
+        const pour = t.agentId ? [t.agentId] : this.superviseurs().map((s) => s.id);
+        for (const d of pour)
+          this.notifier(d, 'sla.alerte_preventive', 'Seuil d\'alerte atteint', `${t.numero} : ${PARAMETRES.seuilAlerteSlaPourcent} % du délai consommé.`, t.id);
+        this.auditer(null, 'sla.alerte_preventive', t, { seuil: PARAMETRES.seuilAlerteSlaPourcent });
+      }
+      if ((t.statut === 'OUVERTE' || t.statut === 'EN_COURS') && !t.depassementSignale && t.echeanceSlaLe && t.echeanceSlaLe <= now) {
+        t.depassementSignale = true;
+        this.evenement(t, 'DEPASSEMENT_SLA', null, null, { type: 'SYSTEME', id: null }, false);
+        if (!t.escaladeeVersId) {
+          t.escaladeeVersId = this.superviseurDe(t.agentId);
+          t.escaladeeLe = new Date(now);
+          this.evenement(t, 'ESCALADE', null, null, { type: 'SYSTEME', id: null }, false);
+        }
+        for (const d of new Set([t.agentId, t.escaladeeVersId].filter((x): x is string => !!x)))
+          this.notifier(d, 'sla.depassement', 'Délai SLA dépassé', `${t.numero} a dépassé son échéance et a été escaladée.`, t.id);
+        this.auditer(null, 'sla.depassement', t, { escaladeeVers: t.escaladeeVersId });
+      }
+      if (t.statut === 'RESOLUE' && t.clotureAutoPrevueLe && t.clotureAutoPrevueLe <= now) {
+        const v = verifierTransition('CLOTURER_AUTOMATIQUEMENT', this.etat(t), { type: 'SYSTEME' }, now);
+        if (!v.ok) continue;
+        this.passer(t, 'CLOTURER_AUTOMATIQUEMENT', { type: 'SYSTEME', id: null });
+        t.clotureLe = new Date(now);
+        t.cloture = { mode: 'AUTOMATIQUE', motif: null, precision: null, parId: null };
+        this.envoyer(t, 'est clôturée. Merci de votre confiance.', false);
+        this.auditer(null, 'reclamation.cloture_automatique', t, { statut: 'CLOTUREE' });
+      }
+    }
+  }
+
+  /* -------------------------------------------------------------- Écritures communes */
+
+  private etat(t: Ticket): EtatTicket {
+    return { statut: t.statut, agentId: t.agentId, clientId: t.clientId, clotureAutoPrevueLe: t.clotureAutoPrevueLe };
+  }
+
+  private exigerTransition(action: ActionStatut, t: Ticket, acteur: Acteur) {
+    const v = verifierTransition(action, this.etat(t), acteur, this.maintenant);
+    if (!v.ok) throw erreur(STATUT_REFUS[v.code] ?? 409, v.code, 'Action impossible', v.message);
+  }
+  private exigerOperation(op: Operation, t: Ticket, acteur: Acteur) {
+    const v = verifierOperation(op, this.etat(t), acteur);
+    if (!v.ok) throw erreur(STATUT_REFUS[v.code] ?? 409, v.code, 'Action impossible', v.message);
+  }
+
+  private passer(t: Ticket, action: ActionStatut, acteur: Qui) {
+    const avant = t.statut;
+    t.statut = TRANSITIONS[action].vers;
+    this.evenement(t, TRANSITIONS[action].evenement, avant, t.statut, acteur, true);
+  }
+
+  private evenement(t: Ticket, type: TypeEvt, avant: Statut | null, apres: Statut | null, acteur: Qui, visibleClient: boolean) {
+    t.evenements.push({ type, statutAvant: avant, statutApres: apres, acteur, visibleClient, date: new Date(this.maintenant) });
+  }
+
+  private message(t: Ticket, type: S<'TypeCommentaire'>, contenu: string, auteur: Qui, pieces: S<'PieceJointe'>[] = []) {
+    t.messages.push({ id: this.nouvelId('3333'), type, contenu, auteur, creeLe: new Date(this.maintenant), pieces });
+  }
+
+  private notifier(destinataireId: string, modele: string, sujet: string, contenu: string, reclamationId: string | null) {
+    this.notifications.push({
+      id: this.nouvelId('5555'), destinataireId, modele, sujet, contenu, reclamationId, creeLe: new Date(this.maintenant), lueLe: null,
+    });
+  }
+
+  private urgente(t: Ticket) {
+    const pour = new Set([t.agentId, ...this.superviseurs().map((s) => s.id), PERSONNES.admin.id].filter((x): x is string => !!x));
+    for (const d of pour) this.notifier(d, 'reclamation.urgente', 'Réclamation urgente', `${t.numero}, ${this.categorie(t.categorieId).nom}.`, t.id);
+  }
+
+  lienSuivi(jeton: string) {
+    return `https://${this.banque.slug}.${DOMAINE}/suivi/${jeton}`;
+  }
+
+  /** SMS et e-mail au client : numéro et lien seulement, jamais le contenu (décision S10). */
+  private envoyer(t: Ticket, suite: string, avecLien = true) {
+    const c = this.client(t.clientId);
+    const texte = `${this.banque.nom} : votre réclamation ${t.numero} ${suite}${avecLien ? ` Suivi : ${this.lienSuivi(t.jetonSuivi).replace('https://', '')}` : ''}`;
+    for (const [canal, destination] of [['SMS', c.telephone], ['EMAIL', c.email]] as const) {
+      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, canal, destination, texte, date: new Date(this.maintenant), lien: avecLien ? { jeton: t.jetonSuivi } : null });
+    }
+  }
+
+  private auditer(qui: string | null | 'CLIENT', action: string, t: Ticket | null, donnees: Record<string, unknown> | null = null) {
+    const p = qui && qui !== 'CLIENT' ? this.personne(qui) : null;
+    this.journal.push({
+      rang: this.journal.length + 1,
+      horodatage: new Date(this.maintenant),
+      acteur: p
+        ? { type: 'UTILISATEUR', id: p.id, libelle: `${p.prenom} ${p.nom}`, role: p.role }
+        : qui === 'CLIENT'
+          ? { type: 'CLIENT', id: t?.clientId ?? null, libelle: null, role: null }
+          : { type: 'SYSTEME', id: null, libelle: null, role: null },
+      action,
+      entite: t ? 'reclamation' : null,
+      entiteId: t?.id ?? null,
+      donnees,
+    });
+  }
+
+  /* -------------------------------------------------------------- Lectures de base */
+
+  ticket(id: string) {
+    const t = this.tickets.find((x) => x.id === id || x.numero === id);
+    if (!t) throw erreur(404, 'INTROUVABLE', 'Réclamation introuvable');
+    return t;
+  }
+  private client(id: string) {
+    return this.clients.find((c) => c.id === id)!;
+  }
+  categorie(id: string) {
+    const c = CATEGORIES.find((x) => x.id === id);
+    if (!c) throw erreur(422, 'CATEGORIE_INVALIDE', 'Catégorie inconnue');
+    return c;
+  }
+  private ticketParJeton(jeton: string) {
+    const t = this.tickets.find((x) => x.jetonSuivi === jeton);
+    if (!t) throw erreur(404, 'INTROUVABLE', 'Lien de suivi inconnu');
+    return t;
+  }
+
+  /* ============================================================== Portail public */
+
+  banquePublique(): S<'BanquePublique'> {
+    return { nom: this.banque.nom, slug: this.banque.slug, logoUrl: this.banque.logoUrl, couleurPrimaire: this.banque.couleur, couleurSecondaire: null };
+  }
+
+  formulaire(codePoint: string): S<'FormulaireDepot'> {
+    const p = POINTS_DEPOT.find((x) => x.code === codePoint && x.actif);
+    if (!p) throw erreur(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code n\'est plus actif');
+    return {
+      banque: this.banquePublique(),
+      canal: p.canal,
+      agence: p.agence,
+      agences: p.agence ? [] : AGENCES.filter((a) => a.active).map((a) => ({ id: a.id, nom: a.nom })),
+      categories: CATEGORIES.filter((c) => c.active).map(({ id, nom, description }) => ({ id, nom, description })),
+      politiqueDonnees: { version: '2026-09', url: '/politique-donnees' },
+      fichiers: { maxFichiers: 5, maxOctets: 5_242_880, types: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] },
+    };
+  }
+
+  deposer(codePoint: string, e: EntreeDepot): S<'AccuseDepot'> {
+    const point = POINTS_DEPOT.find((x) => x.code === codePoint && x.actif);
+    if (!point) throw erreur(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code n\'est plus actif');
+    const erreurs: S<'ErreurChamp'>[] = [];
+    let telephone: string | null = null;
+    let email: string | null = null;
+    try {
+      telephone = normaliserTelephone(e.telephone);
+    } catch {
+      const chiffres = (e.telephone ?? '').replace(/\D/g, '').length;
+      erreurs.push({ champ: 'telephone', message: `Ce numéro a ${chiffres} chiffres ; un numéro ivoirien en compte 10, par exemple 07 08 09 10 11.` });
+    }
+    try {
+      email = normaliserEmail(e.email);
+    } catch {
+      erreurs.push({ champ: 'email', message: 'Adresse e-mail invalide, par exemple nom@exemple.ci.' });
+    }
+    if (e.description.trim().length < 10) erreurs.push({ champ: 'description', message: 'Décrivez votre réclamation en quelques mots (10 caractères au moins).' });
+    if (!e.nom.trim()) erreurs.push({ champ: 'nom', message: 'Indiquez votre nom pour que la banque puisse vous répondre.' });
+    if (!telephone && !email && !erreurs.some((x) => x.champ === 'telephone' || x.champ === 'email'))
+      erreurs.push({ champ: 'telephone', message: 'Un téléphone ou un e-mail au moins, pour recevoir votre numéro de suivi.' });
+    if (!e.consentement) erreurs.push({ champ: 'consentement', message: 'Acceptez la politique de données pour envoyer votre réclamation.' });
+    if (erreurs.length) throw erreur(400, 'VALIDATION', 'Formulaire incomplet', `${erreurs.length} champ${erreurs.length > 1 ? 's' : ''} à corriger`, erreurs);
+
+    const cat = this.categorie(e.categorieId);
+    const client = this.trouverOuCreerClient(e.nom.trim(), telephone, email);
+    this.compteur++;
+    const annee = this.maintenant.getUTCFullYear();
+    const t: Ticket = {
+      id: this.nouvelId('2222'),
+      numero: `${this.banque.prefixe}-${annee}-${String(this.compteur).padStart(6, '0')}`,
+      jetonSuivi: `S${hex(this.seq * 40503 >>> 0, 8)}${hex(this.compteur * 2246822519 >>> 0, 8)}`,
+      statut: 'OUVERTE',
+      priorite: cat.prioriteParDefaut,
+      canal: point.canal,
+      categorieId: cat.id,
+      agenceId: point.agence?.id ?? e.agenceId ?? null,
+      pointId: point.id,
+      agentId: null,
+      escaladeeVersId: null,
+      clientId: client.id,
+      description: e.description.trim(),
+      pieces: (e.fichiers ?? []).map((f) => ({ id: this.nouvelId('4444'), nomFichier: f.nom, typeMime: f.type, tailleOctets: f.taille, creeLe: new Date(this.maintenant).toISOString() })),
+      creeLe: new Date(this.maintenant),
+      delaiCibleMinutes: cat.delaiCibleMinutes,
+      ...slaAuDepot(this.maintenant, cat.delaiCibleMinutes, this.sla),
+      slaRespecte: null,
+      prisEnChargeLe: null,
+      premiereReponseLe: null,
+      resolueLe: null,
+      clotureLe: null,
+      clotureAutoPrevueLe: null,
+      escaladeeLe: null,
+      cloture: null,
+      nbReouvertures: 0,
+      aEteQuestionne: false,
+      alerteEnvoyee: false,
+      depassementSignale: false,
+      messages: [],
+      evenements: [],
+    };
+    this.tickets.push(t);
+    this.evenement(t, 'CREATION', null, 'OUVERTE', { type: 'CLIENT', id: client.id }, true);
+    this.envoyer(t, 'est bien reçue.');
+    if (t.priorite === 'URGENTE') this.urgente(t);
+    this.auditer('CLIENT', 'reclamation.depot', t, { statut: 'OUVERTE', priorite: t.priorite });
+    this.changer();
+    return { numero: t.numero, lienSuivi: this.lienSuivi(t.jetonSuivi), jetonSuivi: t.jetonSuivi };
+  }
+
+  private trouverOuCreerClient(nom: string, telephone: string | null, email: string | null) {
+    const connu = this.clients.find((c) => (telephone && c.telephone === telephone) || (email && c.email === email));
+    if (connu) {
+      connu.telephone ??= telephone;
+      connu.email ??= email;
+      return connu;
+    }
+    const c = { id: this.nouvelId('1111'), nom, telephone, email };
+    this.clients.push(c);
+    return c;
+  }
+
+  /** Étapes visibles du client : changements de statut seulement. */
+  private etapesClient(t: Ticket): S<'EtapeSuivi'>[] {
+    return t.evenements
+      .filter((e) => e.visibleClient && e.statutApres)
+      .map((e) => ({ type: e.type, statut: e.statutApres!, date: e.date.toISOString() }));
+  }
+
+  suivi(jeton: string): S<'SuiviPublic'> {
+    const t = this.ticketParJeton(jeton);
+    return {
+      numero: t.numero,
+      statut: t.statut,
+      categorie: this.categorie(t.categorieId).nom,
+      creeLe: t.creeLe.toISOString(),
+      banque: this.banquePublique(),
+      etapes: this.etapesClient(t),
+    };
+  }
+
+  demanderCode(jeton: string, canal?: S<'CanalOtp'>): S<'OtpEnvoye'> {
+    const t = this.ticketParJeton(jeton);
+    const c = this.client(t.clientId);
+    const choisi: S<'CanalOtp'> = canal ?? (c.telephone ? 'SMS' : 'EMAIL');
+    const destination = choisi === 'SMS' ? c.telephone : c.email;
+    if (!destination) throw erreur(422, 'CONTACT_REQUIS', choisi === 'SMS' ? 'Aucun téléphone pour cette réclamation' : 'Aucun e-mail pour cette réclamation');
+    const code = String(this.hasard.entier(100000, 999999));
+    this.otp.set(jeton, { code, expire: new Date(this.maintenant.getTime() + 10 * MINUTE), essais: 0 });
+    this.envois.push({
+      id: this.nouvelId('6666'), clientId: c.id, canal: choisi, destination, date: new Date(this.maintenant), lien: null,
+      texte: `${this.banque.nom} : votre code est ${code}. Il expire dans 10 minutes. Ne le communiquez à personne.`,
+    });
+    this.changer();
+    return {
+      canal: choisi,
+      destinationMasquee: choisi === 'SMS'
+        ? destination.replace(/^\+225(\d{2})\d{6}(\d{2})$/, '+225 $1 •• •• •• $2')
+        : destination.replace(/^(.).*(@.*)$/, '$1••••$2'),
+      expireDans: 600,
+    };
+  }
+
+  verifierCode(jeton: string, code: string): S<'SessionClient'> {
+    const t = this.ticketParJeton(jeton);
+    const o = this.otp.get(jeton);
+    if (!o) throw erreur(422, 'CODE_OTP_INVALIDE', 'Demandez d\'abord un code');
+    if (o.expire < this.maintenant) throw erreur(422, 'CODE_OTP_EXPIRE', 'Code expiré', 'Demandez un nouveau code.');
+    if (++o.essais > 5) throw erreur(429, 'TROP_DE_TENTATIVES', 'Trop d\'essais', 'Demandez un nouveau code.');
+    if (o.code !== code.replace(/\D/g, '')) throw erreur(422, 'CODE_OTP_INVALIDE', 'Code incorrect', `Vérifiez le code reçu. ${5 - o.essais} essai(s) restant(s).`);
+    this.otp.delete(jeton);
+    const jetonClient = `C${this.nouvelId('7777')}`;
+    this.sessions.set(jetonClient, t.clientId);
+    this.changer();
+    return { jetonClient, expireDans: 1800 };
+  }
+
+  /* ============================================================== Espace client */
+
+  private clientDeSession(jeton: string) {
+    const id = this.sessions.get(jeton);
+    if (!id) throw erreur(401, 'JETON_INVALIDE', 'Session expirée', 'Demandez un nouveau code.');
+    return id;
+  }
+  private ticketDuClient(jeton: string, id: string) {
+    const clientId = this.clientDeSession(jeton);
+    const t = this.ticket(id);
+    if (t.clientId !== clientId) throw erreur(404, 'INTROUVABLE', 'Réclamation introuvable');
+    return { t, acteur: { type: 'CLIENT', clientId } as Acteur };
+  }
+
+  mesReclamations(jeton: string): S<'ReclamationClientResume'>[] {
+    const clientId = this.clientDeSession(jeton);
+    return this.tickets
+      .filter((t) => t.clientId === clientId)
+      .sort((a, b) => b.creeLe.getTime() - a.creeLe.getTime())
+      .map((t) => ({ id: t.id, numero: t.numero, statut: t.statut, categorie: this.categorie(t.categorieId).nom, creeLe: t.creeLe.toISOString() }));
+  }
+
+  maReclamation(jeton: string, id: string): S<'ReclamationClient'> {
+    const { t, acteur } = this.ticketDuClient(jeton, id);
+    return {
+      id: t.id,
+      numero: t.numero,
+      statut: t.statut,
+      categorie: this.categorie(t.categorieId).nom,
+      description: t.description,
+      creeLe: t.creeLe.toISOString(),
+      clotureAutoPrevueLe: t.statut === 'RESOLUE' && t.clotureAutoPrevueLe ? t.clotureAutoPrevueLe.toISOString() : null,
+      messages: t.messages
+        .filter((m) => m.type !== 'NOTE_INTERNE')
+        .map((m) => ({
+          id: m.id,
+          type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
+          contenu: m.contenu,
+          auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' : 'BANQUE',
+          creeLe: m.creeLe.toISOString(),
+          piecesJointes: m.pieces,
+        })),
+      piecesJointes: t.pieces,
+      etapes: this.etapesClient(t),
+      actionsPossibles: this.actions(t, acteur),
+      operationsPossibles: this.operations(t, acteur),
+    };
+  }
+
+  messageClient(jeton: string, id: string, contenu: string) {
+    const { t, acteur } = this.ticketDuClient(jeton, id);
+    if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'Écrivez votre message');
+    this.exigerOperation('MESSAGE_DU_CLIENT', t, acteur);
+    this.message(t, 'MESSAGE_DU_CLIENT', contenu.trim(), { type: 'CLIENT', id: t.clientId });
+    if (t.statut === 'EN_ATTENTE_CLIENT') {
+      this.exigerTransition('REPRENDRE_SUR_REPONSE', t, acteur);
+      Object.assign(t, slaALaReprise(this.maintenant, t, this.sla));
+      this.passer(t, 'REPRENDRE_SUR_REPONSE', { type: 'CLIENT', id: t.clientId });
+    } else {
+      this.evenement(t, 'MESSAGE', null, null, { type: 'CLIENT', id: t.clientId }, true);
+    }
+    if (t.agentId) this.notifier(t.agentId, 'agent.message_client', 'Message du client', `Le client a écrit sur ${t.numero}.`, t.id);
+    this.auditer('CLIENT', 'reclamation.message_client', t);
+    this.changer();
+  }
+
+  confirmer(jeton: string, id: string) {
+    const { t, acteur } = this.ticketDuClient(jeton, id);
+    this.exigerTransition('CONFIRMER', t, acteur);
+    this.passer(t, 'CONFIRMER', { type: 'CLIENT', id: t.clientId });
+    t.clotureLe = new Date(this.maintenant);
+    t.cloture = { mode: 'CONFIRMATION_CLIENT', motif: null, precision: null, parId: null };
+    this.envoyer(t, 'est clôturée. Merci de votre confiance.', false);
+    this.auditer('CLIENT', 'reclamation.confirmation', t, { statut: 'CLOTUREE' });
+    this.changer();
+  }
+
+  contester(jeton: string, id: string, motif: string) {
+    const { t, acteur } = this.ticketDuClient(jeton, id);
+    if (!motif.trim()) throw erreur(422, 'MESSAGE_VIDE', 'Expliquez ce qui ne vous convient pas');
+    this.exigerTransition('CONTESTER', t, acteur);
+    this.message(t, 'MESSAGE_DU_CLIENT', motif.trim(), { type: 'CLIENT', id: t.clientId });
+    Object.assign(t, slaALaReprise(this.maintenant, t, this.sla));
+    t.clotureAutoPrevueLe = null;
+    t.slaRespecte = null;
+    t.nbReouvertures++;
+    this.passer(t, 'CONTESTER', { type: 'CLIENT', id: t.clientId });
+    if (t.agentId) this.notifier(t.agentId, 'agent.contestation', 'Résolution contestée', `Le client conteste la résolution de ${t.numero}.`, t.id);
+    this.auditer('CLIENT', 'reclamation.contestation', t, { statut: 'EN_COURS' });
+    this.changer();
+  }
+
+  /* ============================================================== Back-office */
+
+  private actions(t: Ticket, acteur: Acteur): S<'ActionStatut'>[] {
+    return (Object.keys(TRANSITIONS) as ActionStatut[]).filter((a) => verifierTransition(a, this.etat(t), acteur, this.maintenant).ok);
+  }
+  private operations(t: Ticket, acteur: Acteur): S<'OperationTicket'>[] {
+    return (Object.keys(OPERATIONS) as Operation[]).filter((o) => verifierOperation(o, this.etat(t), acteur).ok);
+  }
+
+  /** Ce qu'un utilisateur voit : l'agent ses réclamations, les autres toute la banque. */
+  private visibles(userId: string) {
+    const u = this.acteurUtilisateur(userId);
+    return this.tickets.filter((t) => !(u.type === 'UTILISATEUR' && u.role === 'AGENT' && t.agentId !== u.id));
+  }
+
+  private chrono(t: Ticket): { etat: S<'EtatChrono'>; minutesRestantes: number | null } {
+    if (t.statut === 'RESOLUE' || t.statut === 'CLOTUREE') return { etat: 'ARRETE', minutesRestantes: t.statut === 'RESOLUE' ? t.slaMinutesRestantes : null };
+    if (t.slaSuspenduLe) return { etat: 'EN_PAUSE', minutesRestantes: t.slaMinutesRestantes };
+    if (!t.echeanceSlaLe) return { etat: 'DANS_LES_DELAIS', minutesRestantes: t.slaMinutesRestantes };
+    const now = this.maintenant;
+    const restantes = t.echeanceSlaLe > now
+      ? Math.floor(minutesOuvreesEntre(now, t.echeanceSlaLe, this.calendrier))
+      : -Math.ceil(minutesOuvreesEntre(t.echeanceSlaLe, now, this.calendrier));
+    const etat = t.echeanceSlaLe <= now ? 'DEPASSE' : t.alertePreventiveLe && t.alertePreventiveLe <= now ? 'ALERTE' : 'DANS_LES_DELAIS';
+    return { etat, minutesRestantes: restantes };
+  }
+
+  private resume(t: Ticket): S<'ReclamationResume'> {
+    const c = this.chrono(t);
+    return {
+      id: t.id,
+      numero: t.numero,
+      statut: t.statut,
+      priorite: t.priorite,
+      canal: t.canal,
+      categorie: { id: t.categorieId, nom: this.categorie(t.categorieId).nom },
+      agence: t.agenceId ? { id: t.agenceId, nom: AGENCES.find((a) => a.id === t.agenceId)!.nom } : null,
+      agent: t.agentId ? { id: t.agentId, nom: this.nomDe(t.agentId)! } : null,
+      client: { nom: this.client(t.clientId).nom },
+      creeLe: t.creeLe.toISOString(),
+      echeanceSlaLe: t.echeanceSlaLe && c.etat !== 'EN_PAUSE' ? t.echeanceSlaLe.toISOString() : null,
+      enRetard: c.etat === 'DEPASSE',
+      escaladee: t.escaladeeVersId !== null,
+      sla: { etat: c.etat, delaiCibleMinutes: t.delaiCibleMinutes, minutesRestantes: c.etat === 'ARRETE' ? null : c.minutesRestantes },
+    };
+  }
+
+  /** Files : réclamations en cours de la personne, plus les dernières clôturées. */
+  files(userId: string): S<'PageReclamations'> {
+    const vus = this.visibles(userId);
+    const actives = vus.filter((t) => t.statut !== 'CLOTUREE');
+    const recentes = vus.filter((t) => t.statut === 'CLOTUREE').sort((a, b) => (b.clotureLe?.getTime() ?? 0) - (a.clotureLe?.getTime() ?? 0)).slice(0, 8);
+    const donnees = [...actives, ...recentes].sort((a, b) => b.creeLe.getTime() - a.creeLe.getTime()).map((t) => this.resume(t));
+    const agent = this.personne(userId)?.role === 'AGENT';
+    return {
+      donnees,
+      pagination: { page: 1, parPage: donnees.length, total: vus.length },
+      compteurs: {
+        recues: agent ? 0 : donnees.filter((r) => r.agent === null && r.statut !== 'CLOTUREE').length,
+        assignees: donnees.filter((r) => r.agent?.id === userId && r.statut !== 'CLOTUREE').length,
+        urgentes: donnees.filter((r) => r.priorite === 'URGENTE' && r.statut !== 'CLOTUREE').length,
+        enRetard: donnees.filter((r) => r.enRetard).length,
+        escaladees: donnees.filter((r) => r.escaladee && r.statut !== 'CLOTUREE').length,
+      },
+    };
+  }
+
+  fiche(userId: string, id: string): S<'ReclamationDetail'> {
+    const t = this.ticket(id);
+    const acteur = this.acteurUtilisateur(userId);
+    if (!this.visibles(userId).includes(t)) throw erreur(404, 'INTROUVABLE', 'Réclamation introuvable');
+    const c = this.client(t.clientId);
+    const point = POINTS_DEPOT.find((p) => p.id === t.pointId)!;
+    const chrono = this.chrono(t);
+    const qui = (q: Qui): S<'ActeurVisible'> => ({ type: q.type, nom: q.type === 'UTILISATEUR' ? this.nomDe(q.id) : null });
+    const iso = (d: Date | null) => (d ? d.toISOString() : null);
+    return {
+      id: t.id,
+      numero: t.numero,
+      statut: t.statut,
+      priorite: t.priorite,
+      canal: t.canal,
+      description: t.description,
+      categorie: { id: t.categorieId, nom: this.categorie(t.categorieId).nom },
+      agence: t.agenceId ? { id: t.agenceId, nom: AGENCES.find((a) => a.id === t.agenceId)!.nom } : null,
+      pointDepot: { id: point.id, libelle: point.libelle },
+      agent: t.agentId ? { id: t.agentId, nom: this.nomDe(t.agentId)! } : null,
+      escaladeeVers: t.escaladeeVersId ? { id: t.escaladeeVersId, nom: this.nomDe(t.escaladeeVersId)! } : null,
+      client: { id: c.id, nom: c.nom, email: c.email, telephone: c.telephone },
+      creeLe: t.creeLe.toISOString(),
+      sla: {
+        etat: chrono.etat,
+        delaiCibleMinutes: t.delaiCibleMinutes,
+        echeanceLe: chrono.etat === 'EN_PAUSE' ? null : iso(t.echeanceSlaLe),
+        alertePreventiveLe: chrono.etat === 'EN_PAUSE' ? null : iso(t.alertePreventiveLe),
+        enPauseDepuis: iso(t.slaSuspenduLe),
+        minutesRestantes: chrono.minutesRestantes,
+        enRetard: chrono.etat === 'DEPASSE',
+        respecte: t.slaRespecte,
+      },
+      jalons: {
+        prisEnChargeLe: iso(t.prisEnChargeLe),
+        premiereReponseLe: iso(t.premiereReponseLe),
+        resolueLe: iso(t.resolueLe),
+        clotureLe: iso(t.clotureLe),
+        clotureAutoPrevueLe: iso(t.clotureAutoPrevueLe),
+        escaladeeLe: iso(t.escaladeeLe),
+      },
+      cloture: t.cloture
+        ? { mode: t.cloture.mode, motif: t.cloture.motif, precision: t.cloture.precision, par: t.cloture.parId ? { id: t.cloture.parId, nom: this.nomDe(t.cloture.parId)! } : null }
+        : null,
+      nbReouvertures: t.nbReouvertures,
+      messages: t.messages.map((m) => ({ id: m.id, type: m.type, contenu: m.contenu, auteur: qui(m.auteur), creeLe: m.creeLe.toISOString(), piecesJointes: m.pieces })),
+      piecesJointes: t.pieces,
+      chronologie: t.evenements.map((e) => ({
+        type: e.type, statutAvant: e.statutAvant, statutApres: e.statutApres, acteur: qui(e.acteur), visibleClient: e.visibleClient, date: e.date.toISOString(),
+      })),
+      actionsPossibles: this.actions(t, acteur),
+      operationsPossibles: this.operations(t, acteur),
+    };
+  }
+
+  agentsAssignables(): S<'ReferenceNommee'>[] {
+    return PERSONNEL.filter((u) => u.role === 'AGENT' && u.statut === 'ACTIF').map((u) => ({ id: u.id, nom: `${u.prenom} ${u.nom}` }));
+  }
+
+  prendreEnCharge(userId: string, id: string) {
+    const t = this.ticket(id);
+    const acteur = this.acteurUtilisateur(userId);
+    this.exigerTransition('PRENDRE_EN_CHARGE', t, acteur);
+    this.priseEnCharge(t, userId);
+    this.changer();
+  }
+
+  private priseEnCharge(t: Ticket, userId: string) {
+    this.passer(t, 'PRENDRE_EN_CHARGE', { type: 'UTILISATEUR', id: userId });
+    t.prisEnChargeLe = new Date(this.maintenant);
+    this.envoyer(t, 'est prise en charge par un conseiller.');
+    this.auditer(userId, 'reclamation.prise_en_charge', t, { statut: 'EN_COURS' });
+  }
+
+  assigner(userId: string, id: string, agentId: string) {
+    const t = this.ticket(id);
+    this.exigerOperation('ASSIGNER', t, this.acteurUtilisateur(userId));
+    const agent = this.personne(agentId);
+    if (!agent || agent.role !== 'AGENT' || agent.statut !== 'ACTIF') throw erreur(422, 'AGENT_INVALIDE', 'Choisissez un agent actif');
+    if (t.agentId === agentId) return;
+    t.agentId = agentId;
+    this.evenement(t, 'ASSIGNATION', null, null, { type: 'UTILISATEUR', id: userId }, false);
+    this.notifier(agentId, 'agent.assignation', 'Nouvelle réclamation assignée', `${t.numero} (${this.categorie(t.categorieId).nom}) vous a été assignée par ${this.nomDe(userId)}.`, t.id);
+    this.auditer(userId, 'reclamation.assignation', t, { agentId });
+    this.changer();
+  }
+
+  repondre(userId: string, id: string, contenu: string, attendreReponse = false) {
+    const t = this.ticket(id);
+    const acteur = this.acteurUtilisateur(userId);
+    if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'Écrivez votre réponse');
+    this.exigerOperation('REPONDRE_AU_CLIENT', t, acteur);
+    if (t.statut === 'OUVERTE') {
+      this.exigerTransition('PRENDRE_EN_CHARGE', t, acteur);
+      this.priseEnCharge(t, userId);
+    }
+    if (attendreReponse) this.exigerTransition('QUESTIONNER_CLIENT', t, acteur);
+    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId });
+    t.premiereReponseLe ??= new Date(this.maintenant);
+    if (attendreReponse) {
+      Object.assign(t, slaEnPause(this.maintenant, t, this.sla));
+      t.aEteQuestionne = true;
+      this.passer(t, 'QUESTIONNER_CLIENT', { type: 'UTILISATEUR', id: userId });
+      this.envoyer(t, 'attend votre réponse.');
+    } else {
+      this.evenement(t, 'MESSAGE', null, null, { type: 'UTILISATEUR', id: userId }, true);
+      this.envoyer(t, 'a reçu une réponse de la banque.');
+    }
+    this.auditer(userId, 'reclamation.reponse_client', t, { question: attendreReponse });
+    this.changer();
+  }
+
+  noteInterne(userId: string, id: string, contenu: string) {
+    const t = this.ticket(id);
+    if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'Écrivez votre note');
+    this.exigerOperation('NOTE_INTERNE', t, this.acteurUtilisateur(userId));
+    this.message(t, 'NOTE_INTERNE', contenu.trim(), { type: 'UTILISATEUR', id: userId });
+    this.auditer(userId, 'reclamation.note_interne', t);
+    this.changer();
+  }
+
+  resoudre(userId: string, id: string, contenu: string) {
+    const t = this.ticket(id);
+    const acteur = this.acteurUtilisateur(userId);
+    if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'La réponse finale au client est obligatoire');
+    this.exigerTransition('RESOUDRE', t, acteur);
+    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId });
+    t.premiereReponseLe ??= new Date(this.maintenant);
+    const r = slaALaResolution(this.maintenant, t.creeLe, t, this.sla);
+    Object.assign(t, {
+      echeanceSlaLe: r.echeanceSlaLe, alertePreventiveLe: r.alertePreventiveLe, slaMinutesRestantes: r.slaMinutesRestantes, slaSuspenduLe: null,
+      slaRespecte: r.slaRespecte, resolueLe: r.resolueLe, clotureAutoPrevueLe: r.clotureAutoPrevueLe,
+    });
+    this.passer(t, 'RESOUDRE', { type: 'UTILISATEUR', id: userId });
+    const fin = r.clotureAutoPrevueLe.toLocaleDateString('fr-FR', { timeZone: this.calendrier.zone, day: '2-digit', month: '2-digit' });
+    this.envoyer(t, `est résolue. Confirmez ou contestez avant le ${fin}.`);
+    this.auditer(userId, 'reclamation.resolution', t, { statut: 'RESOLUE', slaRespecte: r.slaRespecte });
+    this.changer();
+  }
+
+  changerPriorite(userId: string, id: string) {
+    const t = this.ticket(id);
+    this.exigerOperation('CHANGER_PRIORITE', t, this.acteurUtilisateur(userId));
+    t.priorite = t.priorite === 'URGENTE' ? 'NORMALE' : 'URGENTE';
+    this.evenement(t, 'CHANGEMENT_PRIORITE', null, null, { type: 'UTILISATEUR', id: userId }, false);
+    if (t.priorite === 'URGENTE') this.urgente(t);
+    this.auditer(userId, 'reclamation.priorite', t, { priorite: t.priorite });
+    this.changer();
+  }
+
+  escalader(userId: string, id: string) {
+    const t = this.ticket(id);
+    this.exigerOperation('ESCALADER', t, this.acteurUtilisateur(userId));
+    t.escaladeeVersId = this.superviseurDe(t.agentId);
+    t.escaladeeLe = new Date(this.maintenant);
+    this.evenement(t, 'ESCALADE', null, null, { type: 'UTILISATEUR', id: userId }, false);
+    this.notifier(t.escaladeeVersId, 'superviseur.escalade', 'Réclamation escaladée', `${this.nomDe(userId)} vous a escaladé ${t.numero}.`, t.id);
+    this.auditer(userId, 'reclamation.escalade', t, { escaladeeVers: t.escaladeeVersId });
+    this.changer();
+  }
+
+  cloturerDeForce(userId: string, id: string, motif: S<'MotifClotureForcee'>, precision: string) {
+    const t = this.ticket(id);
+    if (!precision.trim()) throw erreur(422, 'PRECISION_REQUISE', 'Précisez la raison de la clôture');
+    this.exigerTransition('CLOTURER_DE_FORCE', t, this.acteurUtilisateur(userId));
+    this.passer(t, 'CLOTURER_DE_FORCE', { type: 'UTILISATEUR', id: userId });
+    Object.assign(t, { echeanceSlaLe: null, alertePreventiveLe: null, slaSuspenduLe: null, clotureLe: new Date(this.maintenant) });
+    t.cloture = { mode: 'FORCEE', motif, precision: precision.trim(), parId: userId };
+    this.envoyer(t, 'est clôturée par la banque.', false);
+    this.auditer(userId, 'reclamation.cloture_forcee', t, { motif });
+    this.changer();
+  }
+
+  /* -------------------------------------------------------------- Notifications in-app */
+
+  notificationsDe(userId: string): S<'PageNotifications'> {
+    const miennes = this.notifications.filter((n) => n.destinataireId === userId).sort((a, b) => b.creeLe.getTime() - a.creeLe.getTime());
+    return {
+      donnees: miennes.slice(0, 12).map((n) => ({
+        id: n.id, modele: n.modele, sujet: n.sujet, contenu: n.contenu, reclamationId: n.reclamationId, creeLe: n.creeLe.toISOString(), lueLe: n.lueLe ? n.lueLe.toISOString() : null,
+      })),
+      pagination: { page: 1, parPage: 12, total: miennes.length },
+      nonLues: miennes.filter((n) => !n.lueLe).length,
+    };
+  }
+
+  toutLire(userId: string) {
+    for (const n of this.notifications) if (n.destinataireId === userId && !n.lueLe) n.lueLe = new Date(this.maintenant);
+    this.changer();
+  }
+
+  /** À l'ouverture de la démo, les notifications antérieures à `avant` sont considérées comme lues. */
+  marquerHistoriqueLu(avant: Date) {
+    for (const n of this.notifications) if (n.creeLe < avant) n.lueLe ??= new Date(n.creeLe.getTime() + 30 * MINUTE);
+  }
+
+  /* -------------------------------------------------------------- Indicateurs (§6.6) */
+
+  indicateurs(jours = 30): S<'Indicateurs'> {
+    const au = this.maintenant;
+    const du = new Date(au.getTime() - jours * 86_400_000);
+    const periode = this.tickets.filter((t) => t.creeLe >= du && t.creeLe <= au);
+    const compte = <K extends string>(cle: (t: Ticket) => K, libelle: (k: K) => string) => {
+      const m = new Map<K, number>();
+      for (const t of periode) m.set(cle(t), (m.get(cle(t)) ?? 0) + 1);
+      return [...m].map(([k, total]) => ({ cle: k, libelle: libelle(k), total }));
+    };
+    const LIBELLES: Record<Statut, string> = { OUVERTE: 'Ouverte', EN_COURS: 'En cours', EN_ATTENTE_CLIENT: 'En attente client', RESOLUE: 'Résolue', CLOTUREE: 'Clôturée' };
+    const parStatut = (Object.keys(LIBELLES) as Statut[]).map((s) => ({ cle: s, libelle: LIBELLES[s], total: periode.filter((t) => t.statut === s).length }));
+    const repondues = periode.filter((t) => t.premiereReponseLe);
+    const resolues = periode.filter((t) => t.resolueLe && t.slaRespecte !== null);
+    const moyenne = (l: number[]) => (l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null);
+    return {
+      du: du.toISOString(),
+      au: au.toISOString(),
+      total: periode.length,
+      parStatut,
+      parCategorie: compte((t) => t.categorieId, (k) => this.categorie(k).nom),
+      parCanal: compte((t) => t.canal, (k) => (k === 'QR_CODE' ? 'QR code en agence' : 'Lien web')),
+      parAgence: compte((t) => t.agenceId ?? 'aucune', (k) => (k === 'aucune' ? 'Sans agence (lien web)' : AGENCES.find((a) => a.id === k)!.nom)),
+      delaiPremiereReponseMoyenMinutes: moyenne(repondues.map((t) => delaiPremiereReponse(t.premiereReponseLe!, t.creeLe, this.sla))),
+      delaiResolutionMoyenMinutes: moyenne(resolues.map((t) => Math.floor(minutesOuvreesEntre(t.creeLe, t.resolueLe!, this.calendrier)))),
+      tauxRespectSla: resolues.length ? resolues.filter((t) => t.slaRespecte).length / resolues.length : null,
+      tauxResolutionPremierContact: resolues.length
+        ? resolues.filter((t) => !t.aEteQuestionne && !t.escaladeeVersId && t.nbReouvertures === 0).length / resolues.length
+        : null,
+    };
+  }
+
+  /* -------------------------------------------------------------- Journal d'audit */
+
+  journalAudit(parPage = 40): S<'PageAudit'> {
+    const chaine = `banque:${this.banque.slug}`;
+    return {
+      donnees: [...this.journal].reverse().slice(0, parPage).map((l) => ({
+        id: String(l.rang), chaine, rang: l.rang, horodatage: l.horodatage.toISOString(), acteur: l.acteur, action: l.action,
+        entite: l.entite, entiteId: l.entiteId, donnees: l.donnees, ip: l.acteur.type === 'SYSTEME' ? null : l.acteur.type === 'CLIENT' ? '102.67.12.9' : '10.20.4.17',
+      })),
+      pagination: { page: 1, parPage, total: this.journal.length },
+    };
+  }
+
+  verificationJournal(): S<'VerificationChaine'> {
+    return { chaine: `banque:${this.banque.slug}`, valide: true, lignes: this.journal.length, premiereRupture: null };
+  }
+
+  /* -------------------------------------------------------------- Pour la démo */
+
+  /** La couleur choisie dans « Banque et apparence » s'applique aussitôt (modifierApparence). */
+  changerCouleur(couleur: string) {
+    this.banque.couleur = couleur;
+    this.auditer(PERSONNES.admin.id, 'banque.apparence', null, { couleurPrimaire: couleur });
+    this.changer();
+  }
+
+  /** Réclamations d'un client, par son téléphone (le téléphone de la démo). */
+  clientParTelephone(telephone: string) {
+    return this.clients.find((c) => c.telephone === telephone) ?? null;
+  }
+  envoisDe(clientId: string) {
+    return this.envois.filter((e) => e.clientId === clientId);
+  }
+  toutesLesReclamations() {
+    return this.tickets;
+  }
+
+  /** Date de clôture automatique prévue (visite guidée). */
+  finDeContestation(id: string) {
+    return this.ticket(id).clotureAutoPrevueLe;
+  }
+}

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
+/* Sources scannées explicitement : la démo se construit depuis le dossier demo/ */
+@source "./";
 
 /*
  * Système visuel (étape 6, décision E3)
@@ -71,9 +73,18 @@
   text-rendering: optimizeLegibility;
 }
 
+/* Explicite sur body : la page peut être servie dans un gabarit qui fixe sa propre police */
+:root {
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   background: #e4e8ec;
+  color: var(--color-encre);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 :focus-visible {
@@ -96,5 +107,36 @@ body {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------- Démo cliquable */
+
+/* L'élément dont parle l'étape de la visite guidée */
+.visite-cible {
+  outline: 3px solid var(--color-console);
+  outline-offset: 3px;
+  animation: visite-pouls 1.6s ease-in-out infinite;
+}
+
+@keyframes visite-pouls {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(59 58 138 / 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgb(59 58 138 / 0);
+  }
+}
+
+/* Arrivée d'un SMS sur le téléphone */
+@keyframes arrivee {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

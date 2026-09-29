@@ -3,6 +3,7 @@
  * L'Admin Entreprise règle l'apparence du portail ; le contrat commercial (plan, préfixe,
  * fuseau, seuil d'alerte, délai de clôture, SMS) est réglé par le Super Admin (décision C12).
  */
+import { useRef, useState } from 'react';
 import { CircleCheck, TriangleAlert, Upload } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Champ, LogoBanque, Panneau, Saisie, cx } from '../../ui/composants';
@@ -38,8 +39,39 @@ function Reglage({ libelle, valeur }: { libelle: string; valeur: string }) {
   );
 }
 
-export function Banque({ parametres: p, banque }: { parametres: S<'ParametresBanque'>; banque: S<'BanquePublique'> }) {
-  const couleur = couleurValide(p.couleurPrimaire);
+type Issue = void | boolean | Promise<boolean>;
+
+export interface ActionsApparence {
+  enregistrer: (v: { couleurPrimaire: string; couleurSecondaire: string | null; emailContact: string | null }) => Issue;
+  televerserLogo: (logo: File) => Issue;
+  occupe?: boolean;
+  erreurs?: Record<string, string>;
+}
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+export function Banque({
+  parametres: p,
+  banque,
+  surEnregistrer,
+  actions,
+  adressePortail,
+}: {
+  parametres: S<'ParametresBanque'>;
+  banque: S<'BanquePublique'>;
+  /** Démo : la nouvelle couleur s'applique aussitôt au portail et au back-office */
+  surEnregistrer?: (couleur: string) => void;
+  /** Étape 8 : modifierApparence et televerserLogo */
+  actions?: ActionsApparence;
+  /** Adresse du portail de la banque (<slug>.<domaine>) */
+  adressePortail?: string;
+}) {
+  const [saisie, setSaisie] = useState(couleurValide(p.couleurPrimaire));
+  const [secondaire, setSecondaire] = useState((p.couleurSecondaire ?? '').toUpperCase());
+  const [email, setEmail] = useState(p.emailContact ?? '');
+  const logo = useRef<HTMLInputElement>(null);
+  const erreurs = actions?.erreurs ?? {};
+  const couleur = couleurValide(saisie);
   const texte = texteSur(couleur);
   const ratio = contraste(couleur, texte);
   const conforme = ratio >= 4.5;
@@ -58,25 +90,52 @@ export function Banque({ parametres: p, banque }: { parametres: S<'ParametresBan
                 <LogoBanque nom={p.nom} logoUrl={p.logoUrl} taille={56} />
                 <div>
                   <p className="text-[15px] font-semibold">Logo</p>
-                  <p className="text-sm text-encre-3">PNG ou SVG, fond transparent. En attendant, vos initiales s'affichent.</p>
+                  <p className="text-sm text-encre-3">PNG, SVG ou WebP, 1 Mo au plus, fond transparent.{!p.logoUrl && ' En attendant, vos initiales s\'affichent.'}</p>
+                  {erreurs.logo && <p className="text-sm font-semibold text-urgent">{erreurs.logo}</p>}
                 </div>
-                <Bouton className="ml-auto" icone={<Upload aria-hidden size={16} />}>Déposer un logo</Bouton>
+                <input
+                  ref={logo}
+                  type="file"
+                  accept="image/png,image/svg+xml,image/webp"
+                  className="sr-only"
+                  aria-label="Fichier du logo"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void actions?.televerserLogo(f);
+                    e.target.value = '';
+                  }}
+                />
+                <Bouton className="ml-auto" icone={<Upload aria-hidden size={16} />} onClick={() => logo.current?.click()} disabled={actions?.occupe}>
+                  {p.logoUrl ? 'Changer le logo' : 'Déposer un logo'}
+                </Bouton>
               </div>
 
               <div className="grid grid-cols-2 gap-5">
                 <Champ libelle="Couleur principale" aide="Bandeau, boutons, liens.">
                   {(id, d) => (
                     <div className="flex items-center gap-2">
-                      <span aria-hidden className="h-11 w-11 shrink-0 rounded-lg border border-trait" style={{ background: couleur }} />
-                      <Saisie id={id} aria-describedby={d} defaultValue={couleur.toUpperCase()} className="chiffres uppercase" />
+                      <input
+                        type="color"
+                        aria-label="Choisir la couleur"
+                        value={couleur}
+                        onChange={(e) => setSaisie(e.target.value)}
+                        className="h-11 w-11 shrink-0 cursor-pointer rounded-lg border border-trait bg-surface p-1"
+                      />
+                      <Saisie id={id} aria-describedby={d} value={saisie.toUpperCase()} onChange={(e) => setSaisie(e.target.value.trim())} className="chiffres uppercase" />
                     </div>
                   )}
                 </Champ>
-                <Champ libelle="Couleur secondaire" facultatif aide="Fonds légers.">
+                <Champ libelle="Couleur secondaire" facultatif aide="Fonds légers." erreur={erreurs.couleurSecondaire}>
                   {(id, d) => (
                     <div className="flex items-center gap-2">
-                      <span aria-hidden className="h-11 w-11 shrink-0 rounded-lg border border-trait" style={{ background: couleurValide(p.couleurSecondaire) }} />
-                      <Saisie id={id} aria-describedby={d} defaultValue={(p.couleurSecondaire ?? '').toUpperCase()} className="chiffres uppercase" />
+                      <input
+                        type="color"
+                        aria-label="Choisir la couleur secondaire"
+                        value={couleurValide(secondaire || p.couleurSecondaire)}
+                        onChange={(e) => setSecondaire(e.target.value.toUpperCase())}
+                        className="h-11 w-11 shrink-0 cursor-pointer rounded-lg border border-trait bg-surface p-1"
+                      />
+                      <Saisie id={id} aria-describedby={d} value={secondaire} onChange={(e) => setSecondaire(e.target.value.trim())} className="chiffres uppercase" invalide={!!secondaire && !HEX.test(secondaire)} />
                     </div>
                   )}
                 </Champ>
@@ -90,12 +149,21 @@ export function Banque({ parametres: p, banque }: { parametres: S<'ParametresBan
                 </span>
               </p>
 
-              <Champ libelle="E-mail de contact" aide="Indiqué au client dans les e-mails de suivi.">
-                {(id, d) => <Saisie id={id} aria-describedby={d} type="email" defaultValue={p.emailContact ?? ''} />}
+              <Champ libelle="E-mail de contact" aide="Indiqué au client dans les e-mails de suivi." facultatif erreur={erreurs.emailContact}>
+                {(id, d) => <Saisie id={id} aria-describedby={d} type="email" value={email} onChange={(e) => setEmail(e.target.value)} invalide={!!erreurs.emailContact} />}
               </Champ>
 
               <div className="flex justify-end">
-                <Bouton variante="principal">Enregistrer l'apparence</Bouton>
+                <Bouton
+                  variante="principal"
+                  disabled={!!actions && (!HEX.test(saisie) || (!!secondaire && !HEX.test(secondaire)) || actions.occupe)}
+                  onClick={() => {
+                    surEnregistrer?.(couleur);
+                    void actions?.enregistrer({ couleurPrimaire: couleur, couleurSecondaire: secondaire ? secondaire : null, emailContact: email.trim() || null });
+                  }}
+                >
+                  {actions?.occupe ? 'Enregistrement…' : 'Enregistrer l\'apparence'}
+                </Bouton>
               </div>
             </div>
           </Panneau>
@@ -103,7 +171,7 @@ export function Banque({ parametres: p, banque }: { parametres: S<'ParametresBan
 
         <aside className="flex flex-col gap-5">
           <Panneau titre="Aperçu">
-            <div style={styleMarque(p.couleurPrimaire)} className="overflow-hidden rounded-xl border border-trait">
+            <div style={styleMarque(couleur)} className="overflow-hidden rounded-xl border border-trait">
               <div className="flex items-center gap-2.5 bg-marque px-4 py-3.5 text-sur-marque">
                 <LogoBanque nom={banque.nom} logoUrl={banque.logoUrl} taille={30} inverse />
                 <div className="leading-tight">
@@ -125,7 +193,7 @@ export function Banque({ parametres: p, banque }: { parametres: S<'ParametresBan
               <Jauge libelle="Réclamations ce mois-ci" valeur={p.consommation.ticketsCeMois} plafond={p.plan.plafondTicketsMois} />
             </div>
             <dl className="mt-4 divide-y divide-trait border-t border-trait">
-              <Reglage libelle="Adresse du portail" valeur={`${p.slug}.reclamations.example`} />
+              <Reglage libelle="Adresse du portail" valeur={adressePortail ?? `${p.slug}.reclamations.example`} />
               <Reglage libelle="Préfixe des numéros" valeur={p.prefixeTickets} />
               <Reglage libelle="Seuil d'alerte SLA" valeur={`${p.seuilAlerteSlaPourcent} %`} />
               <Reglage libelle="Clôture automatique" valeur={`après ${p.delaiClotureAutoJours} jours`} />

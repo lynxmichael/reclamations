@@ -7,7 +7,19 @@ import type { S } from '../../api/types';
 import { Bouton } from '../../ui/composants';
 import { CadrePortail } from './CadrePortail';
 
-export function Accuse({ banque, accuse, envoiPar }: { banque: S<'BanquePublique'>; accuse: S<'AccuseDepot'>; envoiPar: string }) {
+export function Accuse({
+  banque,
+  accuse,
+  envoiPar,
+  surSuivre,
+  surAutre,
+}: {
+  banque: S<'BanquePublique'>;
+  accuse: S<'AccuseDepot'>;
+  envoiPar: string;
+  surSuivre?: () => void;
+  surAutre?: () => void;
+}) {
   return (
     <CadrePortail banque={banque}>
       <div className="flex flex-col items-center px-6 pt-10 pb-10 text-center">
@@ -20,7 +32,13 @@ export function Accuse({ banque, accuse, envoiPar }: { banque: S<'BanquePublique
         <div className="mt-8 w-full rounded-2xl border border-trait bg-fond px-5 py-5">
           <p className="text-sm font-semibold text-encre-3">Votre numéro de suivi</p>
           <p className="chiffres mt-1 text-[28px] font-bold tracking-wide text-encre select-all">{accuse.numero}</p>
-          <Bouton taille="petit" variante="discret" className="mt-2" icone={<Copy aria-hidden size={15} />}>
+          <Bouton
+            taille="petit"
+            variante="discret"
+            className="mt-2"
+            icone={<Copy aria-hidden size={15} />}
+            onClick={() => navigator.clipboard?.writeText(accuse.numero).catch(() => undefined)}
+          >
             Copier le numéro
           </Bouton>
         </div>
@@ -33,10 +51,10 @@ export function Accuse({ banque, accuse, envoiPar }: { banque: S<'BanquePublique
         </p>
 
         <div className="mt-8 flex w-full flex-col gap-3">
-          <Bouton variante="principal" taille="grand" className="w-full">
+          <Bouton variante="principal" taille="grand" className="w-full" onClick={surSuivre} data-visite="suivre">
             Suivre ma réclamation
           </Bouton>
-          <Bouton variante="secondaire" taille="grand" className="w-full">
+          <Bouton variante="secondaire" taille="grand" className="w-full" onClick={surAutre}>
             Déposer une autre réclamation
           </Bouton>
         </div>

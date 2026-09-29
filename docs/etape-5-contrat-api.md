@@ -1,7 +1,7 @@
 # Étape 5 — Contrat d'API
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 25/09/2026 · **Statut : validé le 25/09/2026** (décisions C1 à C14 retenues telles que proposées). Complété à l'étape 6 par quatre ajouts sans rupture ([décision E6](etape-6-ecrans.md#2-décisions-à-valider)).
+Version du 25/09/2026 · **Statut : validé le 25/09/2026** (décisions C1 à C14 retenues telles que proposées). Complété à l'étape 6 par quatre ajouts sans rupture ([décision E6](etape-6-ecrans.md#2-décisions-à-valider)), puis à l'étape 7 : une opération (`lireLogo`, 83 au total), trois codes d'erreur et des réponses d'erreur déclarées ([décision B12](etape-7-backend.md#2-décisions-à-valider)).
 
 Livrables :
 

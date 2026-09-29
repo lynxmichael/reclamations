@@ -1,0 +1,141 @@
+# =============================================================================
+#  Production — VPS Contabo (décision A9 de l'étape 3)
+#
+#    cp .env.production.example .env.production   puis remplir chaque valeur
+#    docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#    docker compose -f docker-compose.prod.yml --env-file .env.production run --rm api \
+#      node dist/scripts/creer-super-admin.js <e-mail> <prénom> <nom>
+#
+#  Seuls les ports 80 et 443 (Caddy) sont publiés : Docker contourne le pare-feu UFW pour les ports
+#  qu'il publie, c'est pourquoi PostgreSQL, Redis et l'API n'en publient aucun.
+#  Les migrations s'appliquent avant chaque démarrage de l'API. L'image web (Caddy, console et
+#  portail construits, étape 8) se reconstruit avec les autres à chaque « up -d --build ».
+#  Le service de sauvegarde (pg_dump chiffré copié hors du VPS) complète ce fichier à l'étape 10.
+# =============================================================================
+
+name: reclamations-prod
+
+x-application: &application
+  image: reclamations-application:${VERSION:-latest}
+  restart: unless-stopped
+  environment: &environnement
+    NODE_ENV: production
+    APP_DATABASE_URL: postgresql://reclamations_app:${APP_DB_PASSWORD:?APP_DB_PASSWORD manquant}@postgres:5432/reclamations
+    REDIS_URL: redis://redis:6379
+    JWT_SECRET: ${JWT_SECRET:?JWT_SECRET manquant}
+    CLE_CHIFFREMENT_TOTP: ${CLE_CHIFFREMENT_TOTP:?CLE_CHIFFREMENT_TOTP manquant}
+    CLE_OTP: ${CLE_OTP:?CLE_OTP manquant}
+    DOMAINE_PLATEFORME: ${DOMAINE_PLATEFORME:?DOMAINE_PLATEFORME manquant}
+    SMTP_URL: ${SMTP_URL:?SMTP_URL manquant}
+    EMAIL_EXPEDITEUR: ${EMAIL_EXPEDITEUR:?EMAIL_EXPEDITEUR manquant}
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+  networks: [interne]
+
+services:
+  # Caddy et les écrans : console.<domaine> (/srv/console), <slug>.<domaine> (/srv/portail)
+  caddy:
+    image: reclamations-web:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAINE_PLATEFORME: ${DOMAINE_PLATEFORME}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL manquant}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [interne]
+
+  api:
+    <<: *application
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: application
+    volumes:
+      - fichiers:/donnees/fichiers
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *application
+    command: ["node", "dist/src/worker.js"]
+    # Pas de serveur HTTP : le contrôle de santé de l'image ne s'applique pas
+    healthcheck:
+      disable: true
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  migrations:
+    image: reclamations-migrations:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrations
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-reclamations}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant}@postgres:5432/reclamations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [interne]
+
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-reclamations}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: reclamations
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=icu --icu-locale=fr-FR --locale=C.UTF-8
+      TZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init/02-roles.sh:/docker-entrypoint-initdb.d/02-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d reclamations"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    shm_size: 256m
+    networks: [interne]
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [interne]
+
+networks:
+  interne:
+
+volumes:
+  postgres_data:
+  redis_data:
+  fichiers:
+  caddy_data:
+  caddy_config:

@@ -130,7 +130,7 @@ describe('opérations', () => {
 describe('lien avec le cycle de vie (étape 4)', () => {
   const INTERNES = new Set([
     'constructor', 'maintenant', 'trouverOuCreerClient', 'prochainNumero', 'signalerPlafond', 'surTicket',
-    'transition', 'noterPremiereReponse', 'commentaire', 'evenement', 'auditer', 'envois',
+    'transition', 'noterPremiereReponse', 'commentaire', 'joindre', 'evenement', 'auditer', 'envois',
   ]);
   const actionsDuService = Object.getOwnPropertyNames(CycleDeVie.prototype).filter((n) => !INTERNES.has(n));
   const parAction = new Map(operations.filter((o) => o.op['x-action']).map((o) => [o.op['x-action'] as string, o]));

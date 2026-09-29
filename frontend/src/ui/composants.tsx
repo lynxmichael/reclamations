@@ -194,7 +194,7 @@ export function Avatar({ nom, taille = 32, ton = 'neutre' }: { nom: string; tail
 
 /** Logo de la banque, ou son monogramme quand elle n'en a pas encore déposé. */
 export function LogoBanque({ nom, logoUrl, taille = 36, inverse }: { nom: string; logoUrl: string | null; taille?: number; inverse?: boolean }) {
-  if (logoUrl) return <img src={logoUrl} alt={nom} style={{ height: taille }} />;
+  if (logoUrl) return <img src={logoUrl} alt={nom} className="shrink-0 object-contain object-left" style={{ height: taille, maxWidth: taille * 3.5 }} />;
   const lettres = initiales(nom.replace(/^(Banque|Caisse)\s+/i, ''));
   return (
     <span

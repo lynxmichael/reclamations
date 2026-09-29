@@ -1,14 +1,15 @@
 # Étape 6 — Écrans
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 25/09/2026 · **Statut : en attente de validation**
+Version du 25/09/2026 · **Statut : validé le 28/09/2026** (décisions E1 à E12 retenues telles que proposées). Complété par une [démo cliquable](demo-cliquable.md) pour les rendez-vous commerciaux.
 
 Livrables :
 
 - [`docs/maquettes/index.html`](maquettes/index.html) : les **21 écrans** en une seule page, à ouvrir dans un navigateur, sans serveur ni connexion. Chaque écran a ses variantes (rôle, état, banque) et, dessous, les opérations du contrat qui l'alimentent ;
 - [`frontend/`](../frontend/) : le projet React qui produit ces maquettes. Les écrans sont des composants alimentés par les types du contrat : l'étape 8 les branchera sur l'API ;
-- [`frontend/tests/`](../frontend/tests/) : 112 tests qui confrontent les maquettes au contrat et à la machine d'états ;
-- quatre ajouts au contrat, sans rupture (décision E6), et la documentation hors ligne du contrat régénérée ([`docs/api/index.html`](api/index.html)).
+- [`frontend/tests/`](../frontend/tests/) : 112 tests qui confrontent les maquettes au contrat et à la machine d'états (122 avec ceux de la démo) ;
+- quatre ajouts au contrat, sans rupture (décision E6), et la documentation hors ligne du contrat régénérée ([`docs/api/index.html`](api/index.html)) ;
+- en plus : [`docs/demo/index.html`](demo/index.html), une **démo cliquable** pour les rendez-vous avec les banques, construite sur ces écrans et sur les règles du backend. Voir le [guide de présentation](demo-cliquable.md).
 
 ![La galerie : fiche d'une réclamation vue par un superviseur](etape-6-captures/00-galerie.png)
 
@@ -21,9 +22,10 @@ Livrables :
 | Boutons d'une réclamation identiques à la machine d'états de l'étape 4 | 5 / 5 (agent, superviseur, Admin Entreprise, client × 2) |
 | Écrans affichés dans toutes leurs variantes, sans valeur manquante | 50 / 50 |
 | Opérations citées présentes dans le contrat | 21 / 21 écrans |
-| Tests du frontend au total | **112 / 112** |
-| Backend (étapes 2 à 5), rejoué après les ajouts au contrat | 128 tests, contrat valide, aucune dérive |
-| Page des maquettes | 643 Ko, une seule page, polices et scripts inclus |
+| Tests du frontend au total | **122 / 122** (dont 10 pour la démo cliquable) |
+| Backend (étapes 2 à 5), rejoué après les ajouts au contrat | 130 tests, contrat valide, aucune dérive |
+| Page des maquettes | 655 Ko, une seule page, polices et scripts inclus |
+| Démo cliquable | 632 Ko, visite guidée en 13 étapes rejouée sans erreur ; 10 tests du moteur, toutes ses réponses conformes au contrat |
 
 ## 2. Décisions à valider
 
@@ -159,7 +161,7 @@ Les données sont fictives (banques, personnes, adresses). L'instant des maquett
 
 Ouvrir `docs/maquettes/index.html` dans un navigateur : sommaire, système visuel, puis chaque écran. Le bouton « Écran seul » affiche l'écran sans cadre.
 
-Avec Docker, pour relancer les tests et reconstruire la page :
+Avec Docker, pour relancer les tests et reconstruire les maquettes et la démo :
 
 ```bash
 docker compose run --rm maquettes
@@ -170,10 +172,13 @@ Sans Docker, avec Node.js 22 :
 ```bash
 cd frontend
 npm install
-npm test                  # 112 tests
-npm run dev               # galerie en direct : http://localhost:5173
-npm run build:maquettes   # reconstruit docs/maquettes/index.html
+npm test                  # 122 tests (maquettes et démo) ; 130 depuis l'étape 8
+npm run dev               # galerie en direct : http://localhost:5175
+npm run dev:demo          # démo en direct : http://localhost:5175
+npm run build             # reconstruit docs/maquettes/index.html et docs/demo/index.html
 ```
+
+Depuis l'étape 8, les ports 5173 et 5174 sont ceux de la console et du portail branchés sur l'API ([note de l'étape 8](etape-8-frontend.md)), et `npm run build` construit aussi ces deux applications.
 
 `docker compose run --rm verification` vérifie toujours le contrat et le backend (étapes 2 à 5).
 

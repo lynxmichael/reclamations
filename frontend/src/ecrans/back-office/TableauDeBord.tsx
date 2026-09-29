@@ -70,7 +70,15 @@ function Repartition({ volumes, total, couleurs }: { volumes: S<'Volume'>[]; tot
   );
 }
 
-export function TableauDeBord({ indicateurs: ind }: { indicateurs: S<'Indicateurs'> }) {
+export function TableauDeBord({
+  indicateurs: ind,
+  periode = 'Du 1er au 25 septembre 2026',
+  surExporter,
+}: {
+  indicateurs: S<'Indicateurs'>;
+  periode?: string;
+  surExporter?: () => void;
+}) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -81,14 +89,14 @@ export function TableauDeBord({ indicateurs: ind }: { indicateurs: S<'Indicateur
         <div className="flex items-center gap-2">
           <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] font-semibold">
             <CalendarDays aria-hidden size={17} className="text-encre-3" />
-            Du 1er au 25 septembre 2026
+            {periode}
             <ChevronDown aria-hidden size={16} className="text-encre-3" />
           </button>
           <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] text-encre-2">
             Toutes les agences
             <ChevronDown aria-hidden size={16} className="text-encre-3" />
           </button>
-          <Bouton icone={<Download aria-hidden size={17} />}>Exporter en CSV</Bouton>
+          <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter en CSV</Bouton>
         </div>
       </div>
 

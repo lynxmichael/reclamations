@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import {
-  Bell, Building2, CalendarClock, ChartColumn, Inbox, ListChecks, QrCode, ScrollText, Search, Users,
+  Bell, Building2, CalendarClock, ChartColumn, Inbox, ListChecks, LogOut, QrCode, ScrollText, Search, Users,
 } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, LogoBanque, Pastille, cx } from '../../ui/composants';
@@ -50,6 +50,15 @@ export function CadreBackOffice({
   notificationsOuvertes,
   maintenant,
   children,
+  surNaviguer,
+  surCloche,
+  surOuvrirNotification,
+  surToutLire,
+  pages,
+  lienDe,
+  surRechercher,
+  rechercheInitiale,
+  surDeconnexion,
 }: {
   banque: S<'BanquePublique'>;
   moi: S<'Moi'>;
@@ -60,11 +69,25 @@ export function CadreBackOffice({
   notificationsOuvertes?: boolean;
   maintenant: string;
   children: ReactNode;
+  /** Démo cliquable : navigation, notifications */
+  surNaviguer?: (page: PageBackOffice) => void;
+  surCloche?: () => void;
+  surOuvrirNotification?: (reclamationId: string, notificationId: string) => void;
+  surToutLire?: () => void;
+  /** Pages offertes (étape 8 : sans le tableau de bord, qui arrive à l'étape 9) */
+  pages?: PageBackOffice[];
+  /** Adresse de chaque page (clic milieu, nouvel onglet) */
+  lienDe?: (page: PageBackOffice) => string;
+  /** Recherche par numéro, nom ou téléphone du client */
+  surRechercher?: (texte: string) => void;
+  rechercheInitiale?: string;
+  surDeconnexion?: () => void;
 }) {
   const nom = `${moi.prenom} ${moi.nom}`;
   return (
     <div style={styleMarque(banque.couleurPrimaire)} className="relative flex min-h-full bg-fond text-encre">
-      <nav aria-label="Menu principal" className="flex w-60 shrink-0 flex-col border-r border-trait bg-surface">
+      <nav aria-label="Menu principal" className="w-60 shrink-0 border-r border-trait bg-surface">
+        <div className="sticky top-0">
         <div className="flex h-16 items-center gap-2.5 border-b border-trait px-4">
           <LogoBanque nom={banque.nom} logoUrl={banque.logoUrl} taille={32} />
           <div className="leading-tight">
@@ -74,7 +97,7 @@ export function CadreBackOffice({
         </div>
         <div className="flex flex-col gap-5 px-3 py-4">
           {NAVIGATION.map((groupe) => {
-            const liens = groupe.liens.filter((l) => l.roles.includes(moi.role));
+            const liens = groupe.liens.filter((l) => l.roles.includes(moi.role) && (!pages || pages.includes(l.cle)));
             if (liens.length === 0) return null;
             return (
               <div key={groupe.titre ?? 'principal'}>
@@ -85,7 +108,14 @@ export function CadreBackOffice({
                     return (
                       <li key={l.cle}>
                         <a
-                          href={`#${l.cle}`}
+                          href={lienDe ? lienDe(l.cle) : `#${l.cle}`}
+                          data-visite={`menu-${l.cle}`}
+                          onClick={(e) => {
+                            if (surNaviguer && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                              e.preventDefault();
+                              surNaviguer(l.cle);
+                            }
+                          }}
                           aria-current={actif ? 'page' : undefined}
                           className={cx(
                             'relative flex items-center gap-3 rounded-lg px-3 py-2 text-[15px]',
@@ -105,21 +135,34 @@ export function CadreBackOffice({
             );
           })}
         </div>
+        </div>
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="relative flex h-16 shrink-0 items-center gap-4 border-b border-trait bg-surface px-6">
-          <label className="relative w-full max-w-md">
-            <span className="sr-only">Rechercher</span>
-            <Search aria-hidden size={18} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-encre-3" />
-            <input
-              type="search"
-              placeholder="Numéro, nom ou téléphone du client"
-              className="h-10 w-full rounded-lg border border-trait bg-fond pr-3 pl-10 text-[15px] placeholder:text-encre-3 focus:border-focus focus:bg-surface focus:outline-none"
-            />
-          </label>
+          <form
+            role="search"
+            className="relative w-full max-w-md"
+            onSubmit={(e) => {
+              e.preventDefault();
+              surRechercher?.(String(new FormData(e.currentTarget).get('recherche') ?? '').trim());
+            }}
+          >
+            <label>
+              <span className="sr-only">Rechercher une réclamation</span>
+              <Search aria-hidden size={18} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-encre-3" />
+              <input
+                key={rechercheInitiale ?? ''}
+                type="search"
+                name="recherche"
+                defaultValue={rechercheInitiale}
+                placeholder="Numéro, nom ou téléphone du client"
+                className="h-10 w-full rounded-lg border border-trait bg-fond pr-3 pl-10 text-[15px] placeholder:text-encre-3 focus:border-focus focus:bg-surface focus:outline-none"
+              />
+            </label>
+          </form>
           <div className="ml-auto flex items-center gap-2">
-            <button type="button" aria-label={`Notifications, ${notifications.nonLues} non lues`} aria-expanded={notificationsOuvertes} className={cx('relative rounded-lg p-2.5 text-encre-2 hover:bg-fond', notificationsOuvertes && 'bg-fond text-encre')}>
+            <button type="button" onClick={surCloche} data-visite="cloche" aria-label={`Notifications, ${notifications.nonLues} non lues`} aria-expanded={notificationsOuvertes} className={cx('relative rounded-lg p-2.5 text-encre-2 hover:bg-fond', notificationsOuvertes && 'bg-fond text-encre')}>
               <Bell size={20} />
               {notifications.nonLues > 0 && (
                 <span className="absolute top-1 right-1">
@@ -133,9 +176,16 @@ export function CadreBackOffice({
                 <div className="text-[15px] font-semibold">{nom}</div>
                 <div className="text-[13px] text-encre-3">{ROLE[moi.role]}</div>
               </div>
+              {surDeconnexion && (
+                <button type="button" onClick={surDeconnexion} aria-label="Se déconnecter" title="Se déconnecter" className="ml-1 rounded-lg p-2 text-encre-3 hover:bg-fond hover:text-encre">
+                  <LogOut size={18} />
+                </button>
+              )}
             </div>
           </div>
-          {notificationsOuvertes && <PanneauNotifications notifications={notifications} maintenant={maintenant} />}
+          {notificationsOuvertes && (
+            <PanneauNotifications notifications={notifications} maintenant={maintenant} surOuvrir={surOuvrirNotification} surToutLire={surToutLire} />
+          )}
         </header>
         <main className="min-w-0 flex-1 px-8 py-7">{children}</main>
       </div>
@@ -143,24 +193,42 @@ export function CadreBackOffice({
   );
 }
 
-function PanneauNotifications({ notifications, maintenant }: { notifications: S<'PageNotifications'>; maintenant: string }) {
+function PanneauNotifications({
+  notifications,
+  maintenant,
+  surOuvrir,
+  surToutLire,
+}: {
+  notifications: S<'PageNotifications'>;
+  maintenant: string;
+  surOuvrir?: (reclamationId: string, notificationId: string) => void;
+  surToutLire?: () => void;
+}) {
   return (
     <div role="dialog" aria-label="Notifications" className="absolute top-14 right-40 z-20 w-[400px] overflow-hidden rounded-xl border border-trait bg-surface shadow-[0_12px_32px_rgb(23_33_43/0.16)]">
       <div className="flex items-center justify-between border-b border-trait px-4 py-3">
         <p className="font-bold">Notifications</p>
-        <button type="button" className="text-sm font-semibold text-marque-texte hover:underline">
+        <button type="button" onClick={surToutLire} className="text-sm font-semibold text-marque-texte hover:underline">
           Tout marquer comme lu
         </button>
       </div>
       <ul className="max-h-[420px] overflow-auto">
+        {notifications.donnees.length === 0 && <li className="px-4 py-8 text-center text-sm text-encre-3">Aucune notification pour l'instant.</li>}
         {notifications.donnees.map((n) => (
-          <li key={n.id} className={cx('flex gap-3 border-b border-trait px-4 py-3 last:border-0', !n.lueLe && 'bg-marque-doux/60')}>
-            <span aria-hidden className={cx('mt-2 h-2 w-2 shrink-0 rounded-full', n.lueLe ? 'bg-transparent' : 'bg-urgent')} />
-            <div className="min-w-0 text-sm">
-              <p className="font-semibold text-encre">{n.sujet}</p>
-              <p className="mt-0.5 leading-snug text-encre-2">{n.contenu}</p>
-              <p className="mt-1 text-encre-3">{relatif(n.creeLe, maintenant)}</p>
-            </div>
+          <li key={n.id} className="border-b border-trait last:border-0">
+            <button
+              type="button"
+              disabled={!surOuvrir || !n.reclamationId}
+              onClick={() => n.reclamationId && surOuvrir?.(n.reclamationId, n.id)}
+              className={cx('flex w-full gap-3 px-4 py-3 text-left enabled:hover:bg-fond', !n.lueLe && 'bg-marque-doux/60')}
+            >
+              <span aria-hidden className={cx('mt-2 h-2 w-2 shrink-0 rounded-full', n.lueLe ? 'bg-transparent' : 'bg-urgent')} />
+              <span className="min-w-0 text-sm">
+                <span className="block font-semibold text-encre">{n.sujet}</span>
+                <span className="mt-0.5 block leading-snug text-encre-2">{n.contenu}</span>
+                <span className="mt-1 block text-encre-3">{relatif(n.creeLe, maintenant)}</span>
+              </span>
+            </button>
           </li>
         ))}
       </ul>

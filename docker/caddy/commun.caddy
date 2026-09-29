@@ -1,0 +1,56 @@
+# =============================================================================
+#  Blocs communs aux sites du Caddyfile (étape 8). Fichier à part pour être aussi importé par une
+#  configuration de vérification locale, et parce que frontend/vite.config.ts y lit la politique
+#  de sécurité du contenu (CSP) : les tests navigateur tournent sous la même CSP que la production.
+# =============================================================================
+
+# En-têtes de sécurité de toutes les réponses
+(securite) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+# /api/* vers l'API NestJS ; la route interne de l'API n'est jamais publiée
+(api) {
+	handle /interne/* {
+		respond 404
+	}
+	handle /api/* {
+		# X-Forwarded-For porte l'adresse de la connexion TCP (limites de débit, journal d'audit) :
+		# Caddy ignore celui qu'enverrait le client, aucun mandataire amont n'étant déclaré de confiance
+		reverse_proxy {$API_AMONT:api:3000}
+	}
+	# Taille maximale d'une requête : 5 fichiers de 5 Mo et le formulaire
+	request_body {
+		max_size 30MB
+	}
+}
+
+# Une application construite (console ou portail), dossier en argument
+(application) {
+	root * {args[0]}
+	# Fichiers dont le nom porte l'empreinte du contenu : gardés un an par le navigateur.
+	# Un fichier absent répond 404, sans cache (jamais index.html, qui serait alors gardé un an).
+	handle /assets/* {
+		header {
+			Cache-Control "public, max-age=31536000, immutable"
+			match status 200
+		}
+		file_server
+	}
+	# index.html pour toute adresse de l'application, revalidé à chaque visite : une nouvelle
+	# version est prise dès son déploiement
+	handle {
+		header Cache-Control "no-cache"
+		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		try_files {path} /index.html
+		file_server
+	}
+}

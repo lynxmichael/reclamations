@@ -1,0 +1,68 @@
+/**
+ * Services partagés par tous les modules de l'API : configuration, base, Redis, stockage,
+ * jetons, limites de débit, idempotence, horloge et service du cycle de vie (étape 4).
+ */
+import { Global, Inject, Injectable, Module, type DynamicModule, type OnApplicationShutdown } from '@nestjs/common';
+import { CycleDeVie } from '../application/reclamations/cycle-de-vie.js';
+import { CONFIGURATION, urlPortail, type Configuration } from '../configuration/configuration.js';
+import { BaseDonnees } from '../infrastructure/base-de-donnees/base-de-donnees.service.js';
+import { ServiceRedis } from '../infrastructure/redis/redis.service.js';
+import { Idempotence } from '../infrastructure/securite/idempotence.js';
+import { Jetons } from '../infrastructure/securite/jetons.js';
+import { Limiteur } from '../infrastructure/securite/limiteur.js';
+import { STOCKAGE, StockageDisque, type Stockage } from '../infrastructure/stockage/stockage.js';
+
+export const HORLOGE = Symbol('HORLOGE');
+export type Horloge = () => Date;
+
+export interface OptionsNoyau {
+  readonly configuration: Configuration;
+  /** Horloge injectée (tests du SLA) ; l'heure réelle par défaut */
+  readonly horloge?: Horloge;
+  readonly stockage?: Stockage;
+}
+
+@Injectable()
+class Fermeture implements OnApplicationShutdown {
+  constructor(
+    @Inject(BaseDonnees) private readonly bd: BaseDonnees,
+    @Inject(ServiceRedis) private readonly redis: ServiceRedis,
+  ) {}
+
+  async onApplicationShutdown(): Promise<void> {
+    await Promise.allSettled([this.bd.fermer(), this.redis.fermer()]);
+  }
+}
+
+@Global()
+@Module({})
+export class NoyauModule {
+  static pour(options: OptionsNoyau): DynamicModule {
+    const config = options.configuration;
+    const horloge: Horloge = options.horloge ?? (() => new Date());
+    const fournisseurs = [
+      { provide: CONFIGURATION, useValue: config },
+      { provide: HORLOGE, useValue: horloge },
+      { provide: BaseDonnees, useFactory: () => new BaseDonnees(config.baseDeDonneesUrl) },
+      { provide: ServiceRedis, useFactory: () => new ServiceRedis(config.redisUrl) },
+      { provide: STOCKAGE, useValue: options.stockage ?? new StockageDisque(config.stockageDossier) },
+      { provide: Jetons, useFactory: () => new Jetons(config.secretJwt, horloge) },
+      { provide: Limiteur, useFactory: (r: ServiceRedis) => new Limiteur(r), inject: [ServiceRedis] },
+      { provide: Idempotence, useFactory: (r: ServiceRedis) => new Idempotence(r), inject: [ServiceRedis] },
+      {
+        provide: CycleDeVie,
+        useFactory: (bd: BaseDonnees) => new CycleDeVie(bd.base, {
+          horloge,
+          lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}`,
+        }),
+        inject: [BaseDonnees],
+      },
+      Fermeture,
+    ];
+    return {
+      module: NoyauModule,
+      providers: fournisseurs,
+      exports: fournisseurs.filter((f) => f !== Fermeture).map((f) => (typeof f === 'function' ? f : f.provide)),
+    };
+  }
+}

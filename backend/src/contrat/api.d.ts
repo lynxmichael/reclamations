@@ -123,6 +123,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/logos/{fichier}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Logo d'une banque (adresse donnée par logoUrl)
+         * @description Le nom du fichier est aléatoire et change à chaque nouveau logo ; l'image peut donc être gardée en cache un an.
+         */
+        get: operations["lireLogo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/client/reclamations": {
         parameters: {
             query?: never;
@@ -246,7 +266,7 @@ export interface paths {
         /**
          * Première étape de connexion (e-mail et mot de passe)
          * @description Renvoie toujours une étape TOTP : la double authentification est obligatoire pour tout le personnel.
-         *     Après 5 échecs, le compte est verrouillé 15 minutes. 10 tentatives par 15 minutes et par adresse IP.
+         *     Après 5 échecs, le compte est verrouillé 15 minutes. 10 échecs par 15 minutes et par adresse IP (les connexions réussies ne comptent pas : le personnel d'une agence partage souvent la même adresse publique).
          */
         post: operations["connexion"];
         delete?: never;
@@ -1344,7 +1364,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -2164,7 +2184,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Probleme"];
             };
         };
-        /** @description Rôle insuffisant, ou banque suspendue */
+        /** @description Rôle insuffisant, ou banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque) */
         Interdit: {
             headers: {
                 [name: string]: unknown;
@@ -2533,6 +2553,32 @@ export interface operations {
             429: components["responses"]["TropDeRequetes"];
         };
     };
+    lireLogo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fichier: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image du logo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/svg+xml": string;
+                    "image/webp": string;
+                };
+            };
+            404: components["responses"]["Introuvable"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     listerMesReclamations: {
         parameters: {
             query?: never;
@@ -2709,6 +2755,7 @@ export interface operations {
             };
             400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
             423: components["responses"]["Verrouille"];
             429: components["responses"]["TropDeRequetes"];
         };
@@ -2729,6 +2776,8 @@ export interface operations {
             200: components["responses"]["SessionOuverte"];
             400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            423: components["responses"]["Verrouille"];
             429: components["responses"]["TropDeRequetes"];
         };
     };
@@ -2774,6 +2823,8 @@ export interface operations {
             200: components["responses"]["SessionOuverte"];
             400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            423: components["responses"]["Verrouille"];
         };
     };
     rafraichirSession: {
@@ -2806,6 +2857,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     demanderReinitialisation: {
@@ -2878,6 +2930,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     listerReclamations: {
@@ -2973,6 +3026,7 @@ export interface operations {
         responses: {
             200: components["responses"]["Reclamation"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
         };
     };
@@ -3142,6 +3196,7 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Reclamation"];
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
@@ -3189,6 +3244,7 @@ export interface operations {
         responses: {
             200: components["responses"]["Fichier"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
         };
     };
@@ -3245,7 +3301,9 @@ export interface operations {
                     "application/json": components["schemas"]["PageNotifications"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     marquerNotificationLue: {
@@ -3267,6 +3325,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
         };
     };
@@ -3287,6 +3346,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     lireParametresBanque: {
@@ -3300,6 +3360,7 @@ export interface operations {
         responses: {
             200: components["responses"]["Parametres"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     modifierApparence: {
@@ -3338,6 +3399,7 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Parametres"];
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
             413: components["responses"]["FichierTropVolumineux"];
@@ -3363,6 +3425,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     creerCategorie: {
@@ -3443,6 +3506,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     creerAgence: {
@@ -3610,6 +3674,7 @@ export interface operations {
                     "image/svg+xml": string;
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
@@ -3626,6 +3691,7 @@ export interface operations {
         responses: {
             200: components["responses"]["Horaires"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     remplacerHoraires: {
@@ -3670,7 +3736,9 @@ export interface operations {
                     "application/json": components["schemas"]["JourFerie"][];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     ajouterJourFerie: {
@@ -3749,6 +3817,7 @@ export interface operations {
                     "application/json": components["schemas"]["PageUtilisateurs"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
         };
@@ -3927,6 +3996,7 @@ export interface operations {
                     "application/json": components["schemas"]["PageAudit"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
         };
@@ -3968,6 +4038,7 @@ export interface operations {
                     "application/json": components["schemas"]["PageBanques"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
         };
@@ -4236,6 +4307,7 @@ export interface operations {
                     "application/json": components["schemas"]["PageAudit"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
         };
@@ -4280,6 +4352,7 @@ export interface operations {
                     "application/json": components["schemas"]["PageNotifications"];
                 };
             };
+            400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
         };

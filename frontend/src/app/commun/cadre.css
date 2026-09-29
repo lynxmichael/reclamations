@@ -1,0 +1,7 @@
+/* Applications (étape 8) : le fond couvre toute la fenêtre. Dans un fichier et non dans
+   index.html : la CSP de production (style-src 'self') refuse les styles écrits dans la page. */
+html,
+body,
+#racine {
+  height: 100%;
+}

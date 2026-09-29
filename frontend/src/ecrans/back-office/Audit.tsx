@@ -1,34 +1,26 @@
 /**
- * Journal d'audit de la banque (listerJournalBanque, verifierJournalBanque). Chaque ligne est
- * chaînée à la précédente par une empreinte SHA-256 (étape 3) : la vérification détecte une
- * ligne modifiée ou supprimée.
+ * Journal d'audit (listerJournalBanque, verifierJournalBanque ; côté plateforme,
+ * listerJournalPlateforme et verifierJournalPlateforme). Chaque ligne est chaînée à la précédente
+ * par une empreinte SHA-256 (étape 3) : la vérification détecte une ligne modifiée ou supprimée.
  */
-import { ChevronDown, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ShieldAlert, ShieldCheck } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, cx } from '../../ui/composants';
+import { ChoixFiltre } from '../../ui/Filtre';
 import { dateCourte, nombre } from '../../ui/format';
-import { ROLE } from '../../ui/libelles';
+import { ACTION_AUDIT, ROLE } from '../../ui/libelles';
 
-const ACTIONS: Record<string, string> = {
-  'reclamation.depot': 'Dépôt d\'une réclamation',
-  'reclamation.assignation': 'Assignation',
-  'reclamation.prise_en_charge': 'Prise en charge',
-  'reclamation.reponse_client': 'Réponse au client',
-  'reclamation.note_interne': 'Note interne',
-  'reclamation.message_client': 'Message du client',
-  'reclamation.resolution': 'Résolution',
-  'reclamation.confirmation': 'Confirmation du client',
-  'reclamation.contestation': 'Contestation du client',
-  'reclamation.cloture_automatique': 'Clôture automatique',
-  'reclamation.cloture_forcee': 'Clôture forcée',
-  'reclamation.priorite': 'Changement de priorité',
-  'reclamation.escalade': 'Escalade',
-  'sla.alerte_preventive': 'Alerte SLA envoyée',
-  'sla.depassement': 'Dépassement SLA et escalade',
-  'categorie.modification': 'Catégorie modifiée',
-  'utilisateur.connexion': 'Connexion',
-  'utilisateur.verrouillage': 'Compte verrouillé (5 échecs)',
-};
+export type PeriodeAudit = '24h' | '7j' | '30j';
+
+export interface CriteresAudit {
+  action?: string;
+  acteurId?: string;
+  banqueId?: string;
+  periode?: PeriodeAudit;
+  page: number;
+}
+
+const PERIODES: Record<PeriodeAudit, string> = { '24h': '24 dernières heures', '7j': '7 derniers jours', '30j': '30 derniers jours' };
 
 function Acteur({ a }: { a: S<'LigneAudit'>['acteur'] }) {
   if (a.type === 'SYSTEME') return <span className="text-encre-2">Système</span>;
@@ -50,37 +42,99 @@ function Filtre({ libelle }: { libelle: string }) {
   );
 }
 
-export function Audit({ journal, verification }: { journal: S<'PageAudit'>; verification: S<'VerificationChaine'> }) {
+export function Audit({
+  journal,
+  verification,
+  criteres,
+  surCriteres,
+  surVerifier,
+  verificationEnCours,
+  personnes,
+  banques,
+  chargement,
+}: {
+  journal: S<'PageAudit'>;
+  verification: S<'VerificationChaine'> | null;
+  /** Étape 8 : filtres et pagination portés par l'adresse de la page */
+  criteres?: CriteresAudit;
+  surCriteres?: (c: CriteresAudit) => void;
+  surVerifier?: () => void;
+  verificationEnCours?: boolean;
+  /** Filtre « Personne » (journal d'une banque) */
+  personnes?: S<'ReferenceNommee'>[];
+  /** Filtre « Banque » (journal de la plateforme) */
+  banques?: S<'ReferenceNommee'>[];
+  chargement?: boolean;
+}) {
+  const serveur = !!(criteres && surCriteres);
+  const changer = (c: Partial<CriteresAudit>) => surCriteres?.({ ...criteres!, page: 1, ...c });
+  const { page, parPage, total } = journal.pagination;
+  const pages = Math.max(1, Math.ceil(total / parPage));
+  const nomChaine = banques ? (criteres?.banqueId && criteres.banqueId !== 'plateforme' ? banques.find((b) => b.id === criteres.banqueId)?.nom ?? 'la banque' : 'la plateforme') : null;
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-[26px] font-bold tracking-tight">Journal d'audit</h1>
-          <p className="mt-1 max-w-[72ch] text-[15px] text-encre-3">Toutes les actions sur les réclamations, le paramétrage et les comptes. Rien ne peut y être modifié ni effacé.</p>
+          <p className="mt-1 max-w-[72ch] text-[15px] text-encre-3">
+            {banques ? 'Les actions de toutes les banques et de la plateforme. Chaque banque a sa propre chaîne, vérifiable séparément.' : 'Toutes les actions sur les réclamations, le paramétrage et les comptes. Rien ne peut y être modifié ni effacé.'}
+          </p>
         </div>
       </div>
 
-      <div className={cx('flex items-center gap-4 rounded-xl border p-4', verification.valide ? 'border-resolue/30 bg-resolue-doux/60' : 'border-urgent/30 bg-urgent-doux')}>
-        {verification.valide ? <ShieldCheck aria-hidden size={28} className="shrink-0 text-resolue" /> : <ShieldAlert aria-hidden size={28} className="shrink-0 text-urgent" />}
-        <div className="flex-1">
-          <p className={cx('font-bold', verification.valide ? 'text-resolue' : 'text-urgent')}>
-            {verification.valide ? 'Journal intact' : `Rupture détectée à la ligne ${verification.premiereRupture}`}
-          </p>
-          <p className="chiffres text-[15px] text-encre-2">
-            {nombre(verification.lignes)} lignes vérifiées une à une, de la première à la dernière.
-          </p>
+      {verification ? (
+        <div className={cx('flex items-center gap-4 rounded-xl border p-4', verification.valide ? 'border-resolue/30 bg-resolue-doux/60' : 'border-urgent/30 bg-urgent-doux')}>
+          {verification.valide ? <ShieldCheck aria-hidden size={28} className="shrink-0 text-resolue" /> : <ShieldAlert aria-hidden size={28} className="shrink-0 text-urgent" />}
+          <div className="flex-1">
+            <p className={cx('font-bold', verification.valide ? 'text-resolue' : 'text-urgent')}>
+              {verification.valide ? `Journal intact${nomChaine ? ` : chaîne de ${nomChaine}` : ''}` : `Rupture détectée à la ligne ${verification.premiereRupture}${nomChaine ? `, chaîne de ${nomChaine}` : ''}`}
+            </p>
+            <p className="chiffres text-[15px] text-encre-2">
+              {nombre(verification.lignes)} lignes vérifiées une à une, de la première à la dernière.
+            </p>
+          </div>
+          <Bouton onClick={surVerifier} disabled={verificationEnCours}>{verificationEnCours ? 'Vérification…' : 'Vérifier à nouveau'}</Bouton>
         </div>
-        <Bouton>Vérifier à nouveau</Bouton>
-      </div>
+      ) : (
+        <div className="flex items-center gap-4 rounded-xl border border-trait bg-surface p-4">
+          <ShieldCheck aria-hidden size={28} className="shrink-0 text-encre-3" />
+          <p className="flex-1 text-[15px] text-encre-2">Vérifiez que la chaîne{nomChaine ? ` de ${nomChaine}` : ''} n'a pas été modifiée : chaque ligne est recalculée depuis la première.</p>
+          <Bouton onClick={surVerifier} disabled={verificationEnCours}>{verificationEnCours ? 'Vérification…' : 'Vérifier la chaîne'}</Bouton>
+        </div>
+      )}
 
       <div className="rounded-xl border border-trait bg-surface">
         <div className="flex flex-wrap gap-2 border-b border-trait px-4 py-3">
-          <Filtre libelle="Personne" />
-          <Filtre libelle="Action" />
-          <Filtre libelle="Réclamation" />
-          <Filtre libelle="Période" />
+          {serveur ? (
+            <>
+              {banques && (
+                <ChoixFiltre
+                  libelle="Banque"
+                  valeur={criteres!.banqueId}
+                  options={[{ valeur: 'plateforme', libelle: 'Plateforme (Makor Telecoms)' }, ...banques.map((b) => ({ valeur: b.id, libelle: b.nom }))]}
+                  surChoix={(v) => changer({ banqueId: v })}
+                />
+              )}
+              {personnes && <ChoixFiltre libelle="Personne" valeur={criteres!.acteurId} options={personnes.map((p) => ({ valeur: p.id, libelle: p.nom }))} surChoix={(v) => changer({ acteurId: v })} />}
+              <ChoixFiltre
+                libelle="Action"
+                valeur={criteres!.action}
+                options={Object.entries(ACTION_AUDIT).map(([valeur, libelle]) => ({ valeur, libelle })).sort((a, b) => a.libelle.localeCompare(b.libelle, 'fr'))}
+                surChoix={(v) => changer({ action: v })}
+              />
+              <ChoixFiltre libelle="Période" valeur={criteres!.periode} options={(Object.keys(PERIODES) as PeriodeAudit[]).map((v) => ({ valeur: v, libelle: PERIODES[v] }))} surChoix={(v) => changer({ periode: v as PeriodeAudit | undefined })} />
+            </>
+          ) : (
+            <>
+              <Filtre libelle="Personne" />
+              <Filtre libelle="Action" />
+              <Filtre libelle="Réclamation" />
+              <Filtre libelle="Période" />
+            </>
+          )}
         </div>
-        <table className="w-full text-left text-[15px]">
+        <table className={cx('w-full text-left text-[15px] transition-opacity', chargement && 'opacity-60')}>
           <thead>
             <tr className="border-b border-trait text-[13px] text-encre-3">
               <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">N°</th>
@@ -98,7 +152,7 @@ export function Audit({ journal, verification }: { journal: S<'PageAudit'>; veri
                 <td className="chiffres px-3 py-3 text-sm whitespace-nowrap">{dateCourte(l.horodatage)}</td>
                 <td className="px-3 py-3 text-sm"><Acteur a={l.acteur} /></td>
                 <td className="px-3 py-3 text-sm">
-                  <div className="font-semibold">{ACTIONS[l.action] ?? l.action}</div>
+                  <div className="font-semibold">{ACTION_AUDIT[l.action] ?? l.action}</div>
                   <div className="text-encre-3">{l.action}</div>
                 </td>
                 <td className="px-3 py-3 text-sm text-encre-2">
@@ -112,11 +166,24 @@ export function Audit({ journal, verification }: { journal: S<'PageAudit'>; veri
                 <td className="chiffres py-3 pr-5 pl-3 text-sm text-encre-3">{l.ip ?? '—'}</td>
               </tr>
             ))}
+            {journal.donnees.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-5 py-10 text-center text-encre-3">Aucune ligne pour ces critères.</td>
+              </tr>
+            )}
           </tbody>
         </table>
         <div className="flex items-center justify-between border-t border-trait px-5 py-3 text-sm text-encre-3">
-          <span className="chiffres">{nombre(journal.pagination.total)} lignes</span>
-          <span>Page 1</span>
+          <span className="chiffres">{nombre(total)} ligne{total > 1 ? 's' : ''}</span>
+          {serveur ? (
+            <span className="flex items-center gap-2">
+              <Bouton taille="petit" variante="discret" aria-label="Page précédente" disabled={page <= 1} onClick={() => surCriteres!({ ...criteres!, page: page - 1 })} icone={<ChevronLeft aria-hidden size={16} />} />
+              <span className="chiffres">Page {page} sur {pages}</span>
+              <Bouton taille="petit" variante="discret" aria-label="Page suivante" disabled={page >= pages} onClick={() => surCriteres!({ ...criteres!, page: page + 1 })} icone={<ChevronRight aria-hidden size={16} />} />
+            </span>
+          ) : (
+            <span>Page 1</span>
+          )}
         </div>
       </div>
     </div>
