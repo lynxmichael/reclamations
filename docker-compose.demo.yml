@@ -1,0 +1,28 @@
+# =============================================================================
+#  Environnement de démonstration (étape 10) : surcharge de docker-compose.prod.yml
+#
+#  Sur un serveur à part, jamais celui de la production : mêmes images et mêmes réglages de
+#  sécurité (HTTPS, cookies sécurisés, secrets propres), deux banques fictives avec 60 jours
+#  d'historique, remises à zéro chaque nuit (deploiement/reinitialiser-demo.sh).
+#
+#    ./deploiement/generer-env.sh --demo --domaine demo.<domaine> --acme <adresse>
+#    docker compose -f docker-compose.prod.yml -f docker-compose.demo.yml --env-file .env.demo up -d --build
+#    ./deploiement/reinitialiser-demo.sh                   (premier jeu de données)
+#    ./deploiement/reinitialiser-demo.sh --installer-cron  (chaque nuit)
+#
+#  DNS : console.demo.<domaine> et *.demo.<domaine> vers ce serveur.
+# =============================================================================
+
+name: reclamations-demo
+
+services:
+  api:
+    environment:
+      # Permet le jeu de démonstration (scripts/demonstration.ts) ; absent en production réelle
+      DEMONSTRATION: "1"
+      DEMO_MOT_DE_PASSE: ${DEMO_MOT_DE_PASSE:?DEMO_MOT_DE_PASSE manquant}
+      DEMO_GRAINE_TOTP: ${DEMO_GRAINE_TOTP:?DEMO_GRAINE_TOTP manquant}
+
+  # Données fictives remises à zéro chaque nuit : aucune sauvegarde (service désactivé)
+  sauvegarde:
+    profiles: [sans-objet-en-demonstration]

@@ -1,7 +1,7 @@
 # Étape 8 — Frontend MVP
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 29/09/2026 · **Statut : en attente de validation** (décisions F1 à F11 ci-dessous).
+Version du 29/09/2026 · **Statut : validé le 29/09/2026** (décisions F1 à F11 retenues telles que proposées).
 
 Livrables :
 

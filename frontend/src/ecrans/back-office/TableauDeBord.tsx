@@ -1,11 +1,13 @@
 /**
  * Tableau de bord (§6.6) : lireIndicateurs, filtres identiques à la liste, export CSV
  * (exporterReclamations). Les délais sont en temps ouvré ; les taux suivent les définitions de
- * l'étape 4 (S5, S6).
+ * l'étape 4 (S5, S6). Étape 9 : courbe d'évolution, filtres réels (période, agence, catégorie).
  */
+import type { ReactNode } from 'react';
 import { CalendarDays, ChevronDown, Download } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Panneau, cx } from '../../ui/composants';
+import { Evolution } from '../../ui/Evolution';
 import { duree, nombre, pourcent } from '../../ui/format';
 
 const COULEUR_STATUT: Record<string, string> = {
@@ -29,8 +31,13 @@ function Indicateur({ libelle, valeur, unite, detail }: { libelle: string; valeu
   );
 }
 
+function Vide() {
+  return <p className="text-[15px] text-encre-3">Aucune réclamation sur la période.</p>;
+}
+
 function Barres({ volumes, total }: { volumes: S<'Volume'>[]; total: number }) {
   const max = Math.max(...volumes.map((v) => v.total));
+  if (!total || !volumes.length) return <Vide />;
   return (
     <ul className="flex flex-col gap-3">
       {[...volumes].sort((a, b) => b.total - a.total).map((v) => (
@@ -50,6 +57,7 @@ function Barres({ volumes, total }: { volumes: S<'Volume'>[]; total: number }) {
 }
 
 function Repartition({ volumes, total, couleurs }: { volumes: S<'Volume'>[]; total: number; couleurs: (cle: string, i: number) => string }) {
+  if (!total) return <Vide />;
   return (
     <div>
       <div className="flex h-5 overflow-hidden rounded-md" role="img" aria-label={volumes.map((v) => `${v.libelle} ${v.total}`).join(', ')}>
@@ -74,10 +82,20 @@ export function TableauDeBord({
   indicateurs: ind,
   periode = 'Du 1er au 25 septembre 2026',
   surExporter,
+  filtres,
+  fuseau,
+  chargement,
+  exportEnCours,
 }: {
   indicateurs: S<'Indicateurs'>;
   periode?: string;
   surExporter?: () => void;
+  /** Étape 9 : les vrais filtres (période, agence, catégorie) ; sinon, ceux de la maquette */
+  filtres?: ReactNode;
+  fuseau?: string;
+  /** Nouveaux chiffres en chargement : les actuels restent affichés, atténués */
+  chargement?: boolean;
+  exportEnCours?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-5">
@@ -86,19 +104,27 @@ export function TableauDeBord({
           <h1 className="text-[26px] font-bold tracking-tight">Tableau de bord</h1>
           <p className="mt-1 text-[15px] text-encre-3">Délais en temps ouvré, selon les horaires de la banque.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] font-semibold">
-            <CalendarDays aria-hidden size={17} className="text-encre-3" />
-            {periode}
-            <ChevronDown aria-hidden size={16} className="text-encre-3" />
-          </button>
-          <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] text-encre-2">
-            Toutes les agences
-            <ChevronDown aria-hidden size={16} className="text-encre-3" />
-          </button>
-          <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter en CSV</Bouton>
-        </div>
+        <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter} disabled={exportEnCours}>
+          {exportEnCours ? 'Export…' : 'Exporter en CSV'}
+        </Bouton>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {filtres ?? (
+          <>
+            <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] font-semibold">
+              <CalendarDays aria-hidden size={17} className="text-encre-3" />
+              {periode}
+              <ChevronDown aria-hidden size={16} className="text-encre-3" />
+            </button>
+            <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] text-encre-2">
+              Toutes les agences
+              <ChevronDown aria-hidden size={16} className="text-encre-3" />
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className={cx('flex flex-col gap-5 transition-opacity', chargement && 'opacity-60')} aria-busy={chargement || undefined}>
 
       <dl className="grid grid-cols-5 divide-x divide-trait rounded-xl border border-trait bg-surface">
         <Indicateur libelle="Réclamations reçues" valeur={nombre(ind.total)} detail="Toutes les réclamations déposées sur la période" />
@@ -118,6 +144,10 @@ export function TableauDeBord({
         <Indicateur libelle="Premier contact" valeur={pourcent(ind.tauxResolutionPremierContact)} detail="Résolues sans question au client, sans escalade ni réouverture" />
       </dl>
 
+      <Panneau titre="Évolution">
+        <Evolution evolution={ind.evolution} fuseau={fuseau} />
+      </Panneau>
+
       <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-5">
         <Panneau titre="Où en sont les réclamations">
           <Repartition volumes={ind.parStatut} total={ind.total} couleurs={(cle) => COULEUR_STATUT[cle] ?? 'bg-trait-fort'} />
@@ -134,6 +164,7 @@ export function TableauDeBord({
         <Panneau titre="Par agence">
           <Barres volumes={ind.parAgence} total={ind.total} />
         </Panneau>
+      </div>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import { useAnnoncer } from '../commun/Annonces';
 import { Chargement, ErreurChargement } from '../commun/Etats';
 import { INTERVALLE_MS } from './Cadre';
 import { nomDe, useConsole, useParametres } from './contexte';
+import { useExport } from './Reporting';
 
 const FILES: FileTraitement[] = ['recues', 'assignees', 'urgentes', 'en-retard', 'escaladees', 'toutes'];
 const TRIS: TriFiles[] = ['echeanceSlaLe', '-creeLe', 'creeLe', '-priorite', '-echeanceSlaLe'];
@@ -105,6 +106,7 @@ export function PageFiles() {
   const categories = useQuery({ queryKey: ['categories'], queryFn: () => appeler('listerCategories'), staleTime: 60_000 });
   const agences = useQuery({ queryKey: ['agences'], queryFn: () => appeler('listerAgences'), staleTime: 60_000 });
   const agents = useAgents(moi.role !== 'AGENT');
+  const { exporter, enCours } = useExport();
 
   if (page.isPending) return <Chargement />;
   if (page.isError) return <ErreurChargement erreur={page.error} surReessayer={() => void page.refetch()} />;
@@ -117,6 +119,20 @@ export function PageFiles() {
       criteres={criteres}
       surCriteres={(c) => setParams(ecrireCriteres(c))}
       chargement={page.isFetching && page.isPlaceholderData}
+      // Étape 9 : les réclamations de la file et des filtres affichés, toutes pages confondues
+      surExporter={moi.role === 'AGENT' ? undefined : () => void exporter(() => appeler('exporterReclamations', {
+        requete: {
+          file: criteres.file,
+          statut: criteres.statut ? [criteres.statut] : undefined,
+          categorieId: criteres.categorieId,
+          agenceId: criteres.agenceId,
+          canal: criteres.canal,
+          agentId: criteres.agentId,
+          du: debutPeriode(criteres.periode),
+          recherche: criteres.recherche,
+        },
+      }))}
+      exportEnCours={enCours}
       references={{
         categories: (categories.data ?? []).map((c) => ({ id: c.id, nom: c.nom })),
         agences: (agences.data ?? []).filter((a) => a.active).map((a) => ({ id: a.id, nom: a.nom })),

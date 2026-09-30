@@ -995,7 +995,24 @@ export class Moteur {
       tauxResolutionPremierContact: resolues.length
         ? resolues.filter((t) => !t.aEteQuestionne && !t.escaladeeVersId && t.nbReouvertures === 0).length / resolues.length
         : null,
+      evolution: this.evolution(du, au),
     };
+  }
+
+  /** Courbe par jour (étape 9) : déposées ce jour-là, résolues ce jour-là (quelle que soit la date de dépôt). */
+  private evolution(du: Date, au: Date): S<'Evolution'> {
+    const JOUR = 86_400_000;
+    const points: S<'Evolution'>['points'] = [];
+    // Fuseau de la banque de démonstration : Abidjan, à l'heure universelle
+    for (let d = Math.floor(du.getTime() / JOUR) * JOUR; d < au.getTime(); d += JOUR) {
+      const dans = (x: Date | null | undefined) => !!x && x.getTime() >= d && x.getTime() < d + JOUR;
+      points.push({
+        debut: new Date(d).toISOString().replace('.000Z', 'Z'),
+        deposees: this.tickets.filter((t) => dans(t.creeLe)).length,
+        resolues: this.tickets.filter((t) => t.slaRespecte !== null && dans(t.resolueLe)).length,
+      });
+    }
+    return { regroupement: 'JOUR', points };
   }
 
   /* -------------------------------------------------------------- Journal d'audit */

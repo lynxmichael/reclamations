@@ -146,12 +146,13 @@ export async function saisirCode(page: Page, code: string) {
 
 /* ------------------------------------------------------------------ Captures */
 
-const DOSSIER_CAPTURES = resolve(import.meta.dirname, '../../../docs/etape-8-captures');
+const DOCS = resolve(import.meta.dirname, '../../../docs');
 
-/** Capture pour la note d'étape, seulement avec CAPTURES=1. */
-export async function capture(page: Page, nom: string) {
+/** Capture pour une note d'étape (docs/etape-N-captures), seulement avec CAPTURES=1. */
+export async function capture(page: Page, nom: string, etape = 8) {
   if (process.env.CAPTURES !== '1') return;
-  mkdirSync(DOSSIER_CAPTURES, { recursive: true });
+  const dossier = resolve(DOCS, `etape-${etape}-captures`);
+  mkdirSync(dossier, { recursive: true });
   await page.waitForLoadState('networkidle').catch(() => undefined);
   // Seul le dernier message affiché reste visible sur la capture. Masqués par le DOM, pas par une
   // feuille de style injectée : la CSP de production (style-src 'self') la refuserait.
@@ -161,6 +162,6 @@ export async function capture(page: Page, nom: string) {
       for (const e of messages) e.style.display = m ? 'none' : '';
     }, masquer);
   await anciens(true);
-  await page.screenshot({ path: resolve(DOSSIER_CAPTURES, `${nom}.png`) });
+  await page.screenshot({ path: resolve(dossier, `${nom}.png`) });
   await anciens(false);
 }

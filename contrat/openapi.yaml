@@ -80,18 +80,24 @@ paths:
     get:
       tags: [Santé]
       operationId: lireSante
-      summary: État de l'API, de la base et de Redis
+      summary: État de l'API, de ses dépendances, du worker, des envois et du disque
+      description: |
+        Point de supervision (étape 10). **503** seulement si l'API ne peut pas servir (base ou
+        Redis injoignable) : c'est ce que regarde le contrôle de santé du conteneur. Un worker
+        arrêté, des e-mails ou SMS en attente depuis plus de 10 minutes ou un disque presque plein
+        (moins de 5 % ou de 2 Gio libres) passent `statut` à `degrade` avec un **200** : la
+        supervision externe surveille `"statut":"ok"` et alerte sans que le site soit coupé.
       x-roles: [PUBLIC]
       security: []
       responses:
         '200':
-          description: Service opérationnel
+          description: API disponible ; `statut` dit si tout va bien
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Sante' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
         '503':
-          description: Une dépendance ne répond pas
+          description: La base ou Redis ne répond pas
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Sante' }
@@ -614,7 +620,14 @@ paths:
       tags: [Tableau de bord]
       operationId: exporterReclamations
       summary: Export CSV des réclamations filtrées
-      description: Mêmes filtres que la liste. CSV UTF-8 avec BOM, séparateur « ; » (lisible directement dans Excel en français).
+      description: |
+        Mêmes filtres que la liste. CSV UTF-8 avec BOM, séparateur « ; » (lisible directement dans
+        Excel en français), dates dans le fuseau de la banque, délais en minutes ouvrées.
+        Colonnes : numéro, dates de dépôt, de première réponse, de résolution et de clôture, statut,
+        priorité, catégorie, agence, canal, agent, échéance, délais, SLA respecté, premier contact,
+        réouvertures, escalade, mode de clôture. Ni description, ni nom ni coordonnées du client.
+        50 000 lignes au plus (sinon 400 EXPORT_TROP_VOLUMINEUX). Chaque export est inscrit au
+        journal d'audit de la banque.
       x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
@@ -902,6 +915,11 @@ paths:
       tags: [Tableau de bord]
       operationId: lireIndicateurs
       summary: Indicateurs du §6.6 sur une période
+      description: |
+        Réclamations déposées pendant la période (par défaut, du début du mois courant, dans le
+        fuseau de la banque, jusqu'à maintenant). Délais en minutes ouvrées. Les taux portent sur
+        les réclamations résolues (et non rouvertes depuis) parmi celles de la période.
+        `evolution` compte les réclamations déposées et résolues par jour, semaine ou mois (étape 9).
       x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
@@ -911,6 +929,10 @@ paths:
         - $ref: '#/components/parameters/FiltreCategorie'
         - $ref: '#/components/parameters/FiltreAgence'
         - $ref: '#/components/parameters/FiltreCanal'
+        - name: regroupement
+          in: query
+          description: Pas de la courbe d'évolution ; par défaut JOUR jusqu'à 62 jours, SEMAINE jusqu'à 26 semaines, MOIS au-delà
+          schema: { $ref: '#/components/schemas/Regroupement' }
       responses:
         '200':
           description: Indicateurs
@@ -1775,6 +1797,7 @@ paths:
       tags: [Plateforme]
       operationId: lireIndicateursPlateforme
       summary: Statistiques de toutes les banques (métadonnées seulement)
+      description: Réclamations déposées pendant la période (par défaut, le mois courant en temps universel). Aucune description ni donnée de client.
       x-roles: [SUPER_ADMIN]
       security:
         - jetonPersonnel: []
@@ -1799,6 +1822,10 @@ paths:
       tags: [Plateforme]
       operationId: lireFacturationSms
       summary: SMS et segments envoyés par banque sur un mois (refacturation)
+      description: |
+        Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois ;
+        `echecs` : SMS créés pendant le mois et abandonnés après 5 tentatives. Toutes les banques
+        existant à la fin du mois figurent, même sans SMS.
       x-roles: [SUPER_ADMIN]
       security:
         - jetonPersonnel: []
@@ -2284,6 +2311,8 @@ components:
         - SUPERVISEUR_INVALIDE
         - INVITATION_DEJA_ACCEPTEE
         - JOUR_FERIE_EXISTANT
+        # Reporting (étape 9)
+        - EXPORT_TROP_VOLUMINEUX
         # Serveur
         - ERREUR_INTERNE
 
@@ -2324,12 +2353,30 @@ components:
         nom: { type: string }
     Sante:
       type: object
-      required: [statut, base, redis, version]
+      required: [statut, base, redis, worker, envois, disque, version]
       properties:
-        statut: { type: string, enum: [ok, degrade] }
+        statut:
+          type: string
+          enum: [ok, degrade]
+          description: ok si toutes les autres valeurs sont ok
         base: { type: string, enum: [ok, indisponible] }
         redis: { type: string, enum: [ok, indisponible] }
-        version: { type: string, examples: ['1.0.0'] }
+        worker:
+          type: string
+          enum: [ok, absent, inconnu]
+          description: absent si le worker n'a terminé aucun travail depuis 2 minutes ; inconnu si Redis ne répond pas
+        envois:
+          type: string
+          enum: [ok, en_retard, inconnu]
+          description: en_retard si un e-mail ou un SMS attend depuis plus de 10 minutes (worker, SMTP ou passerelle SMS en panne)
+        disque:
+          type: string
+          enum: [ok, presque_plein, inconnu]
+          description: espace libre du volume des pièces jointes (moins de 5 % ou de 2 Gio → presque_plein)
+        version:
+          type: string
+          description: étiquette de l'image déployée (VERSION de .env.production)
+          examples: ['1.0.0']
     Horodatage:
       type: string
       format: date-time
@@ -2835,7 +2882,7 @@ components:
       type: object
       description: Définitions du §6.6 ; délais en minutes ouvrées
       required: [du, au, total, parStatut, parCategorie, parCanal, parAgence, delaiPremiereReponseMoyenMinutes,
-        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact]
+        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact, evolution]
       properties:
         du: { $ref: '#/components/schemas/Horodatage' }
         au: { $ref: '#/components/schemas/Horodatage' }
@@ -2856,6 +2903,27 @@ components:
         delaiResolutionMoyenMinutes: { type: [number, 'null'] }
         tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Part des réclamations résolues avant leur échéance" }
         tauxResolutionPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Sans attente client, sans escalade, sans réouverture" }
+        evolution: { $ref: '#/components/schemas/Evolution' }
+    Regroupement:
+      type: string
+      description: Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)
+      enum: [JOUR, SEMAINE, MOIS]
+    Evolution:
+      type: object
+      description: Courbe du tableau de bord (étape 9, décision E7 de l'étape 6)
+      required: [regroupement, points]
+      properties:
+        regroupement: { $ref: '#/components/schemas/Regroupement' }
+        points:
+          type: array
+          maxItems: 400
+          items:
+            type: object
+            required: [debut, deposees, resolues]
+            properties:
+              debut: { $ref: '#/components/schemas/Horodatage' }
+              deposees: { type: integer, minimum: 0, description: "Déposées pendant ce pas" }
+              resolues: { type: integer, minimum: 0, description: "Résolues pendant ce pas (date de la dernière résolution), quelle que soit leur date de dépôt" }
 
     # ---- Notifications in-app --------------------------------------------------------------
     NotificationInApp:

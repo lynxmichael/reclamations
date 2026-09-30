@@ -240,6 +240,19 @@ export const NOTIFICATIONS_AGENT: S<'PageNotifications'> = {
 
 /* ------------------------------------------------------------ Tableau de bord (§6.6) */
 
+/**
+ * Courbe de septembre (étape 9) : 312 déposées, 276 résolues, du 1er au 25 ; les dimanches
+ * (agences fermées) comptent peu de dépôts, et aucune résolution.
+ */
+const EVOLUTION_SEPTEMBRE: S<'Evolution'> = (() => {
+  const deposees = [15, 16, 14, 17, 9, 3, 16, 18, 15, 14, 16, 8, 2, 17, 15, 14, 18, 13, 7, 2, 16, 15, 14, 13, 5];
+  const resolues = [9, 13, 12, 14, 8, 0, 12, 16, 14, 13, 14, 7, 0, 14, 13, 14, 16, 12, 6, 0, 14, 14, 12, 12, 17];
+  return {
+    regroupement: 'JOUR',
+    points: deposees.map((n, i) => ({ debut: `2026-09-${String(i + 1).padStart(2, '0')}T00:00:00Z`, deposees: n, resolues: resolues[i]! })),
+  };
+})();
+
 export const INDICATEURS: S<'Indicateurs'> = {
   du: '2026-09-01T00:00:00Z',
   au: '2026-09-25T23:59:59Z',
@@ -276,6 +289,7 @@ export const INDICATEURS: S<'Indicateurs'> = {
   delaiResolutionMoyenMinutes: 1386,
   tauxRespectSla: 0.87,
   tauxResolutionPremierContact: 0.43,
+  evolution: EVOLUTION_SEPTEMBRE,
 };
 
 /* ------------------------------------------------------------ Journal d'audit */

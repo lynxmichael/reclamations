@@ -32,10 +32,15 @@ export interface Configuration {
   readonly contratChemin: string;
   readonly smtpUrl: string;
   readonly emailExpediteur: string;
-  readonly smsMode: 'journal';
+  /** SMS : journal du worker (développement) ou passerelle HTTP de Makor Telecoms (étape 9) */
+  readonly sms: ConfigurationSms;
   /** Valide chaque réponse contre le contrat et journalise les écarts (développement) */
   readonly validerReponses: boolean;
 }
+
+export type ConfigurationSms =
+  | { readonly mode: 'journal' }
+  | { readonly mode: 'http'; readonly url: string; readonly cle: string; readonly expediteur: string };
 
 const SECRETS_DE_DEVELOPPEMENT = [
   'developpement-uniquement-changer-en-production-0123456789',
@@ -95,7 +100,8 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
 
   const config: Configuration = {
     production,
-    version: lireVersion(),
+    // Étiquette de l'image construite (VERSION de .env.production), sinon version du package.json
+    version: env.APP_VERSION?.trim() || lireVersion(),
     port,
     trustProxy: env.TRUST_PROXY?.trim() || 'loopback, linklocal, uniquelocal',
     baseDeDonneesUrl: requise('APP_DATABASE_URL'),
@@ -111,14 +117,37 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
     contratChemin,
     smtpUrl: env.SMTP_URL?.trim() || 'smtp://localhost:1025',
     emailExpediteur: env.EMAIL_EXPEDITEUR?.trim() || `Réclamations <no-reply@${domaine}>`,
-    smsMode: 'journal',
+    sms: lireSms(env, production, erreurs),
     validerReponses: booleen('VALIDER_REPONSES', !production),
   };
-  if (env.SMS_MODE && env.SMS_MODE !== 'journal') {
-    erreurs.push('SMS_MODE : seul « journal » existe à l\'étape 7 (la passerelle Makor arrive à l\'étape 9)');
-  }
   if (erreurs.length) throw new ErreurConfiguration(erreurs);
   return config;
+}
+
+/**
+ * SMS_MODE=journal (par défaut) ou http. En http : SMS_URL (https en production), SMS_CLE
+ * (16 caractères au moins), SMS_EXPEDITEUR (11 caractères, lettres, chiffres et espaces).
+ */
+function lireSms(env: NodeJS.ProcessEnv, production: boolean, erreurs: string[]): ConfigurationSms {
+  const mode = env.SMS_MODE?.trim() || 'journal';
+  if (mode === 'journal') return { mode };
+  if (mode !== 'http') {
+    erreurs.push('SMS_MODE doit valoir journal ou http');
+    return { mode: 'journal' };
+  }
+  const url = env.SMS_URL?.trim() ?? '';
+  const cle = env.SMS_CLE?.trim() ?? '';
+  const expediteur = env.SMS_EXPEDITEUR?.trim() || 'Reclamation';
+  let adresse: URL | null = null;
+  try {
+    adresse = new URL(url);
+  } catch {
+    erreurs.push('SMS_URL est obligatoire avec SMS_MODE=http (adresse de la passerelle)');
+  }
+  if (adresse && production && adresse.protocol !== 'https:') erreurs.push('SMS_URL doit être en https en production');
+  if (cle.length < 16) erreurs.push('SMS_CLE est obligatoire avec SMS_MODE=http (16 caractères au moins)');
+  if (!/^[A-Za-z0-9 ]{1,11}$/.test(expediteur)) erreurs.push('SMS_EXPEDITEUR : 11 caractères au plus, lettres sans accent, chiffres et espaces');
+  return { mode, url, cle, expediteur };
 }
 
 function lireVersion(): string {

@@ -2,6 +2,7 @@
  * Recette §10, critère 10 : les opérations courantes répondent en moins d'une seconde.
  * Mesure sur une banque de 1 000 réclamations, à travers toute la pile (HTTP, contrat, RLS, Prisma).
  */
+import { appendFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CycleDeVie } from '../../src/application/reclamations/cycle-de-vie.js';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
@@ -58,9 +59,14 @@ describe(`opérations courantes sur ${VOLUME} réclamations`, () => {
     ['recherche par nom de client', (i: number) => client.appeler('listerReclamations', { jeton: superviseur, requete: { recherche: `Client ${500 + i}` } })],
     ['fiche d\'une réclamation', (i: number) => client.appeler('lireReclamation', { jeton: superviseur, chemin: { id: ids[i * 7] } })],
     ['assignation (écriture + notifications + audit)', (i: number) => client.appeler('assignerReclamation', { jeton: superviseur, chemin: { id: ids[i * 11] }, corps: { agentId: j.horizon.comptes.salif.id } })],
+    ['tableau de bord du mois (indicateurs du §6.6 et courbe)', (_: number) => client.appeler('lireIndicateurs', { jeton: superviseur })],
+    ['tableau de bord sur un an, par semaine', (_: number) => client.appeler('lireIndicateurs', { jeton: superviseur, requete: { du: new Date(Date.now() - 365 * 86_400_000).toISOString(), regroupement: 'SEMAINE' } })],
+    [`export CSV de toute la banque (plus de ${VOLUME} lignes)`, (_: number) => client.appeler('exporterReclamations', { jeton: superviseur })],
   ] as const)('%s : moins d\'une seconde', async (_nom, appel) => {
     const { p95, max } = await mesurer(20, appel);
     console.log(`  ${_nom} : p95 ${p95.toFixed(0)} ms, max ${max.toFixed(0)} ms`);
+    // Rapport de recette (recette/recette.mjs) : mesures reprises telles quelles
+    if (process.env.RECETTE_MESURES) appendFileSync(process.env.RECETTE_MESURES, `${JSON.stringify({ operation: _nom, p95: Math.round(p95), max: Math.round(max) })}\n`);
     expect(p95).toBeLessThan(1000);
   });
 });

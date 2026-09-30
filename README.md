@@ -14,24 +14,28 @@ Référence : cahier des charges consolidé (version du 25/09/2026).
 | 5 | Contrat d'API | Validé | [`contrat/openapi.yaml`](contrat/openapi.yaml) · [Swagger hors ligne](docs/api/index.html) · [note](docs/etape-5-contrat-api.md) |
 | 6 | Écrans | Validé | [maquettes hors ligne](docs/maquettes/index.html) · [démo cliquable](docs/demo/index.html) · [`frontend/`](frontend/) · [note](docs/etape-6-ecrans.md) |
 | 7 | Backend MVP | Validé | [`backend/src/`](backend/src/) · [`docker-compose.prod.yml`](docker-compose.prod.yml) · [note](docs/etape-7-backend.md) |
-| 8 | Frontend MVP | **En attente de validation** | [`frontend/src/app/`](frontend/src/app/) · [`frontend/Dockerfile`](frontend/Dockerfile) · [note](docs/etape-8-frontend.md) |
-| 9 | Reporting et notifications | À faire | |
-| 10 | Tests et déploiement | À faire | |
+| 8 | Frontend MVP | Validé | [`frontend/src/app/`](frontend/src/app/) · [`frontend/Dockerfile`](frontend/Dockerfile) · [note](docs/etape-8-frontend.md) |
+| 9 | Reporting et notifications | Validé | [`backend/src/modules/reporting/`](backend/src/modules/reporting/) · [`frontend/src/app/console/Reporting.tsx`](frontend/src/app/console/Reporting.tsx) · [note](docs/etape-9-reporting-notifications.md) |
+| 10 | Tests et déploiement | Validé | [recette automatique](recette/recette.mjs) · [rapport](docs/recette/rapport.md) · [cahier de recette](docs/recette/cahier-de-recette.md) · [guide d'exploitation](docs/exploitation.md) · [`deploiement/`](deploiement/) · [`docker/sauvegarde/`](docker/sauvegarde/) · [note](docs/etape-10-tests-deploiement.md) |
 
 ## Structure
 
 ```
 contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (83 opérations)
 docker-compose.yml                    développement : PostgreSQL 16, Redis 8, Mailpit, API, worker, écrans, outils
-docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis
-.env.production.example               variables et secrets de la production
+docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis, sauvegarde
+docker-compose.demo.yml               environnement de démonstration (second serveur) : surcharge de la production
+.env.production.example               variables et secrets de la production (.env.demo.example : démonstration)
+deploiement/                          secrets, contrôle d'un déploiement, mise à jour et retour arrière, remise à zéro de la démo
+recette/recette.mjs                   recette automatique : toutes les suites, rapport des 11 critères (docs/recette/rapport.md)
+docker/sauvegarde/                    sauvegarde chiffrée (age) copiée hors du VPS, restauration vérifiée, essai de 28 contrôles
 docker/postgres/init/                 bases et rôles, créés au premier démarrage
 docker/caddy/Caddyfile                HTTPS automatique, console.<domaine> et <slug>.<domaine>
 docker/caddy/commun.caddy             en-têtes de sécurité, /api/* vers l'API, cache et CSP des écrans
 backend/
   Dockerfile                          image de l'application (API et worker) et image des migrations
   prisma/schema.prisma                modèle de données (19 modèles, 13 énumérations)
-  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie
+  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting
   prisma.config.ts                    configuration Prisma 7
   src/domaine/                        code pur : temps ouvré, machine d'états, SLA (+ tests unitaires), partagé avec la démo
   src/application/reclamations/       cycle de vie d'une réclamation et tâches planifiées du SLA
@@ -39,27 +43,28 @@ backend/
   src/infrastructure/base-de-donnees/ accès contextuel : banque, plateforme, système
   src/infrastructure/contrat/         routes, rôles, validation et erreurs lus dans le contrat ; Swagger
   src/infrastructure/securite/        jetons, mots de passe, TOTP, limites de débit, idempotence
-  src/infrastructure/envois/          boîte d'envoi : e-mail (SMTP), SMS (journal), in-app
-  src/modules/                        API : public, client, auth, réclamations, paramétrage, personnel…
+  src/infrastructure/envois/          boîte d'envoi : e-mail (SMTP, texte et HTML), SMS (passerelle HTTP ou journal), in-app
+  src/modules/                        API : public, client, auth, réclamations, reporting, paramétrage, personnel…
   src/main.ts · src/worker.ts         les deux processus : API NestJS et worker BullMQ
-  scripts/semer.ts                    jeu de démonstration : deux banques et leur personnel
+  scripts/semer.ts                    jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
+  scripts/demonstration.ts            environnement de démonstration : mot de passe et graine TOTP de l'installation
   scripts/creer-super-admin.ts        premier Super Admin d'une installation
-  test/e2e/                           76 tests de bout en bout, chaque réponse validée contre le contrat
+  test/e2e/                           88 tests de bout en bout, chaque réponse validée contre le contrat
   scripts/verifier-integrite.ts       32 vérifications du modèle (étape 2)
-  scripts/verifier-securite.ts        60 vérifications de sécurité (étape 3)
+  scripts/verifier-securite.ts        62 vérifications de sécurité (étapes 3 et 9)
   scripts/verifier-cycle-de-vie.ts    45 vérifications du cycle de vie et du SLA (étape 4)
 frontend/
   Dockerfile                          image web : Caddy, la console et le portail construits
   portail/ · console/                 pages d'entrée des deux applications (étape 8)
   src/app/portail/                    portail client branché sur l'API : dépôt, suivi, espace client
-  src/app/console/                    console : connexion, réclamations, paramétrage, personnel, audit, plateforme
+  src/app/console/                    console : connexion, réclamations, tableau de bord, paramétrage, personnel, audit, plateforme
   src/api/                            client d'API tiré du contrat, sessions du personnel et du client
-  src/ui/                             système visuel : statuts, chrono SLA, couleurs de la banque
+  src/ui/                             système visuel : statuts, chrono SLA, couleurs de la banque, courbe d'évolution
   src/ecrans/                         écrans du portail, du back-office et de la console (étape 6)
   src/maquettes/                      données fictives conformes au contrat, galerie des maquettes
   src/demo/                           démo cliquable : API simulée, 30 jours d'historique, visite guidée
-  tests/                              130 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API
-  tests/navigateur/                   22 tests dans Chromium (Playwright) sur la vraie API
+  tests/                              136 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting
+  tests/navigateur/                   26 tests dans Chromium (Playwright) sur la vraie API
 docs/
   etape-2-modele-de-donnees.md        note de l'étape 2 et diagramme entité-relation
   etape-3-architecture.md             note d'architecture de l'étape 3 et diagrammes
@@ -68,6 +73,10 @@ docs/
   etape-6-ecrans.md                   écrans : décisions, captures, tests
   etape-7-backend.md                  API, authentification, worker, Docker, tests
   etape-8-frontend.md                 portail et console branchés sur l'API : décisions, captures, tests
+  etape-9-reporting-notifications.md  tableau de bord, exports CSV, facturation SMS, passerelle SMS, e-mails HTML
+  etape-10-tests-deploiement.md       recette, sauvegardes, supervision, déploiement, démonstration
+  exploitation.md                     guide d'exploitation : VPS, installation, sauvegardes, supervision, mises à jour, restauration
+  recette/                            cahier de recette (à signer) et rapport de la recette automatique
   demo-cliquable.md                   présenter la démo à une banque : préparation, visite, mode libre
   api/index.html                      documentation du contrat, lisible sans connexion
   maquettes/index.html                les 21 écrans en une page, lisible sans connexion
@@ -83,12 +92,13 @@ Prérequis : Docker Desktop (ou Docker Engine) avec Docker Compose.
 ```bash
 cp .env.example .env                    # facultatif : identifiants et ports
 docker compose up -d                    # PostgreSQL 16, Redis 8, Mailpit, l'API et le worker, puis les écrans
-docker compose exec api npm run semer   # jeu de démonstration : deux banques et leur personnel
+docker compose exec api npm run semer   # jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
 docker compose exec api npm run totp -- serge.kouadio@banque-alpha.example   # code TOTP du moment
 docker compose logs -f api worker       # journaux (les SMS de développement s'y affichent)
 docker compose run --rm verification    # contrat, typage, tests unitaires, 137 vérifications, tests de bout en bout
-docker compose run --rm maquettes       # écrans : 130 tests, les deux applications, docs/maquettes/ et docs/demo/
-docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 22 tests
+docker compose run --rm maquettes       # écrans : 136 tests, les deux applications, docs/maquettes/ et docs/demo/
+docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 26 tests
+docker compose run --rm recette         # tout ce qui précède, plus l'essai de sauvegarde : rapport des 11 critères
 ```
 
 | Adresse | Contenu |
@@ -96,12 +106,12 @@ docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API
 | http://localhost:5173 | console du personnel (banques et plateforme) |
 | http://alpha.localhost:5174/d/7K3QX9P2MA | portail de la Banque Alpha, QR code de l'accueil |
 | http://localhost:3000/api/docs | API et documentation Swagger (essais en direct) |
-| http://localhost:3000/api/v1/sante | état de l'API, de la base et de Redis |
+| http://localhost:3000/api/v1/sante | état de l'API, de la base, de Redis, du worker, des envois et du disque |
 | http://localhost:8025 | e-mails envoyés par le worker (Mailpit) |
 
-Comptes de démonstration, mot de passe et codes TOTP : [note de l'étape 7, section 7](docs/etape-7-backend.md#7-jeu-de-démonstration). L'API, le worker et les écrans se rechargent à chaque modification du code. Les liens des e-mails (Mailpit) pointent vers la console et le portail ci-dessus.
+Comptes de démonstration, mot de passe et codes TOTP : [note de l'étape 7, section 7](docs/etape-7-backend.md#7-jeu-de-démonstration). L'API, le worker et les écrans se rechargent à chaque modification du code. Les liens des e-mails (Mailpit) pointent vers la console et le portail ci-dessus. Le tableau de bord et les exports de la Banque Alpha s'appuient sur 60 jours d'historique ; une base semée avant l'étape 9 ne l'a pas : `docker compose down -v`, `docker compose up -d`, puis `npm run semer`.
 
-La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `148 passed` (tests unitaires), puis `32`, `60` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `76 passed` (tests de bout en bout de l'API). Pour les écrans : `130 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `22 passed`.
+La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `170 passed` (tests unitaires), puis `32`, `62` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `88 passed` (tests de bout en bout de l'API). Pour les écrans : `136 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `26 passed`.
 
 Les maquettes et la démo s'ouvrent aussi directement dans un navigateur, sans Docker : `docs/maquettes/index.html` et `docs/demo/index.html`. Pour présenter la démo à une banque : [guide](docs/demo-cliquable.md).
 
@@ -111,14 +121,18 @@ Si un port est déjà pris (un PostgreSQL local, par exemple), mettre `POSTGRES_
 
 ## Production (VPS Contabo)
 
+Tout est dans le [guide d'exploitation](docs/exploitation.md) : préparation et durcissement du VPS, DNS, secrets, clés de sauvegarde, démarrage, vérification, environnement de démonstration, sauvegardes, supervision, mises à jour, restauration, dépannage. L'essentiel :
+
 ```bash
-cp .env.production.example .env.production      # domaine, e-mail Let's Encrypt, mots de passe, secrets, SMTP
+./deploiement/generer-env.sh --domaine <domaine> --acme <adresse>      # .env.production, secrets générés
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm api \
   node dist/scripts/creer-super-admin.js prenom.nom@makortelecoms.ci Prénom Nom
+./deploiement/verifier.sh --local                                      # HTTPS, en-têtes, santé, conteneurs, pare-feu
+./deploiement/mettre-a-jour.sh 1.1.0                                   # plus tard : sauvegarde, construction, migrations, contrôle
 ```
 
-Seuls les ports 80 et 443 (Caddy) sont publiés. Le DNS doit faire pointer `console.<domaine>` et `*.<domaine>` vers le VPS. L'image web (Caddy, la console et le portail) est construite avec les autres. Détails : [note de l'étape 7, section 6](docs/etape-7-backend.md#6-docker) et [note de l'étape 8, section 7](docs/etape-8-frontend.md#7-docker-et-production).
+Seuls les ports 80 et 443 (Caddy) sont publiés ; le DNS fait pointer `console.<domaine>` et `*.<domaine>` vers le VPS. La base et les pièces jointes sont sauvegardées chaque nuit, chiffrées, et copiées hors du VPS ; la clé qui les déchiffre n'y est jamais.
 
 ## Travailler depuis la machine hôte (facultatif)
 
@@ -131,8 +145,8 @@ npm install                 # installe les dépendances et génère le client Pr
 npm run migrate:deploy      # applique les migrations sur reclamations_dev
 npm run dev                 # API : http://localhost:3000/api/docs
 npm run dev:worker          # worker (dans un second terminal)
-npm test                    # 148 tests unitaires
-npm run test:e2e            # 76 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
+npm test                    # 170 tests unitaires
+npm run test:e2e            # 88 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
 npx prisma studio           # parcourir les tables (connexion propriétaire)
 ```
 
@@ -145,9 +159,9 @@ cd frontend
 npm install
 npm run dev:console         # console : http://localhost:5173 (appelle l'API sur le port 3000)
 npm run dev:portail         # portail : http://alpha.localhost:5174/d/7K3QX9P2MA
-npm test                    # 130 tests unitaires
+npm test                    # 136 tests unitaires
 npx playwright install chromium
-npm run test:navigateur     # 22 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
+npm run test:navigateur     # 26 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
 npm run build               # console, portail, docs/maquettes/ et docs/demo/
 ```
 

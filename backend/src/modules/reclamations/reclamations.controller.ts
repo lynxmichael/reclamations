@@ -11,7 +11,7 @@ import { chargerParametres } from '../../application/reclamations/parametres.js'
 import { verifierOperation } from '../../domaine/reclamation/machine.js';
 import { BaseDonnees } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
-import { acteurDe, AppelCourant, EntreesValidees, personnelBanque, traceDe, type Appel, type Entrees } from '../../infrastructure/contrat/appel.js';
+import { acteurDe, AppelCourant, EntreesValidees, personnelBanque, traceDe, type Appel, type Entrees, type Personnel } from '../../infrastructure/contrat/appel.js';
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
 import { introuvable } from '../../infrastructure/contrat/probleme.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
@@ -49,28 +49,7 @@ export class ServiceReclamations {
   async lister(appel: Appel, q: Record<string, unknown>): Promise<S<'PageReclamations'>> {
     const moi = personnelBanque(appel);
     const maintenant = this.horloge();
-    const agent = moi.role === 'AGENT';
-    const visibles: Where = agent ? { agentId: moi.id } : {};
-    const file = String(q.file ?? 'toutes');
-    const parFile: Record<string, Where> = {
-      toutes: {},
-      recues: agent ? { id: { in: [] } } : { agentId: null, ...NON_CLOTUREE },
-      assignees: { agentId: moi.id, ...NON_CLOTUREE },
-      urgentes: { priorite: 'URGENTE', ...NON_CLOTUREE },
-      'en-retard': enRetard(maintenant),
-      escaladees: { escaladeeLe: { not: null }, ...NON_CLOTUREE },
-    };
-    const filtres: Where[] = [visibles, parFile[file] ?? {}];
-    if (Array.isArray(q.statut) && q.statut.length) filtres.push({ statut: { in: q.statut as never[] } });
-    if (q.priorite) filtres.push({ priorite: q.priorite as never });
-    if (q.categorieId) filtres.push({ categorieId: String(q.categorieId) });
-    if (q.agenceId) filtres.push({ agenceId: String(q.agenceId) });
-    if (q.canal) filtres.push({ canal: q.canal as never });
-    if (q.agentId) filtres.push({ agentId: String(q.agentId) });
-    if (q.du) filtres.push({ creeLe: { gte: new Date(String(q.du)) } });
-    if (q.au) filtres.push({ creeLe: { lt: new Date(String(q.au)) } });
-    if (q.recherche) filtres.push(recherche(String(q.recherche)));
-    const where: Where = { AND: filtres };
+    const { where, visibles, parFile, agent } = filtresReclamations(moi, q, maintenant);
     const { page, parPage, skip, take } = pagination(q);
 
     return this.bd.enBanque(moi.tenantId, async (tx) => {
@@ -168,6 +147,35 @@ export class ServiceReclamations {
     if (!p || !contenu) throw introuvable('Pièce jointe introuvable');
     return telechargement(contenu, p.nomFichier);
   }
+}
+
+/**
+ * Filtres d'une file (§6.2) : ceux de la liste, repris tels quels par l'export CSV (étape 9).
+ * Un agent ne voit que ses tickets.
+ */
+export function filtresReclamations(moi: Personnel & { tenantId: string }, q: Record<string, unknown>, maintenant: Date) {
+  const agent = moi.role === 'AGENT';
+  const visibles: Where = agent ? { agentId: moi.id } : {};
+  const file = String(q.file ?? 'toutes');
+  const parFile: Record<string, Where> = {
+    toutes: {},
+    recues: agent ? { id: { in: [] } } : { agentId: null, ...NON_CLOTUREE },
+    assignees: { agentId: moi.id, ...NON_CLOTUREE },
+    urgentes: { priorite: 'URGENTE', ...NON_CLOTUREE },
+    'en-retard': enRetard(maintenant),
+    escaladees: { escaladeeLe: { not: null }, ...NON_CLOTUREE },
+  };
+  const filtres: Where[] = [visibles, parFile[file] ?? {}];
+  if (Array.isArray(q.statut) && q.statut.length) filtres.push({ statut: { in: q.statut as never[] } });
+  if (q.priorite) filtres.push({ priorite: q.priorite as never });
+  if (q.categorieId) filtres.push({ categorieId: String(q.categorieId) });
+  if (q.agenceId) filtres.push({ agenceId: String(q.agenceId) });
+  if (q.canal) filtres.push({ canal: q.canal as never });
+  if (q.agentId) filtres.push({ agentId: String(q.agentId) });
+  if (q.du) filtres.push({ creeLe: { gte: new Date(String(q.du)) } });
+  if (q.au) filtres.push({ creeLe: { lt: new Date(String(q.au)) } });
+  if (q.recherche) filtres.push(recherche(String(q.recherche)));
+  return { where: { AND: filtres } as Where, visibles, parFile, agent };
 }
 
 /** Numéro, nom, e-mail ou téléphone du client. */

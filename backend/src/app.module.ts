@@ -19,6 +19,7 @@ import { PersonnelModule } from './modules/personnel/personnel.controller.js';
 import { PlateformeModule } from './modules/plateforme/plateforme.controller.js';
 import { PublicModule } from './modules/public/public.controller.js';
 import { ReclamationsModule } from './modules/reclamations/reclamations.controller.js';
+import { ReportingModule } from './modules/reporting/reporting.controller.js';
 import { SanteModule } from './modules/sante/sante.controller.js';
 import { NoyauModule, type OptionsNoyau } from './noyau/noyau.module.js';
 
@@ -35,6 +36,8 @@ export class AppModule {
         PublicModule,
         ClientModule,
         AuthModule,
+        // Avant ReclamationsModule : /banque/reclamations/export ne doit pas être pris pour un {id}
+        ReportingModule,
         ReclamationsModule,
         NotificationsModule,
         ParametrageModule,

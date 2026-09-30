@@ -251,6 +251,36 @@ services:
       && cd /depot/frontend && npm ci --no-audit --no-fund
       && npx playwright test"
 
+  # Recette automatique (étape 10, profil « outils ») : toutes les suites, puis le rapport des 11
+  # critères de la section 10 dans docs/recette/rapport.md. Même image que « navigateur », plus les
+  # outils de l'essai de sauvegarde (client PostgreSQL 16, age, rclone, jq) installés au lancement.
+  #   docker compose run --rm recette
+  recette:
+    image: mcr.microsoft.com/playwright:v1.56.0-noble
+    profiles: ["outils"]
+    working_dir: /depot
+    init: true
+    shm_size: 1gb
+    environment:
+      <<: *environnement-backend
+      DATABASE_URL: postgresql://${POSTGRES_USER:-reclamations}:${POSTGRES_PASSWORD:-reclamations}@postgres:5432/reclamations_verif
+      APP_DATABASE_URL: postgresql://reclamations_app:${APP_DB_PASSWORD:-reclamations_app}@postgres:5432/reclamations_verif
+      CI: "1"
+    volumes:
+      - ./:/depot
+      - recette_backend_node_modules:/depot/backend/node_modules
+      - recette_frontend_node_modules:/depot/frontend/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends postgresql-client-16 age rclone jq >/dev/null
+      && cd /depot/backend && npm ci --no-audit --no-fund && npm run -s roles:dev
+      && cd /depot/frontend && npm ci --no-audit --no-fund
+      && cd /depot && node recette/recette.mjs"
+
   # Documentation Swagger du contrat d'API (profil « docs ») : docker compose up -d swagger
   swagger:
     image: swaggerapi/swagger-ui:v5.32.15
@@ -273,4 +303,6 @@ volumes:
   maquettes_node_modules:
   navigateur_backend_node_modules:
   navigateur_frontend_node_modules:
+  recette_backend_node_modules:
+  recette_frontend_node_modules:
   fichiers_dev:

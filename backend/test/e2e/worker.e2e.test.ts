@@ -4,14 +4,16 @@
  * dépassement, chacune une seule fois ; clôture automatique après 5 jours, contestation dans le délai.
  */
 import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CycleDeVie } from '../../src/application/reclamations/cycle-de-vie.js';
 import { chargerParametres } from '../../src/application/reclamations/parametres.js';
 import { TachesSla } from '../../src/application/reclamations/taches-sla.js';
 import { ajouterMinutesOuvrees, minutesOuvreesEntre } from '../../src/domaine/temps-ouvre/calendrier.js';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
-import { segmentsSms, SmsJournal, type AdaptateurEmail } from '../../src/infrastructure/envois/adaptateurs.js';
+import { segmentsSms, SmsJournal, type AdaptateurEmail, type MessageEmail } from '../../src/infrastructure/envois/adaptateurs.js';
 import { BoiteEnvoi, CONTENU_MASQUE } from '../../src/infrastructure/envois/boite-envoi.js';
+import { CLE_BATTEMENT_WORKER } from '../../src/infrastructure/redis/redis.service.js';
 import { executer, FILE, Planificateur, purger } from '../../src/worker/planification.js';
 import { ClientApi, connecter, demarrerApi, fermerOutils, jeu, nouvelleIp, redisE2E, type ApiDeTest } from './environnement.js';
 
@@ -25,9 +27,9 @@ const jt: Record<string, string> = {};
 let numero = 10;
 
 class EmailFactice implements AdaptateurEmail {
-  envoyes: { destination: string; sujet: string; texte: string }[] = [];
+  envoyes: MessageEmail[] = [];
   enPanne = false;
-  async envoyer(m: { destination: string; sujet: string; texte: string }) {
+  async envoyer(m: MessageEmail) {
     if (this.enPanne) throw new Error('SMTP indisponible');
     this.envoyes.push(m);
     return { idFournisseur: `<test-${this.envoyes.length}@local>` };
@@ -151,6 +153,13 @@ describe('boîte d\'envoi', () => {
     expect(sms.every((n) => (n.segmentsSms ?? 0) >= 1)).toBe(true);
     expect(notifs.find((n) => n.modele === 'client.otp')!.contenu).toBe(CONTENU_MASQUE);
     expect(notifs.find((n) => n.modele === 'client.depot' && n.canal === 'SMS')!.contenu).toContain('enregistrée');
+
+    // E-mail au client : texte, et HTML au nom de la banque avec le lien de suivi (étape 9)
+    const depot = email.envoyes.find((m) => m.sujet === `Réclamation ${t.numero} enregistrée`)!;
+    expect(depot.texte).toContain(`/suivi/${t.jetonSuivi}`);
+    expect(depot.html).toMatch(/<td style="background:#[0-9A-Fa-f]{6};color:#(ffffff|17212b)[^"]*">Banque Alpha<\/td>/);
+    expect(depot.html).toContain(`>https://alpha.reclamations.example/suivi/${t.jetonSuivi}</a>`);
+    expect(depot.html).toContain('ne vous demandera jamais votre mot de passe');
   });
 
   it('en cas de panne : nouvelles tentatives, puis ECHEC après 5', async () => {
@@ -198,6 +207,10 @@ describe('purge et planification', () => {
     // Un travail « envois » ou « taches-sla » s'exécute dans les secondes qui suivent
     for (let i = 0; i < 40 && (await file.getCompletedCount()) === 0; i++) await new Promise((ok) => setTimeout(ok, 250));
     expect(await file.getCompletedCount()).toBeGreaterThan(0);
+    // Battement lu par lireSante (étape 10) : présent, expire après 2 minutes
+    const redis = new Redis(redisE2E());
+    expect(await redis.ttl(CLE_BATTEMENT_WORKER)).toBeGreaterThan(100);
+    redis.disconnect();
     await planif.arreter();
     await planif2.arreter();
     await file.obliterate({ force: true });

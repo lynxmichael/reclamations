@@ -85,6 +85,7 @@ export function Files({
   surCriteres,
   references,
   chargement,
+  exportEnCours,
 }: {
   page: S<'PageReclamations'>;
   moi: S<'Moi'>;
@@ -102,6 +103,7 @@ export function Files({
   references?: { categories: S<'ReferenceNommee'>[]; agences: S<'ReferenceNommee'>[]; agents: S<'ReferenceNommee'>[] };
   /** Nouvelle page en cours de chargement : les lignes actuelles restent visibles */
   chargement?: boolean;
+  exportEnCours?: boolean;
 }) {
   const [fileLocale, setFileLocale] = useState<File>(fileInitiale);
   const serveur = !!(criteres && surCriteres);
@@ -133,7 +135,7 @@ export function Files({
           </p>
         </div>
         {!agent && (!serveur || surExporter) && (
-          <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter en CSV</Bouton>
+          <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter} disabled={exportEnCours}>{exportEnCours ? 'Export…' : 'Exporter en CSV'}</Bouton>
         )}
       </div>
 

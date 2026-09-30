@@ -9,7 +9,7 @@ import { CycleDeVie } from './application/reclamations/cycle-de-vie.js';
 import { TachesSla } from './application/reclamations/taches-sla.js';
 import { CONFIGURATION, lireConfiguration, urlPortail, type Configuration } from './configuration/configuration.js';
 import { BaseDonnees } from './infrastructure/base-de-donnees/base-de-donnees.service.js';
-import { EmailSmtp, SmsJournal } from './infrastructure/envois/adaptateurs.js';
+import { EmailSmtp, SmsHttp, SmsJournal, type AdaptateurSms } from './infrastructure/envois/adaptateurs.js';
 import { BoiteEnvoi } from './infrastructure/envois/boite-envoi.js';
 import { Planificateur } from './worker/planification.js';
 
@@ -25,7 +25,7 @@ class ServiceWorker implements OnApplicationBootstrap, OnApplicationShutdown {
     this.email = new EmailSmtp(config.smtpUrl, config.emailExpediteur);
     this.planificateur = new Planificateur(config.redisUrl, {
       taches: new TachesSla(this.bd.base, cycle),
-      boite: new BoiteEnvoi(this.bd, this.email, new SmsJournal()),
+      boite: new BoiteEnvoi(this.bd, this.email, adaptateurSms(config)),
       bd: this.bd,
     });
   }
@@ -39,6 +39,17 @@ class ServiceWorker implements OnApplicationBootstrap, OnApplicationShutdown {
     await this.email.fermer();
     await this.bd.fermer();
   }
+}
+
+/** SMS : passerelle HTTP, ou journal du worker ; en production, le journal est signalé à chaque démarrage. */
+function adaptateurSms(config: Configuration): AdaptateurSms {
+  const journal = new Logger('SMS');
+  if (config.sms.mode === 'http') {
+    journal.log(`Passerelle SMS : ${new URL(config.sms.url).host}, expéditeur « ${config.sms.expediteur} »`);
+    return new SmsHttp(config.sms);
+  }
+  if (config.production) journal.warn('SMS_MODE=journal : aucun SMS n\'est envoyé aux clients (écrits dans ce journal seulement)');
+  return new SmsJournal();
 }
 
 @Module({})

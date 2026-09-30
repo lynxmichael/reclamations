@@ -135,6 +135,17 @@ async function main() {
     const notifs = await plateforme.notification.findMany();
     verifier(notifs.length === 1 && notifs[0].tenantId === null, `${notifs.length} notification(s)`);
   });
+  await cr.doitReussir('Facturation SMS (étape 9) : totaux par banque, sans lire un seul SMS', async () => {
+    await proprietaire.notification.create({
+      data: { tenantId: A.tenantId, canal: 'SMS', modele: 'client.depot', destinataireClientId: A.client.id, destination: '+2250700000001', contenu: 'Réclamation enregistrée', statut: 'ENVOYEE', envoyeeLe: new Date(), segmentsSms: 2 },
+    });
+    const lignes = await transactionEn(base, contexte.plateforme(), (tx) => tx.$queryRaw<{ tenant_id: string; sms: bigint; segments: bigint }[]>`
+      SELECT * FROM facturation_sms(now() - interval '1 day', now() + interval '1 day')`);
+    verifier(lignes.length === 1 && lignes[0]!.tenant_id === A.tenantId && Number(lignes[0]!.sms) === 1 && Number(lignes[0]!.segments) === 2, JSON.stringify(lignes, (_, v) => (typeof v === 'bigint' ? Number(v) : v)));
+    verifier((await plateforme.notification.count({ where: { canal: 'SMS' } })) === 0, 'SMS lisible par la plateforme');
+  });
+  await cr.doitEtreRefuse('Une banque appelle la facturation SMS de toutes les banques', '42501', () =>
+    transactionEn(base, contexte.banque(A.tenantId), (tx) => tx.$queryRaw`SELECT * FROM facturation_sms(now() - interval '1 day', now())`));
   await cr.doitReussir('Gère les banques : suspension', () =>
     plateforme.banque.update({ where: { id: B.tenantId }, data: { suspendueLe: new Date(), motifSuspension: 'Test' } }));
   await cr.doitEtreRefuse("Écrire dans la chaîne d'audit d'une banque", '42501', () =>

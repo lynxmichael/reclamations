@@ -10,10 +10,19 @@
 #  qu'il publie, c'est pourquoi PostgreSQL, Redis et l'API n'en publient aucun.
 #  Les migrations s'appliquent avant chaque démarrage de l'API. L'image web (Caddy, console et
 #  portail construits, étape 8) se reconstruit avec les autres à chaque « up -d --build ».
-#  Le service de sauvegarde (pg_dump chiffré copié hors du VPS) complète ce fichier à l'étape 10.
+#  Sauvegarde (étape 10) : chaque nuit, base et fichiers chiffrés par age, 7 copies locales,
+#  copie hors du VPS (Contabo Object Storage). Vérifier ou restaurer une sauvegarde :
+#    docker compose -f docker-compose.prod.yml --env-file .env.production run --rm restauration restaurer liste
+#    docker compose -f docker-compose.prod.yml --env-file .env.production run --rm restauration restaurer derniere
+#  (procédures complètes : docs/exploitation.md)
+#  Journaux de tous les services : 5 fichiers de 20 Mo au plus par conteneur.
 # =============================================================================
 
 name: reclamations-prod
+
+x-journaux: &journaux
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
 
 x-application: &application
   image: reclamations-application:${VERSION:-latest}
@@ -28,9 +37,41 @@ x-application: &application
     DOMAINE_PLATEFORME: ${DOMAINE_PLATEFORME:?DOMAINE_PLATEFORME manquant}
     SMTP_URL: ${SMTP_URL:?SMTP_URL manquant}
     EMAIL_EXPEDITEUR: ${EMAIL_EXPEDITEUR:?EMAIL_EXPEDITEUR manquant}
-  logging:
-    driver: json-file
-    options: { max-size: "20m", max-file: "5" }
+    # Passerelle SMS de Makor Telecoms (étape 9) ; journal = aucun SMS envoyé
+    SMS_MODE: ${SMS_MODE:-journal}
+    SMS_URL: ${SMS_URL:-}
+    SMS_CLE: ${SMS_CLE:-}
+    SMS_EXPEDITEUR: ${SMS_EXPEDITEUR:-Reclamation}
+  logging: *journaux
+  networks: [interne]
+
+# Sauvegarde et restauration : même image, droits différents sur les fichiers
+x-sauvegarde: &sauvegarde
+  image: reclamations-sauvegarde:${VERSION:-latest}
+  environment:
+    PGHOST: postgres
+    PGUSER: ${POSTGRES_USER:-reclamations}
+    PGPASSWORD: ${POSTGRES_PASSWORD}
+    PGDATABASE: reclamations
+    APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+    VERSION: ${VERSION:-latest}
+    SAUVEGARDE_CLES_AGE: ${SAUVEGARDE_CLES_AGE:?SAUVEGARDE_CLES_AGE manquant (clés publiques age)}
+    SAUVEGARDE_HEURE: ${SAUVEGARDE_HEURE:-02:30}
+    SAUVEGARDE_LOCALES: ${SAUVEGARDE_LOCALES:-7}
+    SAUVEGARDE_JOURS: ${SAUVEGARDE_JOURS:-30}
+    SAUVEGARDE_MOIS: ${SAUVEGARDE_MOIS:-12}
+    SAUVEGARDE_PING_URL: ${SAUVEGARDE_PING_URL:-}
+    SAUVEGARDE_S3_BUCKET: ${SAUVEGARDE_S3_BUCKET:-}
+    RCLONE_CONFIG_DISTANT_TYPE: s3
+    RCLONE_CONFIG_DISTANT_PROVIDER: Other
+    RCLONE_CONFIG_DISTANT_ENDPOINT: ${SAUVEGARDE_S3_ENDPOINT:-}
+    RCLONE_CONFIG_DISTANT_ACCESS_KEY_ID: ${SAUVEGARDE_S3_CLE:-}
+    RCLONE_CONFIG_DISTANT_SECRET_ACCESS_KEY: ${SAUVEGARDE_S3_SECRET:-}
+    RCLONE_CONFIG_DISTANT_NO_CHECK_BUCKET: "true"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  logging: *journaux
   networks: [interne]
 
 services:
@@ -54,6 +95,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    logging: *journaux
     networks: [interne]
 
   api:
@@ -62,6 +104,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: application
+      args:
+        VERSION: ${VERSION:-latest}
     volumes:
       - fichiers:/donnees/fichiers
     depends_on:
@@ -73,9 +117,14 @@ services:
   worker:
     <<: *application
     command: ["node", "dist/src/worker.js"]
-    # Pas de serveur HTTP : le contrôle de santé de l'image ne s'applique pas
+    # Pas de serveur HTTP : sain tant que son battement est dans Redis (un travail terminé il y a
+    # moins de 2 minutes, étape 10) ; le même battement est publié par /api/v1/sante
     healthcheck:
-      disable: true
+      test: ["CMD", "node", "-e", "const R=require('ioredis');const r=new R(process.env.REDIS_URL,{maxRetriesPerRequest:1,connectTimeout:3000});r.on('error',()=>{});r.exists('reclamations:worker:battement').then(n=>process.exit(n?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     depends_on:
       migrations:
         condition: service_completed_successfully
@@ -94,6 +143,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    logging: *journaux
     networks: [interne]
 
   postgres:
@@ -115,6 +165,7 @@ services:
       timeout: 5s
       retries: 10
     shm_size: 256m
+    logging: *journaux
     networks: [interne]
 
   redis:
@@ -128,7 +179,33 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    logging: *journaux
     networks: [interne]
+
+  # Sauvegarde quotidienne à SAUVEGARDE_HEURE (UTC) ; lecture seule sur les fichiers
+  sauvegarde:
+    <<: *sauvegarde
+    build:
+      context: docker/sauvegarde
+    restart: unless-stopped
+    init: true
+    volumes:
+      - sauvegardes:/sauvegardes
+      - fichiers:/donnees/fichiers:ro
+
+  # Outil lancé à la main (docker compose … run --rm restauration restaurer …), jamais par « up »
+  restauration:
+    <<: *sauvegarde
+    profiles: [outils]
+    restart: "no"
+    command: ["restaurer", "--help"]
+    stdin_open: true
+    tty: true
+    healthcheck:
+      disable: true
+    volumes:
+      - sauvegardes:/sauvegardes
+      - fichiers:/donnees/fichiers
 
 networks:
   interne:
@@ -139,3 +216,4 @@ volumes:
   fichiers:
   caddy_data:
   caddy_config:
+  sauvegardes:

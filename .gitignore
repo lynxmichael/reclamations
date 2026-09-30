@@ -6,3 +6,6 @@ dist/
 *.rdb
 test-results/
 playwright-report/
+.deploiement-precedent
+.env.demo
+recette/.resultats/

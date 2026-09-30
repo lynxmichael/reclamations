@@ -5,11 +5,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { contratApi } from '../../src/infrastructure/contrat/contrat.js';
-import { FICHIER_COUVERTURE, OPERATIONS_ETAPE_9 } from './environnement.js';
+import { FICHIER_COUVERTURE } from './environnement.js';
 
-it('toutes les opérations servies à l\'étape 7 ont été appelées par les tests', () => {
+it('les 83 opérations du contrat ont été appelées par les tests', () => {
   const appelees = new Set(existsSync(FICHIER_COUVERTURE) ? readFileSync(FICHIER_COUVERTURE, 'utf8').split('\n').filter(Boolean) : []);
-  const servies = [...contratApi().operations.keys()].filter((id) => !OPERATIONS_ETAPE_9.includes(id));
+  const servies = [...contratApi().operations.keys()];
   expect(servies.filter((id) => !appelees.has(id))).toEqual([]);
-  expect(servies.length).toBe(79);
+  expect(servies.length).toBe(83);
 });

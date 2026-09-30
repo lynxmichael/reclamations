@@ -2,6 +2,7 @@
  * Environnement des tests de bout en bout : API démarrée dans le processus du test, sur la base
  * jetable et une base Redis réservée ; client HTTP qui valide chaque réponse contre le contrat.
  */
+import { randomInt } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,8 +22,6 @@ import { rattacher } from '../../src/infrastructure/contrat/validation.js';
 import { cleAntiRejeu, codeCourant } from '../../src/infrastructure/securite/totp.js';
 import type { Horloge } from '../../src/noyau/noyau.module.js';
 
-/** Opérations de reporting, livrées à l'étape 9 (tableau de bord, export, facturation SMS). */
-export const OPERATIONS_ETAPE_9 = ['lireIndicateurs', 'exporterReclamations', 'lireIndicateursPlateforme', 'lireFacturationSms'];
 export const FICHIER_COUVERTURE = join(tmpdir(), 'reclamations-e2e-couverture.txt');
 
 export function redisE2E(): string {
@@ -120,9 +119,16 @@ export interface Reponse<T = any> {
   readonly octets: Buffer;
 }
 
-let compteurIp = 1;
-/** Adresse IP de test unique (réseau de documentation 198.18.0.0/15). */
-export const nouvelleIp = () => `198.18.${Math.floor(compteurIp / 250)}.${(compteurIp++ % 250) + 1}`;
+/**
+ * Adresse IP de test unique (réseau de test 198.18.0.0/15, 131 072 adresses). Chaque fichier de
+ * test tourne dans son propre processus : le point de départ est tiré au hasard, pour que deux
+ * fichiers n'utilisent pas les mêmes adresses et ne cumulent pas leurs limites de débit (Redis).
+ */
+let compteurIp = randomInt(0, 120_000);
+export const nouvelleIp = () => {
+  const n = compteurIp++ % 131_072;
+  return `198.${18 + (n >> 16)}.${(n >> 8) & 255}.${n & 255}`;
+};
 
 export class ClientApi {
   constructor(private readonly url: string, private readonly ipParDefaut = nouvelleIp()) {}

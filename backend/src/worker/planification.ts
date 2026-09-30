@@ -13,9 +13,11 @@
  */
 import { Logger } from '@nestjs/common';
 import { Queue, Worker, type Job } from 'bullmq';
+import { Redis } from 'ioredis';
 import type { TachesSla } from '../application/reclamations/taches-sla.js';
 import type { BaseDonnees } from '../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import type { BoiteEnvoi } from '../infrastructure/envois/boite-envoi.js';
+import { CLE_BATTEMENT_WORKER, DUREE_BATTEMENT_S } from '../infrastructure/redis/redis.service.js';
 
 export const FILE = 'reclamations-planification';
 
@@ -60,11 +62,14 @@ export class Planificateur {
   private readonly journal = new Logger('Worker');
   private file?: Queue;
   private worker?: Worker;
+  private battement?: Redis;
 
   constructor(private readonly redisUrl: string, private readonly e: Executants) {}
 
   async demarrer(): Promise<void> {
     const connexion = { url: this.redisUrl, maxRetriesPerRequest: null };
+    this.battement = new Redis(this.redisUrl, { connectionName: 'reclamations-worker-battement', maxRetriesPerRequest: 1, commandTimeout: 1000 });
+    this.battement.on('error', () => undefined);
     this.file = new Queue(FILE, { connection: connexion });
     for (const [nom, repetition] of Object.entries(TRAVAUX)) {
       await this.file.upsertJobScheduler(nom, repetition, { name: nom, opts: { removeOnComplete: 100, removeOnFail: 500 } });
@@ -74,14 +79,26 @@ export class Planificateur {
       const bilan = await executer(job.name as NomTravail, this.e);
       const utile = bilan && Object.values(bilan as Record<string, number>).some((n) => n > 0);
       if (utile) this.journal.log(`${job.name} : ${JSON.stringify(bilan)} (${Date.now() - debut} ms)`);
+      await this.battre();
       return bilan;
     }, { connection: connexion, concurrency: 1 });
+    await this.battre();
     this.worker.on('failed', (job, err) => this.journal.error(`${job?.name} en échec : ${err.message}`));
     this.journal.log(`Travaux planifiés : ${Object.keys(TRAVAUX).join(', ')}`);
+  }
+
+  /** Battement lu par lireSante : le worker tourne et termine ses travaux. */
+  private async battre(): Promise<void> {
+    try {
+      await this.battement?.set(CLE_BATTEMENT_WORKER, new Date().toISOString(), 'EX', DUREE_BATTEMENT_S);
+    } catch (e) {
+      this.journal.warn(`Battement non écrit : ${(e as Error).message}`);
+    }
   }
 
   async arreter(): Promise<void> {
     await this.worker?.close();
     await this.file?.close();
+    await this.battement?.quit().catch(() => this.battement?.disconnect());
   }
 }

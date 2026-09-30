@@ -44,7 +44,7 @@ async function principal() {
     URL_CONSOLE: process.env.URL_CONSOLE_NAVIGATEUR ?? 'http://localhost:4273',
   });
   const bd = new BaseDonnees(urls.application);
-  await semer(bd, { cleTotp: config.cleTotp, reclamations: true, lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` });
+  await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 60, lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` });
   await bd.fermer();
 
   const app = await creerApplication({ configuration: config, journaux: process.env.JOURNAUX_NAVIGATEUR === '1' });

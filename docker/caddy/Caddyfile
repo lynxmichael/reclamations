@@ -2,7 +2,8 @@
 #  Caddy — production sur le VPS Contabo (décision A9)
 #  HTTPS automatique (Let's Encrypt), en-têtes de sécurité, /api/* vers l'API NestJS, écrans.
 #
-#  - console.<domaine>  : console du personnel (banques et plateforme), /srv/console
+#  - console.<domaine>  : console du personnel (banques et plateforme), /srv/console ; certificat
+#                         obtenu à la première visite, comme ceux des portails
 #  - <slug>.<domaine>   : portail d'une banque, /srv/portail ; certificat obtenu à la première
 #                         visite, après vérification auprès de l'API que ce nom est celui d'une
 #                         banque cliente
@@ -18,7 +19,13 @@
 
 import commun.caddy
 
+# Certificat de la console aussi obtenu « à la demande » (première visite, nom approuvé par l'API) :
+# à côté du site *.<domaine> en on_demand, Caddy 2.11 n'obtient jamais au démarrage celui d'un nom
+# que ce site couvre, et la console restait sans certificat (étape 10, deploiement/verifier.sh)
 console.{$DOMAINE_PLATEFORME} {
+	tls {
+		on_demand
+	}
 	import securite
 	import api
 	import application /srv/console

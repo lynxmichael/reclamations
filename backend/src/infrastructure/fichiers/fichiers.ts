@@ -23,7 +23,7 @@ export function typeReel(contenu: Buffer): TypeFichier | null {
   if (contenu.length >= 8 && debut(8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (contenu.length >= 12 && contenu.toString('ascii', 0, 4) === 'RIFF' && contenu.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
   if (contenu.length >= 5 && contenu.toString('ascii', 0, 5) === '%PDF-') return 'application/pdf';
-  const texte = contenu.subarray(0, 1024).toString('utf8').replace(/^﻿/, '').trimStart();
+  const texte = contenu.subarray(0, 1024).toString('utf8').replace(/^\uFEFF/, '').trimStart();
   if (/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(texte)) return 'image/svg+xml';
   return null;
 }

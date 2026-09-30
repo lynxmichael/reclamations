@@ -29,7 +29,7 @@ export function useParametres(): S<'ParametresBanque'> {
   return c.parametres;
 }
 
-/** Adresses des pages (décision F4). Le tableau de bord et l'activité arrivent à l'étape 9. */
+/** Adresses des pages (décision F4) ; tableau de bord et activité depuis l'étape 9. */
 export const ROUTES_BANQUE: Record<PageBackOffice, string> = {
   reclamations: '/reclamations',
   tableau: '/tableau-de-bord',
@@ -40,7 +40,7 @@ export const ROUTES_BANQUE: Record<PageBackOffice, string> = {
   personnel: '/personnel',
   audit: '/journal-audit',
 };
-export const PAGES_BANQUE: PageBackOffice[] = ['reclamations', 'categories', 'points', 'horaires', 'banque', 'personnel', 'audit'];
+export const PAGES_BANQUE: PageBackOffice[] = ['reclamations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'personnel', 'audit'];
 
 export const ROUTES_PLATEFORME: Record<PageConsole, string> = {
   banques: '/plateforme/banques',
@@ -50,7 +50,7 @@ export const ROUTES_PLATEFORME: Record<PageConsole, string> = {
   audit: '/plateforme/journal-audit',
   administrateurs: '/plateforme/administrateurs',
 };
-export const PAGES_PLATEFORME: PageConsole[] = ['banques', 'plans', 'alertes', 'audit', 'administrateurs'];
+export const PAGES_PLATEFORME: PageConsole[] = ['banques', 'activite', 'plans', 'alertes', 'audit', 'administrateurs'];
 
 export function pageDe<T extends string>(routes: Record<T, string>, chemin: string): T | null {
   const trouvee = (Object.entries(routes) as [T, string][]).find(([, r]) => chemin === r || chemin.startsWith(`${r}/`));

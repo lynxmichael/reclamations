@@ -11,7 +11,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** État de l'API, de la base et de Redis */
+        /**
+         * État de l'API, de ses dépendances, du worker, des envois et du disque
+         * @description Point de supervision (étape 10). **503** seulement si l'API ne peut pas servir (base ou
+         *     Redis injoignable) : c'est ce que regarde le contrôle de santé du conteneur. Un worker
+         *     arrêté, des e-mails ou SMS en attente depuis plus de 10 minutes ou un disque presque plein
+         *     (moins de 5 % ou de 2 Gio libres) passent `statut` à `degrade` avec un **200** : la
+         *     supervision externe surveille `"statut":"ok"` et alerte sans que le site soit coupé.
+         */
         get: operations["lireSante"];
         put?: never;
         post?: never;
@@ -450,7 +457,13 @@ export interface paths {
         };
         /**
          * Export CSV des réclamations filtrées
-         * @description Mêmes filtres que la liste. CSV UTF-8 avec BOM, séparateur « ; » (lisible directement dans Excel en français).
+         * @description Mêmes filtres que la liste. CSV UTF-8 avec BOM, séparateur « ; » (lisible directement dans
+         *     Excel en français), dates dans le fuseau de la banque, délais en minutes ouvrées.
+         *     Colonnes : numéro, dates de dépôt, de première réponse, de résolution et de clôture, statut,
+         *     priorité, catégorie, agence, canal, agent, échéance, délais, SLA respecté, premier contact,
+         *     réouvertures, escalade, mode de clôture. Ni description, ni nom ni coordonnées du client.
+         *     50 000 lignes au plus (sinon 400 EXPORT_TROP_VOLUMINEUX). Chaque export est inscrit au
+         *     journal d'audit de la banque.
          */
         get: operations["exporterReclamations"];
         put?: never;
@@ -648,7 +661,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Indicateurs du §6.6 sur une période */
+        /**
+         * Indicateurs du §6.6 sur une période
+         * @description Réclamations déposées pendant la période (par défaut, du début du mois courant, dans le
+         *     fuseau de la banque, jusqu'à maintenant). Délais en minutes ouvrées. Les taux portent sur
+         *     les réclamations résolues (et non rouvertes depuis) parmi celles de la période.
+         *     `evolution` compte les réclamations déposées et résolues par jour, semaine ou mois (étape 9).
+         */
         get: operations["lireIndicateurs"];
         put?: never;
         post?: never;
@@ -1199,7 +1218,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Statistiques de toutes les banques (métadonnées seulement) */
+        /**
+         * Statistiques de toutes les banques (métadonnées seulement)
+         * @description Réclamations déposées pendant la période (par défaut, le mois courant en temps universel). Aucune description ni donnée de client.
+         */
         get: operations["lireIndicateursPlateforme"];
         put?: never;
         post?: never;
@@ -1216,7 +1238,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** SMS et segments envoyés par banque sur un mois (refacturation) */
+        /**
+         * SMS et segments envoyés par banque sur un mois (refacturation)
+         * @description Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois ;
+         *     `echecs` : SMS créés pendant le mois et abandonnés après 5 tentatives. Toutes les banques
+         *     existant à la fin du mois figurent, même sans SMS.
+         */
         get: operations["lireFacturationSms"];
         put?: never;
         post?: never;
@@ -1364,7 +1391,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "ERREUR_INTERNE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -1400,13 +1427,34 @@ export interface components {
             nom: string;
         };
         Sante: {
-            /** @enum {string} */
+            /**
+             * @description ok si toutes les autres valeurs sont ok
+             * @enum {string}
+             */
             statut: "ok" | "degrade";
             /** @enum {string} */
             base: "ok" | "indisponible";
             /** @enum {string} */
             redis: "ok" | "indisponible";
-            /** @example 1.0.0 */
+            /**
+             * @description absent si le worker n'a terminé aucun travail depuis 2 minutes ; inconnu si Redis ne répond pas
+             * @enum {string}
+             */
+            worker: "ok" | "absent" | "inconnu";
+            /**
+             * @description en_retard si un e-mail ou un SMS attend depuis plus de 10 minutes (worker, SMTP ou passerelle SMS en panne)
+             * @enum {string}
+             */
+            envois: "ok" | "en_retard" | "inconnu";
+            /**
+             * @description espace libre du volume des pièces jointes (moins de 5 % ou de 2 Gio → presque_plein)
+             * @enum {string}
+             */
+            disque: "ok" | "presque_plein" | "inconnu";
+            /**
+             * @description étiquette de l'image déployée (VERSION de .env.production)
+             * @example 1.0.0
+             */
             version: string;
         };
         /**
@@ -1825,6 +1873,23 @@ export interface components {
             tauxRespectSla: number | null;
             /** @description Sans attente client, sans escalade, sans réouverture */
             tauxResolutionPremierContact: number | null;
+            evolution: components["schemas"]["Evolution"];
+        };
+        /**
+         * @description Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)
+         * @enum {string}
+         */
+        Regroupement: "JOUR" | "SEMAINE" | "MOIS";
+        /** @description Courbe du tableau de bord (étape 9, décision E7 de l'étape 6) */
+        Evolution: {
+            regroupement: components["schemas"]["Regroupement"];
+            points: {
+                debut: components["schemas"]["Horodatage"];
+                /** @description Déposées pendant ce pas */
+                deposees: number;
+                /** @description Résolues pendant ce pas (date de la dernière résolution), quelle que soit leur date de dépôt */
+                resolues: number;
+            }[];
         };
         NotificationInApp: {
             /** Format: uuid */
@@ -2381,7 +2446,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Service opérationnel */
+            /** @description API disponible ; `statut` dit si tout va bien */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2391,7 +2456,7 @@ export interface operations {
                 };
             };
             429: components["responses"]["TropDeRequetes"];
-            /** @description Une dépendance ne répond pas */
+            /** @description La base ou Redis ne répond pas */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -3258,6 +3323,8 @@ export interface operations {
                 categorieId?: components["parameters"]["FiltreCategorie"];
                 agenceId?: components["parameters"]["FiltreAgence"];
                 canal?: components["parameters"]["FiltreCanal"];
+                /** @description Pas de la courbe d'évolution ; par défaut JOUR jusqu'à 62 jours, SEMAINE jusqu'à 26 semaines, MOIS au-delà */
+                regroupement?: components["schemas"]["Regroupement"];
             };
             header?: never;
             path?: never;

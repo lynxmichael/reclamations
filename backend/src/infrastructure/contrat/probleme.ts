@@ -51,6 +51,7 @@ const TITRES: Partial<Record<CodeErreur, string>> = {
   SUPERVISEUR_INVALIDE: 'Superviseur invalide',
   INVITATION_DEJA_ACCEPTEE: 'Invitation déjà acceptée',
   JOUR_FERIE_EXISTANT: 'Jour férié déjà enregistré',
+  EXPORT_TROP_VOLUMINEUX: 'Export trop volumineux',
   ERREUR_INTERNE: 'Erreur interne',
 };
 

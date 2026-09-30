@@ -12,6 +12,7 @@ import { NotificationsControleur } from '../../modules/notifications/notificatio
 import { ParametrageControleur } from '../../modules/parametrage/parametrage.controller.js';
 import { PersonnelControleur } from '../../modules/personnel/personnel.controller.js';
 import { PlateformeControleur } from '../../modules/plateforme/plateforme.controller.js';
+import { ReportingControleur } from '../../modules/reporting/reporting.controller.js';
 import { PublicControleur } from '../../modules/public/public.controller.js';
 import { ReclamationsControleur } from '../../modules/reclamations/reclamations.controller.js';
 import { SanteControleur } from '../../modules/sante/sante.controller.js';
@@ -21,11 +22,8 @@ import { erreursChamps, validateurDe } from './validation.js';
 
 const CONTROLEURS = [
   SanteControleur, PublicControleur, ClientControleur, AuthControleur, ReclamationsControleur, NotificationsControleur,
-  ParametrageControleur, PersonnelControleur, AuditControleur, PlateformeControleur,
+  ParametrageControleur, PersonnelControleur, AuditControleur, PlateformeControleur, ReportingControleur,
 ];
-
-/** Reporting : tableau de bord, export CSV, statistiques et facturation SMS de la plateforme. */
-export const ETAPE_9 = ['lireIndicateurs', 'exporterReclamations', 'lireIndicateursPlateforme', 'lireFacturationSms'];
 
 const METHODES_HTTP = ['get', 'post', 'put', 'delete', 'patch'];
 
@@ -41,12 +39,12 @@ function routes() {
 }
 
 describe('routes de l\'API ↔ opérations du contrat', () => {
-  it('chaque opération du contrat est servie une fois, sauf les 4 opérations de reporting (étape 9)', () => {
+  it('chaque opération du contrat est servie une fois (83, reporting de l\'étape 9 compris)', () => {
     const servies = routes().map((r) => r.id);
     expect(new Set(servies).size).toBe(servies.length);
-    const attendues = [...contratApi().operations.keys()].filter((id) => !ETAPE_9.includes(id)).sort();
+    const attendues = [...contratApi().operations.keys()].sort();
     expect([...servies].sort()).toEqual(attendues);
-    expect(attendues.length).toBe(79);
+    expect(attendues.length).toBe(83);
   });
 
   it('méthode et chemin HTTP de chaque route sont ceux du contrat', () => {

@@ -1,0 +1,181 @@
+/**
+ * Reporting (étape 9) : tableau de bord de la banque (lireIndicateurs, export CSV) et activité de
+ * la plateforme (lireIndicateursPlateforme, lireFacturationSms). Les filtres sont dans l'adresse.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { enregistrer, messageErreur, type FichierRecu } from '../../api/client';
+import { TableauDeBord } from '../../ecrans/back-office/TableauDeBord';
+import { Activite } from '../../ecrans/plateforme/Activite';
+import { csv } from '../../ui/csv';
+import { ChoixFiltre } from '../../ui/Filtre';
+import { PERIODES, bornes, derniersMois, nomMois, type CodePeriode } from '../../ui/periodes';
+import { useAnnoncer } from '../commun/Annonces';
+import { Chargement, ErreurChargement } from '../commun/Etats';
+import { INTERVALLE_MS } from './Cadre';
+import { useConsole, useParametres } from './contexte';
+
+function useTitre(titre: string) {
+  useEffect(() => {
+    document.title = `${titre} — Réclamations`;
+  }, [titre]);
+}
+
+/** Téléchargement d'un export ; un refus de l'API (export trop volumineux…) devient un message. */
+export function useExport() {
+  const annoncer = useAnnoncer();
+  const [enCours, setEnCours] = useState(false);
+  const exporter = async (faire: () => Promise<FichierRecu>) => {
+    setEnCours(true);
+    try {
+      enregistrer(await faire(), 'reclamations.csv');
+      annoncer('Export CSV téléchargé.');
+    } catch (e) {
+      annoncer(messageErreur(e), 'erreur');
+    } finally {
+      setEnCours(false);
+    }
+  };
+  return { exporter, enCours };
+}
+
+// ---- Tableau de bord de la banque -------------------------------------------------------
+
+const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web' } as const;
+
+export function PageTableau() {
+  const { appeler } = useConsole();
+  const parametres = useParametres();
+  const [params, setParams] = useSearchParams();
+  useTitre('Tableau de bord');
+  const fuseau = parametres.fuseauHoraire;
+  const val = <T extends string>(cle: string, permis?: readonly T[]) => {
+    const v = params.get(cle) ?? undefined;
+    return v && (!permis || permis.includes(v as T)) ? (v as T) : undefined;
+  };
+  const periode = val('periode', Object.keys(PERIODES) as CodePeriode[]) ?? 'mois';
+  const filtres = { agenceId: val('agenceId'), categorieId: val('categorieId'), canal: val('canal', ['QR_CODE', 'LIEN_WEB'] as const) };
+  // Bornes recalculées à chaque rendu : « maintenant » avance, la clé du cache reste stable
+  const cle = ['indicateurs', periode, filtres];
+  const requete = () => ({ ...bornes(periode, fuseau), ...filtres });
+
+  const indicateurs = useQuery({
+    queryKey: cle,
+    queryFn: () => appeler('lireIndicateurs', { requete: requete() }),
+    placeholderData: keepPreviousData,
+    refetchInterval: INTERVALLE_MS,
+  });
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => appeler('listerCategories'), staleTime: 60_000 });
+  const agences = useQuery({ queryKey: ['agences'], queryFn: () => appeler('listerAgences'), staleTime: 60_000 });
+  const { exporter, enCours } = useExport();
+
+  const changer = (cle: string, v: string | undefined) => {
+    const p = new URLSearchParams(params);
+    if (v && !(cle === 'periode' && v === 'mois')) p.set(cle, v);
+    else p.delete(cle);
+    setParams(p, { replace: true });
+  };
+
+  if (indicateurs.isPending) return <Chargement />;
+  if (indicateurs.isError) return <ErreurChargement erreur={indicateurs.error} surReessayer={() => void indicateurs.refetch()} />;
+  return (
+    <TableauDeBord
+      indicateurs={indicateurs.data}
+      fuseau={fuseau}
+      chargement={indicateurs.isFetching && indicateurs.isPlaceholderData}
+      exportEnCours={enCours}
+      surExporter={() => void exporter(() => appeler('exporterReclamations', { requete: { file: 'toutes', ...requete() } }))}
+      filtres={(
+        <>
+          <ChoixFiltre
+            libelle="Période"
+            obligatoire
+            valeur={periode}
+            options={(Object.entries(PERIODES) as [CodePeriode, string][]).map(([valeur, libelle]) => ({ valeur, libelle }))}
+            surChoix={(v) => changer('periode', v)}
+          />
+          <ChoixFiltre
+            libelle="Agence"
+            valeur={filtres.agenceId}
+            options={(agences.data ?? []).map((a) => ({ valeur: a.id, libelle: a.nom }))}
+            surChoix={(v) => changer('agenceId', v)}
+          />
+          <ChoixFiltre
+            libelle="Catégorie"
+            valeur={filtres.categorieId}
+            options={(categories.data ?? []).map((c) => ({ valeur: c.id, libelle: c.nom }))}
+            surChoix={(v) => changer('categorieId', v)}
+          />
+          <ChoixFiltre
+            libelle="Canal"
+            valeur={filtres.canal}
+            options={(Object.entries(CANAUX) as ['QR_CODE' | 'LIEN_WEB', string][]).map(([valeur, libelle]) => ({ valeur, libelle }))}
+            surChoix={(v) => changer('canal', v)}
+          />
+        </>
+      )}
+    />
+  );
+}
+
+// ---- Activité de la plateforme ---------------------------------------------------------------
+
+export function PageActivite() {
+  const { appeler } = useConsole();
+  const [params, setParams] = useSearchParams();
+  const annoncer = useAnnoncer();
+  useTitre('Activité et SMS');
+  const mois = useMemo(() => derniersMois(), []);
+  const choisi = params.get('mois') && mois.includes(params.get('mois')!) ? params.get('mois')! : mois[0]!;
+  const debut = `${choisi}-01T00:00:00Z`;
+  const suivant = new Date(Date.UTC(Number(choisi.slice(0, 4)), Number(choisi.slice(5, 7)), 1)).toISOString();
+
+  const indicateurs = useQuery({
+    queryKey: ['indicateurs-plateforme', choisi],
+    queryFn: () => appeler('lireIndicateursPlateforme', { requete: { du: debut, au: choisi === mois[0] ? undefined : suivant } }),
+    placeholderData: keepPreviousData,
+    refetchInterval: INTERVALLE_MS,
+  });
+  const sms = useQuery({
+    queryKey: ['facturation-sms', choisi],
+    queryFn: () => appeler('lireFacturationSms', { requete: { mois: choisi } }),
+    placeholderData: keepPreviousData,
+  });
+
+  if (indicateurs.isPending || sms.isPending) return <Chargement />;
+  if (indicateurs.isError || sms.isError) {
+    return <ErreurChargement erreur={indicateurs.error ?? sms.error} surReessayer={() => void Promise.all([indicateurs.refetch(), sms.refetch()])} />;
+  }
+  return (
+    <Activite
+      indicateurs={indicateurs.data}
+      sms={sms.data}
+      chargement={(indicateurs.isFetching && indicateurs.isPlaceholderData) || (sms.isFetching && sms.isPlaceholderData)}
+      choixMois={(
+        <ChoixFiltre
+          libelle="Mois"
+          obligatoire
+          valeur={choisi}
+          options={mois.map((m) => ({ valeur: m, libelle: nomMois(m) }))}
+          surChoix={(v) => {
+            const p = new URLSearchParams(params);
+            if (v && v !== mois[0]) p.set('mois', v);
+            else p.delete('mois');
+            setParams(p, { replace: true });
+          }}
+        />
+      )}
+      surExporterSms={() => {
+        const lignes = sms.data.banques.map((b) => [b.banque.nom, b.sms, b.segments, b.echecs] as const);
+        const total = sms.data.banques.reduce((t, b) => [t[0] + b.sms, t[1] + b.segments, t[2] + b.echecs], [0, 0, 0]);
+        enregistrer({
+          nom: `facturation-sms-${choisi}.csv`,
+          type: 'text/csv',
+          contenu: csv([['Banque', 'SMS envoyés', 'Segments facturés', 'Échecs'], ...lignes, ['Total', ...total]]),
+        });
+        annoncer('Facturation SMS téléchargée.');
+      }}
+    />
+  );
+}

@@ -4,10 +4,15 @@
  * la même lecture, faite directement en SQL, ne renvoie rien.
  */
 import { randomUUID } from 'node:crypto';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Redis } from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { urlsE2E } from '../../scripts/base-de-test.js';
+import { PrismaClient } from '../../src/generated/prisma/client.js';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
+import { CLE_BATTEMENT_WORKER } from '../../src/infrastructure/redis/redis.service.js';
 import { transactionEn, contexte } from '../../src/infrastructure/base-de-donnees/index.js';
-import { ClientApi, connecter, demarrerApi, FICHIERS, fermerOutils, jeu, nouvelleIp, type ApiDeTest } from './environnement.js';
+import { ClientApi, connecter, demarrerApi, FICHIERS, fermerOutils, jeu, nouvelleIp, redisE2E, type ApiDeTest } from './environnement.js';
 
 let api: ApiDeTest;
 let client: ClientApi;
@@ -210,8 +215,26 @@ describe('validation, fichiers, idempotence et limites de débit', () => {
   });
 
   it('santé et documentation Swagger (le contrat lui-même)', async () => {
+    // Aucun worker pendant ces tests : dégradé (HTTP 200), puis ok dès qu'un battement est écrit
+    const redis = new Redis(redisE2E());
+    const proprietaire = new PrismaClient({ adapter: new PrismaPg({ connectionString: urlsE2E().proprietaire }) });
+    await redis.del(CLE_BATTEMENT_WORKER);
     const s = await client.appeler('lireSante');
-    expect(s.corps).toMatchObject({ statut: 'ok', base: 'ok', redis: 'ok' });
+    expect(s.statut).toBe(200);
+    expect(s.corps).toMatchObject({ statut: 'degrade', base: 'ok', redis: 'ok', worker: 'absent', envois: 'ok' });
+    await redis.set(CLE_BATTEMENT_WORKER, new Date().toISOString(), 'EX', 60);
+    const apres = await client.appeler('lireSante');
+    expect(apres.corps).toMatchObject({ base: 'ok', redis: 'ok', worker: 'ok', envois: 'ok' });
+    expect(apres.corps.statut).toBe(apres.corps.disque === 'ok' ? 'ok' : 'degrade');
+    // Un e-mail en attente depuis 11 minutes : envois en retard
+    const [n] = await proprietaire.$queryRaw<{ id: string }[]>`
+      INSERT INTO notification (id, canal, modele, destination, sujet, contenu, cree_le)
+      VALUES (gen_random_uuid(), 'EMAIL', 'essai.sante', 'x@exemple.ci', 'x', 'x', now() - interval '11 minutes') RETURNING id`;
+    expect((await client.appeler('lireSante')).corps).toMatchObject({ statut: 'degrade', envois: 'en_retard' });
+    await proprietaire.$executeRaw`DELETE FROM notification WHERE id = ${n!.id}::uuid`;
+    await redis.del(CLE_BATTEMENT_WORKER);
+    redis.disconnect();
+    await proprietaire.$disconnect();
     const doc = await fetch(api.url.replace('/api/v1', '/api/docs/openapi.yaml'));
     expect(await doc.text()).toContain('operationId: lireLogo');
     expect((await fetch(api.url.replace('/api/v1', '/api/docs'))).status).toBe(200);

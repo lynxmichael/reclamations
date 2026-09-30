@@ -2,14 +2,30 @@
  * Activité de toutes les banques (lireIndicateursPlateforme) et facturation des SMS du mois
  * (lireFacturationSms). Métadonnées seulement : volumes, taux, compteurs.
  */
-import { CalendarDays, ChevronDown } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { CalendarDays, ChevronDown, Download } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Panneau, cx } from '../../ui/composants';
 import { nombre, pourcent, relatif } from '../../ui/format';
+import { nomMois } from '../../ui/periodes';
 
 const COULEURS = ['bg-ouverte', 'bg-en-cours', 'bg-attente', 'bg-resolue', 'bg-cloturee/45'];
+const STATUTS = ['Ouverte', 'En cours', 'En attente client', 'Résolue', 'Clôturée'];
 
-export function Activite({ indicateurs, sms }: { indicateurs: S<'IndicateursPlateforme'>; sms: S<'FacturationSms'> }) {
+export function Activite({
+  indicateurs,
+  sms,
+  choixMois,
+  surExporterSms,
+  chargement,
+}: {
+  indicateurs: S<'IndicateursPlateforme'>;
+  sms: S<'FacturationSms'>;
+  /** Étape 9 : le choix du mois (sinon, celui de la maquette) */
+  choixMois?: ReactNode;
+  surExporterSms?: () => void;
+  chargement?: boolean;
+}) {
   const totalSms = sms.banques.reduce((s, b) => ({ sms: s.sms + b.sms, segments: s.segments + b.segments, echecs: s.echecs + b.echecs }), { sms: 0, segments: 0, echecs: 0 });
   return (
     <div className="flex flex-col gap-5">
@@ -18,13 +34,16 @@ export function Activite({ indicateurs, sms }: { indicateurs: S<'IndicateursPlat
           <h1 className="text-[26px] font-bold tracking-tight">Activité et SMS</h1>
           <p className="mt-1 text-[15px] text-encre-3">Volumes et taux par banque. Le contenu des réclamations reste dans chaque banque.</p>
         </div>
-        <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] font-semibold">
-          <CalendarDays aria-hidden size={17} className="text-encre-3" />
-          Septembre 2026
-          <ChevronDown aria-hidden size={16} className="text-encre-3" />
-        </button>
+        {choixMois ?? (
+          <button type="button" className="inline-flex h-10 items-center gap-2 rounded-lg border border-trait-fort bg-surface px-3.5 text-[15px] font-semibold">
+            <CalendarDays aria-hidden size={17} className="text-encre-3" />
+            Septembre 2026
+            <ChevronDown aria-hidden size={16} className="text-encre-3" />
+          </button>
+        )}
       </div>
 
+      <div className={cx('flex flex-col gap-5 transition-opacity', chargement && 'opacity-60')} aria-busy={chargement || undefined}>
       <Panneau titre="Réclamations par banque" sansMarge>
         <table className="w-full text-left text-[15px]">
           <thead>
@@ -57,16 +76,20 @@ export function Activite({ indicateurs, sms }: { indicateurs: S<'IndicateursPlat
           </tbody>
         </table>
         <ul className="flex flex-wrap gap-x-5 gap-y-1.5 border-t border-trait px-5 py-3 text-sm text-encre-2">
-          {indicateurs.banques[0]!.parStatut.map((v, i) => (
-            <li key={v.cle} className="flex items-center gap-2">
+          {STATUTS.map((libelle, i) => (
+            <li key={libelle} className="flex items-center gap-2">
               <span aria-hidden className={cx('h-2.5 w-2.5 rounded-sm', COULEURS[i])} />
-              {v.libelle}
+              {libelle}
             </li>
           ))}
         </ul>
       </Panneau>
 
-      <Panneau titre={`SMS de ${sms.mois === '2026-09' ? 'septembre 2026' : sms.mois}`} sansMarge>
+      <Panneau
+        titre={`SMS de ${nomMois(sms.mois)}`}
+        sansMarge
+        action={surExporterSms && <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporterSms}>Exporter en CSV</Bouton>}
+      >
         <table className="w-full text-left text-[15px]">
           <thead>
             <tr className="border-b border-trait text-[13px] text-encre-3">
@@ -95,6 +118,7 @@ export function Activite({ indicateurs, sms }: { indicateurs: S<'IndicateursPlat
         </table>
         <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">Un long SMS, ou un SMS avec certains accents (ê, â, ô…), est découpé en plusieurs segments, chacun facturé.</p>
       </Panneau>
+      </div>
     </div>
   );
 }

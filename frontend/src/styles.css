@@ -44,6 +44,11 @@
   --color-cloturee-doux: #edeff1;
 
   /* Priorité et chrono SLA */
+  /* Séries des graphiques (étape 9) : emplacements 1 et 2 de la palette catégorielle validée
+     (daltonisme : ΔE 24,7 ; vision normale : 33,6 ; contraste ≥ 3:1 sur blanc) */
+  --color-serie-1: #2a78d6;
+  --color-serie-2: #eb6834;
+
   --color-urgent: #bf2530;
   --color-urgent-doux: #fbe9ea;
   --color-alerte: #b26b00;

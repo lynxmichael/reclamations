@@ -1,6 +1,6 @@
 {
   "name": "@reclamations/backend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Plateforme de gestion des réclamations — API NestJS et worker (Makor Telecoms, Solution 1)",
   "engines": {

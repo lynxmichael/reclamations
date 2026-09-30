@@ -3,7 +3,9 @@
  * personnel, un Super Admin, et quelques réclamations à différents stades.
  *
  * Les comptes ont tous le mot de passe MOT_DE_PASSE_DEMO et un secret TOTP déterministe :
- * `npm run totp -- <e-mail>` affiche le code du moment (développement seulement).
+ * `npm run totp -- <e-mail>` affiche le code du moment. Sur l'environnement de démonstration
+ * (étape 10), mot de passe et graine des secrets TOTP sont propres à l'installation
+ * (DEMO_MOT_DE_PASSE, DEMO_GRAINE_TOTP : scripts/demonstration.ts).
  *
  * Tout passe par le rôle de l'application en contexte système, avec les mêmes droits que l'API.
  */
@@ -14,12 +16,15 @@ import type { Acteur } from '../src/domaine/reclamation/machine.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { hacherMotDePasse } from '../src/infrastructure/securite/mots-de-passe.js';
 import { chiffrer } from '../src/infrastructure/securite/totp.js';
+import { segmentsSms } from '../src/infrastructure/envois/adaptateurs.js';
 
 export const MOT_DE_PASSE_DEMO = 'Makor-Demo-2026';
 
-/** Secret TOTP de démonstration : dérivé de l'e-mail (jamais en production). */
-export function secretTotpDemo(email: string): string {
-  return base32Encode(createHash('sha256').update(`totp-demo:${email}`).digest().subarray(0, 20));
+export const GRAINE_TOTP_DEMO = 'totp-demo';
+
+/** Secret TOTP de démonstration : dérivé de la graine et de l'e-mail (jamais en production réelle). */
+export function secretTotpDemo(email: string, graine = GRAINE_TOTP_DEMO): string {
+  return base32Encode(createHash('sha256').update(`${graine}:${email}`).digest().subarray(0, 20));
 }
 
 interface Personne { prenom: string; nom: string; role: 'SUPER_ADMIN' | 'ADMIN_ENTREPRISE' | 'SUPERVISEUR' | 'AGENT'; superviseur?: string; statut?: 'ACTIF' | 'INVITE' | 'DESACTIVE' }
@@ -61,12 +66,20 @@ export interface OptionsSemis {
   readonly cleTotp: Buffer;
   /** Réclamations d'exemple (dépôts, prise en charge, résolution) ; non par défaut dans les tests */
   readonly reclamations?: boolean;
+  /**
+   * Étape 9 : historique de la Banque Alpha sur ce nombre de jours (tableau de bord, exports,
+   * facturation SMS), traité de bout en bout par le cycle de vie ; non par défaut dans les tests
+   */
+  readonly historique?: number;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
+  /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
+  readonly motDePasse?: string;
+  readonly graineTotp?: string;
 }
 
 export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> {
-  const hash = await hacherMotDePasse(MOT_DE_PASSE_DEMO);
+  const hash = await hacherMotDePasse(o.motDePasse ?? MOT_DE_PASSE_DEMO);
   const maintenant = o.horloge?.() ?? new Date();
 
   const creerCompte = async (p: Personne, tenantId: string | null, domaine: string, superviseurId: string | null) => {
@@ -76,7 +89,7 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
       data: {
         tenantId, role: p.role, statut: p.statut ?? 'ACTIF', email: adresse, nom: p.nom, prenom: p.prenom, superviseurId,
         motDePasseHash: actif ? hash : null,
-        totpSecretChiffre: actif ? chiffrer(o.cleTotp, secretTotpDemo(adresse)) : null,
+        totpSecretChiffre: actif ? chiffrer(o.cleTotp, secretTotpDemo(adresse, o.graineTotp)) : null,
         totpActiveLe: actif ? maintenant : null,
         desactiveLe: p.statut === 'DESACTIVE' ? maintenant : null,
       },
@@ -138,6 +151,7 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
     { prenom: 'Salif', nom: 'Koné', role: 'AGENT', superviseur: 'didier' },
   ], { qr: 'H7P4XK2RQD', lien: 'H3M9TW6ZLB' });
 
+  if (o.historique) await historique(bd, alpha, o, o.historique);
   if (o.reclamations) await reclamationsExemple(bd, alpha, o);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
 }
@@ -162,4 +176,126 @@ async function reclamationsExemple(bd: BaseDonnees, alpha: BanqueDemo, o: Option
   await cycle.assigner(alpha.id, d.id, superviseur, alpha.comptes.aya.id);
   await cycle.prendreEnCharge(alpha.id, d.id, agent('aya'));
   await cycle.resoudre(alpha.id, d.id, agent('aya'), 'Nous avons réinitialisé votre accès : reconnectez-vous avec le code reçu par SMS.');
+}
+
+// ---- Historique (étape 9) ---------------------------------------------------------------------
+
+/** Générateur pseudo-aléatoire déterministe (mulberry32) : le même historique à chaque semis. */
+function aleatoire(graine: number): () => number {
+  let a = graine >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+const PRENOMS = ['Kouadio', 'Adjoua', 'Mamadou', 'Awa', 'Yao', 'Aminata', 'Koffi', 'Mariam', 'Sékou', 'Affoué', 'Brice', 'Nadia', 'Ibrahim', 'Grâce', 'Serge', 'Fanta'];
+const NOMS = ['Kouassi', 'Koné', 'Traoré', 'Bamba', 'Yao', 'Diabaté', 'N\'Guessan', 'Ouattara', 'Coulibaly', 'Touré', 'Kra', 'Aka', 'Sylla', 'Tanoh', 'Gbagbo', 'Diomandé'];
+const HEURE = 3_600_000;
+const JOUR = 24 * HEURE;
+
+/**
+ * Réclamations de la Banque Alpha sur les `jours` derniers jours, chacune menée par le vrai cycle
+ * de vie à des instants simulés : dépôt (QR code du Plateau ou lien web, agence au choix), assignation,
+ * première réponse, parfois une question au client ou une escalade, résolution, puis confirmation
+ * du client (ou contestation et nouvelle résolution). Les plus récentes restent en cours.
+ * Les notifications de cet historique sont marquées envoyées (et lues) : le worker ne les envoie pas.
+ */
+async function historique(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, jours: number) {
+  const debutSemis = await bd.enSysteme(async (tx) => (await tx.$queryRaw<{ t: Date }[]>`SELECT clock_timestamp() AS t`)[0]!.t);
+  let horloge = new Date();
+  const fin = o.horloge?.() ?? new Date();
+  const cycle = new CycleDeVie(bd.base, { horloge: () => horloge, lienSuivi: o.lienSuivi ?? ((slug, j) => `https://${slug}.reclamations.example/suivi/${j}`) });
+  const hasard = aleatoire(20260929);
+  const choisir = <T>(liste: readonly T[]): T => liste[Math.floor(hasard() * liste.length)]!;
+  const [qr, lien] = await bd.enSysteme((tx) => Promise.all([
+    tx.pointDepot.findUniqueOrThrow({ where: { code: alpha.points.qr } }),
+    tx.pointDepot.findUniqueOrThrow({ where: { code: alpha.points.lien } }),
+  ]));
+  const personne = (prenom: string, role: 'AGENT' | 'SUPERVISEUR'): Acteur => ({ type: 'UTILISATEUR', id: alpha.comptes[prenom]!.id, role, libelle: prenom });
+  const equipes = [{ agent: 'aya', superviseur: 'serge' }, { agent: 'mamadou', superviseur: 'serge' }, { agent: 'ibrahim', superviseur: 'mariam' }];
+  const categories = Object.keys(alpha.categories);
+  // Plus de réclamations sur les cartes et les virements que sur le crédit
+  const poids = [5, 4, 3, 2, 1, 1, 1];
+  const categorie = () => {
+    let r = hasard() * poids.reduce((a, b) => a + b, 0);
+    for (const [i, p] of poids.entries()) if ((r -= p) < 0) return categories[i]!;
+    return categories[0]!;
+  };
+  const ids: string[] = [];
+  let n = 0;
+  const debut = Math.floor((fin.getTime() - jours * JOUR) / JOUR) * JOUR;
+
+  for (let jour = debut; jour < fin.getTime() - JOUR; jour += JOUR) {
+    const semaine = new Date(jour).getUTCDay();
+    const depots = semaine === 0 ? Math.floor(hasard() * 2) : semaine === 6 ? Math.floor(hasard() * 3) : 2 + Math.floor(hasard() * 4);
+    for (let k = 0; k < depots; k++) {
+      const instant = jour + 7.5 * HEURE + hasard() * 10 * HEURE;
+      const age = fin.getTime() - instant;
+      // Chaque étape avance l'horloge ; une étape qui tomberait dans le futur n'a pas lieu
+      const a = async (delai: number, faire: () => Promise<unknown>) => {
+        const t = horloge.getTime() + delai;
+        if (t > fin.getTime() - HEURE) return false;
+        horloge = new Date(t);
+        await faire();
+        return true;
+      };
+      horloge = new Date(instant);
+      const parQr = hasard() < 0.6;
+      const agence = parQr ? null : choisir([alpha.agences['Cocody Angré']!, alpha.agences['Bouaké Commerce']!, alpha.agences.Plateau!, null]);
+      n++;
+      const d = await cycle.deposer({
+        tenantId: alpha.id, pointDepotId: (parQr ? qr : lien).id, categorieId: alpha.categories[categorie()]!, agenceId: agence,
+        description: 'Réclamation de l\'historique de démonstration.',
+        client: { nom: `${choisir(PRENOMS)} ${choisir(NOMS)}`, telephone: `07${String(20_000_000 + n).slice(-8)}`, email: hasard() < 0.5 ? `client${n}@exemple.ci` : null },
+        consentementVersion: '2026-09',
+      });
+      ids.push(d.id);
+      const { clientId } = await bd.enSysteme((tx) => tx.reclamation.findUniqueOrThrow({ where: { id: d.id }, select: { clientId: true } }));
+      const client: Acteur = { type: 'CLIENT', clientId };
+      const e = choisir(equipes);
+      const agent = personne(e.agent, 'AGENT');
+
+      if (!(await a((0.2 + hasard()) * HEURE, () => cycle.assigner(alpha.id, d.id, personne(e.superviseur, 'SUPERVISEUR'), alpha.comptes[e.agent]!.id)))) continue;
+      const question = hasard() < 0.15;
+      if (!(await a((0.5 + hasard() * 6) * HEURE, () => cycle.repondreAuClient(alpha.id, d.id, agent, question
+        ? 'Pouvez-vous nous préciser la date et le montant de l\'opération ?'
+        : 'Nous avons bien reçu votre réclamation et la traitons.', { attendreReponse: question })))) continue;
+      if (question && !(await a((3 + hasard() * 20) * HEURE, () => cycle.messageDuClient(alpha.id, d.id, client, 'Voici les précisions demandées.')))) continue;
+      if (hasard() < 0.08 && !(await a((1 + hasard() * 4) * HEURE, () => cycle.escalader(alpha.id, d.id, agent, 'Avis du superviseur')))) continue;
+      // Les deux derniers jours, une réclamation sur deux est encore en cours
+      if (age < 2 * JOUR && hasard() < 0.5) continue;
+      if (!(await a((1 + hasard() * 30) * HEURE, () => cycle.resoudre(alpha.id, d.id, agent, 'Votre réclamation est traitée : l\'opération a été régularisée.')))) continue;
+      // Au-delà du délai de contestation (5 jours), la réclamation est close
+      if (fin.getTime() - horloge.getTime() < 5 * JOUR) continue;
+      if (hasard() < 0.08) {
+        if (!(await a((5 + hasard() * 24) * HEURE, () => cycle.contester(alpha.id, d.id, client, 'Le problème n\'est pas réglé.')))) continue;
+        if (!(await a((2 + hasard() * 20) * HEURE, () => cycle.resoudre(alpha.id, d.id, agent, 'Nous avons corrigé l\'opération restante.')))) continue;
+      }
+      await a((2 + hasard() * 60) * HEURE, () => cycle.confirmer(alpha.id, d.id, client));
+    }
+  }
+
+  // Notifications de l'historique : déjà envoyées à la date du dépôt (facturation SMS réaliste) et lues
+  await bd.enSysteme(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE notification n SET statut = 'ENVOYEE', envoyee_le = r.cree_le, cree_le = r.cree_le,
+             lue_le = CASE WHEN n.canal = 'IN_APP' THEN r.cree_le ELSE NULL END
+        FROM reclamation r WHERE n.reclamation_id = r.id AND r.id = ANY(${ids}::uuid[])`;
+    const sms = await tx.notification.findMany({ where: { reclamationId: { in: ids }, canal: 'SMS' }, select: { id: true, contenu: true } });
+    const parSegments = new Map<number, string[]>();
+    for (const m of sms) {
+      const s = segmentsSms(m.contenu);
+      parSegments.set(s, [...(parSegments.get(s) ?? []), m.id]);
+    }
+    for (const [segmentsSms, liste] of parSegments) await tx.notification.updateMany({ where: { id: { in: liste } }, data: { segmentsSms } });
+    // Alertes de la plateforme nées de l'historique (réclamations urgentes) : envoyées et lues
+    await tx.notification.updateMany({
+      where: { tenantId: null, creeLe: { gte: debutSemis }, modele: { in: ['plateforme.urgente', 'plateforme.plafond'] } },
+      data: { statut: 'ENVOYEE', envoyeeLe: debutSemis, lueLe: debutSemis },
+    });
+  });
 }
