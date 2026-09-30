@@ -240,7 +240,7 @@ export function useDemo(prospectInitial: Prospect) {
           }
         }
         const visibles: Record<Role, PageBackOffice[]> = {
-          AGENT: ['reclamations'],
+          AGENT: ['reclamations', 'tableau'],
           SUPERVISEUR: ['reclamations', 'tableau', 'points', 'personnel'],
           ADMIN_ENTREPRISE: ['reclamations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'personnel', 'audit'],
         };

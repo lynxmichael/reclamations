@@ -12,6 +12,7 @@ import { PrismaClient } from '../../src/generated/prisma/client.js';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { CLE_BATTEMENT_WORKER } from '../../src/infrastructure/redis/redis.service.js';
 import { transactionEn, contexte } from '../../src/infrastructure/base-de-donnees/index.js';
+import { cleAntiRobot, creerDefi, encoderJeton, resoudreDefi } from '../../src/infrastructure/securite/anti-robot.js';
 import { ClientApi, connecter, demarrerApi, FICHIERS, fermerOutils, jeu, nouvelleIp, redisE2E, type ApiDeTest } from './environnement.js';
 
 let api: ApiDeTest;
@@ -238,5 +239,70 @@ describe('validation, fichiers, idempotence et limites de débit', () => {
     const doc = await fetch(api.url.replace('/api/v1', '/api/docs/openapi.yaml'));
     expect(await doc.text()).toContain('operationId: lireLogo');
     expect((await fetch(api.url.replace('/api/v1', '/api/docs'))).status).toBe(200);
+  });
+});
+
+describe('anti-robot du dépôt et de la demande de code (étape 11)', () => {
+  // Numéros à part : back-office.e2e.test.ts utilise 07 00 00 04 xx
+  const corpsValide = (telephone: string) => ({
+    categorieId: j.alpha.categories['Crédit'], description: 'Test anti-robot', nom: 'Client Test', telephone, consentement: true, versionPolitique: '2026-09',
+  });
+
+  it('sans jeton : 400 VALIDATION sur jetonAntiRobot, pour le dépôt comme pour la demande de code', async () => {
+    const r = await client.appeler('deposerReclamation', { antiRobot: false, chemin: { code: j.alpha.points.qr }, corps: corpsValide('0799000401') });
+    expect(r.statut).toBe(400);
+    expect(r.corps.erreurs.map((e: { champ: string }) => e.champ)).toEqual(['jetonAntiRobot']);
+    const d = await deposer(j.alpha.points.qr, j.alpha.categories['Crédit'], '0799000402');
+    expect((await client.appeler('demanderCodeOtp', { antiRobot: false, chemin: { jetonSuivi: d.corps.jetonSuivi } })).statut).toBe(400);
+    expect((await client.appeler('demanderCodeOtp', { antiRobot: false, chemin: { jetonSuivi: d.corps.jetonSuivi }, corps: {} })).statut).toBe(400);
+  });
+
+  it('jeton illisible, mauvais nombre, signé par une autre clé ou expiré : 422 ANTI_ROBOT_REFUSE, rien n\'est créé', async () => {
+    const d = (await client.appeler('lireDefiAntiRobot')).corps;
+    const n = resoudreDefi(d)!;
+    const autreCle = cleAntiRobot(new TextEncoder().encode('une-autre-cle-que-celle-de-l-api-0123456789'));
+    const ancien = creerDefi(cleAntiRobot(api.config.secretJwt), 50, new Date(Date.now() - 11 * 60_000));
+    const faux = {
+      illisible: 'nimporte-quoi',
+      nombre: encoderJeton(d, n + 1),
+      cle: encoderJeton(creerDefi(autreCle, 50, new Date()), 0),
+      expire: encoderJeton(ancien, resoudreDefi(ancien)!),
+    };
+    for (const [cas, jetonAntiRobot] of Object.entries(faux)) {
+      const r = await client.appeler('deposerReclamation', { chemin: { code: j.alpha.points.qr }, corps: { ...corpsValide('0799000403'), jetonAntiRobot } });
+      expect(r.statut, cas).toBe(422);
+      expect(r.corps.code, cas).toBe('ANTI_ROBOT_REFUSE');
+    }
+    expect(await bd.enSysteme((tx) => tx.reclamation.count({ where: { client: { telephone: '+2250799000403' } } }))).toBe(0);
+  });
+
+  it('un jeton sert une fois : un formulaire à corriger ne le consomme pas, un dépôt ou une demande de code si', async () => {
+    const jeton = await client.jetonAntiRobot();
+    const aCorriger = await client.appeler('deposerReclamation', { chemin: { code: j.alpha.points.qr }, corps: { ...corpsValide('07 08'), jetonAntiRobot: jeton } });
+    expect(aCorriger.statut).toBe(400);
+    const depot = await client.appeler('deposerReclamation', { chemin: { code: j.alpha.points.qr }, corps: { ...corpsValide('0799000404'), jetonAntiRobot: jeton } });
+    expect(depot.statut).toBe(201);
+    const encore = await client.appeler('deposerReclamation', { chemin: { code: j.alpha.points.qr }, corps: { ...corpsValide('0799000405'), jetonAntiRobot: jeton } });
+    expect(encore.statut).toBe(422);
+    expect(encore.corps.detail).toMatch(/déjà servi/);
+    // Le même jeton ne sert pas non plus à demander un code
+    const code = await client.appeler('demanderCodeOtp', { chemin: { jetonSuivi: depot.corps.jetonSuivi }, corps: { jetonAntiRobot: jeton } });
+    expect(code.statut).toBe(422);
+    const jetonCode = await client.jetonAntiRobot();
+    expect((await client.appeler('demanderCodeOtp', { chemin: { jetonSuivi: depot.corps.jetonSuivi }, corps: { jetonAntiRobot: jetonCode } })).statut).toBe(202);
+    expect((await client.appeler('demanderCodeOtp', { chemin: { jetonSuivi: depot.corps.jetonSuivi }, corps: { jetonAntiRobot: jetonCode } })).statut).toBe(422);
+  });
+
+  it('la difficulté double pour une adresse IP qui demande plus de 10 défis en 10 minutes, pas pour les autres', async () => {
+    const ip = nouvelleIp();
+    const maximums: number[] = [];
+    for (let i = 0; i < 11; i++) {
+      const r = await client.appeler('lireDefiAntiRobot', { ip });
+      expect(r.entetes.get('cache-control')).toBe('no-store');
+      maximums.push(r.corps.maximum);
+    }
+    expect(maximums[0]).toBe(2000);
+    expect(maximums[10]).toBe(4000);
+    expect((await client.appeler('lireDefiAntiRobot', { ip: nouvelleIp() })).corps.maximum).toBe(2000);
   });
 });

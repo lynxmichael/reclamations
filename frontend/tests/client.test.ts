@@ -56,7 +56,7 @@ describe('client d\'API', () => {
     await appeler('deposerReclamation', {
       chemin: { code: 'ABC' },
       entetes: { 'Idempotency-Key': 'cle-1' },
-      corps: { categorieId: 'c', description: 'd', nom: 'n', consentement: true, versionPolitique: '2026-09', fichiers: [photo, photo] },
+      corps: { categorieId: 'c', description: 'd', nom: 'n', consentement: true, versionPolitique: '2026-09', jetonAntiRobot: 'j', fichiers: [photo, photo] },
     });
     const corps = appels[0]!.init.body as FormData;
     expect(corps).toBeInstanceOf(FormData);

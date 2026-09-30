@@ -8,6 +8,7 @@
 #    restaurer --remplacer <archive>               REMPLACEMENT de la base de production
 #
 #  <archive> : derniere | reclamations-…tar.age (dossier local) | distant:quotidien/… | distant:mensuel/…
+#              (une copie masquée ou remplacée se restaure sous le nom que « liste » affiche, avec -v…)
 #  Options   : --oui (pas de question, pour --remplacer)  --garder (garde la base de vérification)
 #
 #  La clé privée age n'est jamais sur le VPS : elle est lue dans /run/secrets/cle-age si un fichier
@@ -36,11 +37,17 @@ lister() {
     [[ -n $a ]] && printf '    %-40s %10s\n' "$a" "$(taille "$(stat -c %s "$DOSSIER/$a")")"
   done < <(archives_locales)
   if distant_configure; then
+    # Avec les versions : une copie masquée ou remplacée (étape 12) reste listée, et restaurable
     for d in quotidien mensuel; do
       journal "Hors du VPS ($(distant "$d/")) :"
-      while read -r octets _ _ nom_distant; do
-        printf '    %-50s %10s\n' "distant:$d/$nom_distant" "$(taille "$octets")"
-      done < <(rclone_ lsl --include '*.tar.age' "$(distant "$d/")" | sort -k4 -r)
+      while IFS=$'\t' read -r nom_distant octets; do
+        if [[ $nom_distant =~ $MOTIF_VERSION ]]; then
+          printf '    %-50s %10s  masquée ou remplacée, gardée par le verrou\n' "distant:$d/$nom_distant" "$(taille "$octets")"
+        else
+          printf '    %-50s %10s\n' "distant:$d/$nom_distant" "$(taille "$octets")"
+        fi
+      done < <(rclone_ lsjson --s3-versions "$(distant "$d/")" \
+        | jq -r '.[] | select(.IsDir | not) | select(.Size > 0) | select(.Name | test("\\.tar(-v[0-9-]+)?\\.age$")) | "\(.Name)\t\(.Size)"' | sort -r)
     done
   else
     journal "Hors du VPS : non configuré"
@@ -95,8 +102,8 @@ case $source in
     nom=$(basename "${source#distant:}")
     archive=$travail/$nom
     journal "Téléchargement de $(distant "${source#distant:}")"
-    rclone_ copyto "$(distant "${source#distant:}")" "$archive"
-    rclone_ copyto "$(distant "${source#distant:}").sha256" "$archive.sha256" 2>/dev/null || true ;;
+    rclone_ copyto --s3-versions "$(distant "${source#distant:}")" "$archive"
+    rclone_ copyto --s3-versions "$(distant "${source#distant:}").sha256" "$archive.sha256" 2>/dev/null || true ;;
   *)
     if [[ -f $source ]]; then archive=$source; else archive=$DOSSIER/$source; fi
     [[ -f $archive ]] || echec "archive introuvable : $source (voir « restaurer liste »)"

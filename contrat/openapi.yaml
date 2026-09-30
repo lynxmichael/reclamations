@@ -125,6 +125,28 @@ paths:
         '404': { $ref: '#/components/responses/Introuvable' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
+  /public/defi-anti-robot:
+    get:
+      tags: [Dépôt et suivi]
+      operationId: lireDefiAntiRobot
+      summary: Défi anti-robot à résoudre avant un dépôt ou une demande de code
+      description: |
+        Preuve de travail (étape 11), sur le principe d'ALTCHA : trouver l'entier `nombre`, entre 0 et
+        `maximum`, tel que SHA-256(`sel` + `nombre`), en hexadécimal, soit égal à `defi`. Le jeton
+        à envoyer (`jetonAntiRobot`) est le JSON `{"sel", "nombre", "signature"}` encodé en base64url.
+        Un jeton sert une seule fois et expire avec le défi (10 minutes). La difficulté double par
+        tranche de 10 défis demandés par une même adresse IP en 10 minutes, jusqu'à 16 fois la
+        difficulté de base. Le portail résout le défi en arrière-plan pendant la saisie.
+      x-roles: [PUBLIC]
+      security: []
+      responses:
+        '200':
+          description: Défi signé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DefiAntiRobot' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   /public/points-depot/{code}/reclamations:
     post:
       tags: [Dépôt et suivi]
@@ -134,6 +156,8 @@ paths:
         Crée le ticket (numéro `PRÉFIXE-AAAA-NNNNNN`), démarre le SLA et envoie l'accusé de réception
         par e-mail et SMS. Idempotent avec l'en-tête `Idempotency-Key` : la même clé renvoie le même
         accusé sans créer de doublon. Limité à 5 dépôts par heure et par adresse IP, 3 par téléphone.
+        Exige un jeton anti-robot (`lireDefiAntiRobot`) : absent, 400 ; faux, expiré ou déjà
+        utilisé, 422 `ANTI_ROBOT_REFUSE`. Un renvoi avec la même clé d'idempotence ne le consomme pas.
       x-roles: [PUBLIC]
       x-action: deposer
       security: []
@@ -187,13 +211,15 @@ paths:
       tags: [Dépôt et suivi]
       operationId: demanderCodeOtp
       summary: Recevoir un code OTP par SMS ou e-mail
-      description: Code à 6 chiffres, valable 10 minutes. 3 envois par heure et par réclamation.
+      description: |
+        Code à 6 chiffres, valable 10 minutes. 3 envois par heure et par réclamation. Exige un jeton
+        anti-robot (`lireDefiAntiRobot`), comme le dépôt : chaque SMS est facturé à la banque.
       x-roles: [PUBLIC]
       security: []
       parameters:
         - $ref: '#/components/parameters/JetonSuivi'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/DemandeOtp' }
@@ -627,8 +653,9 @@ paths:
         priorité, catégorie, agence, canal, agent, échéance, délais, SLA respecté, premier contact,
         réouvertures, escalade, mode de clôture. Ni description, ni nom ni coordonnées du client.
         50 000 lignes au plus (sinon 400 EXPORT_TROP_VOLUMINEUX). Chaque export est inscrit au
-        journal d'audit de la banque.
-      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+        journal d'audit de la banque. Un agent n'exporte que les réclamations qui lui sont assignées
+        (étape 11).
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
       parameters:
@@ -920,7 +947,9 @@ paths:
         fuseau de la banque, jusqu'à maintenant). Délais en minutes ouvrées. Les taux portent sur
         les réclamations résolues (et non rouvertes depuis) parmi celles de la période.
         `evolution` compte les réclamations déposées et résolues par jour, semaine ou mois (étape 9).
-      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+        `charge` compte les réclamations non clôturées à cet instant, hors période (étape 11).
+        Pour un agent (étape 11), tout porte sur les réclamations qui lui sont assignées, comme sa file.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
       parameters:
@@ -2453,10 +2482,29 @@ components:
               type: array
               items: { type: string }
               examples: [['image/jpeg', 'image/png', 'image/webp', 'application/pdf']]
+    DefiAntiRobot:
+      type: object
+      description: Défi de preuve de travail (étape 11), champs d'ALTCHA en français
+      required: [algorithme, defi, sel, maximum, signature, expireLe]
+      properties:
+        algorithme: { type: string, const: SHA-256 }
+        defi: { type: string, pattern: '^[0-9a-f]{64}$', description: "SHA-256(sel + nombre) en hexadécimal" }
+        sel: { type: string, pattern: '^[0-9a-f]{24}\?expire=[0-9]{10}$', description: "Aléa et heure d'expiration (secondes Unix)", examples: ['9f86d081884c7d659a2feaa0?expire=1790000000'] }
+        maximum: { type: integer, minimum: 1, description: "Le nombre cherché est entre 0 et maximum", examples: [100000] }
+        signature: { type: string, pattern: '^[0-9a-f]{64}$', description: "HMAC-SHA-256 du défi par l'API" }
+        expireLe: { $ref: '#/components/schemas/Horodatage' }
+    JetonAntiRobot:
+      type: string
+      minLength: 1
+      maxLength: 1024
+      description: |
+        Défi résolu : JSON `{"sel", "nombre", "signature"}` encodé en base64url (lireDefiAntiRobot).
+        À usage unique, valable jusqu'à l'expiration du défi.
+      examples: ['eyJzZWwiOiI5Zjg2ZDA4MTg4NGM3ZDY1OWEyZmVhYTA_ZXhwaXJlPTE3OTAwMDAwMDAiLCJub21icmUiOjQyLCJzaWduYXR1cmUiOiIuLi4ifQ']
     DepotReclamation:
       type: object
       description: Un e-mail ou un téléphone au moins (arbitrage 1)
-      required: [categorieId, description, nom, consentement, versionPolitique]
+      required: [categorieId, description, nom, consentement, versionPolitique, jetonAntiRobot]
       anyOf:
         - required: [email]
         - required: [telephone]
@@ -2469,7 +2517,7 @@ components:
         telephone: { type: string, maxLength: 25, description: "Format libre, normalisé en E.164 (+225 par défaut)", examples: ['07 08 09 10 11'] }
         consentement: { type: boolean, const: true, description: "Acceptation de la politique de données (ARTCI)" }
         versionPolitique: { type: string, maxLength: 20, examples: ['2026-09'] }
-        jetonAntiRobot: { type: string, maxLength: 4096, description: "Jeton du mécanisme anti-robot (à choisir, point ouvert)" }
+        jetonAntiRobot: { $ref: '#/components/schemas/JetonAntiRobot' }
         fichiers: { $ref: '#/components/schemas/Fichiers' }
     AccuseDepot:
       type: object
@@ -2500,7 +2548,9 @@ components:
           items: { $ref: '#/components/schemas/EtapeSuivi' }
     DemandeOtp:
       type: object
+      required: [jetonAntiRobot]
       properties:
+        jetonAntiRobot: { $ref: '#/components/schemas/JetonAntiRobot' }
         canal:
           $ref: '#/components/schemas/CanalOtp'
           description: Par défaut le SMS si le client a un téléphone, sinon l'e-mail
@@ -2882,7 +2932,7 @@ components:
       type: object
       description: Définitions du §6.6 ; délais en minutes ouvrées
       required: [du, au, total, parStatut, parCategorie, parCanal, parAgence, delaiPremiereReponseMoyenMinutes,
-        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact, evolution]
+        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact, charge, evolution]
       properties:
         du: { $ref: '#/components/schemas/Horodatage' }
         au: { $ref: '#/components/schemas/Horodatage' }
@@ -2903,7 +2953,20 @@ components:
         delaiResolutionMoyenMinutes: { type: [number, 'null'] }
         tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Part des réclamations résolues avant leur échéance" }
         tauxResolutionPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Sans attente client, sans escalade, sans réouverture" }
+        charge: { $ref: '#/components/schemas/Charge' }
         evolution: { $ref: '#/components/schemas/Evolution' }
+    Charge:
+      type: object
+      description: |
+        Réclamations non clôturées à cet instant, quelle que soit la période (étape 11) ; les autres
+        filtres s'appliquent. En alerte : seuil d'alerte de la banque franchi, échéance pas encore
+        passée. En retard : mêmes règles que la file « En retard ».
+      required: [aTraiter, enAttenteClient, enAlerte, enRetard]
+      properties:
+        aTraiter: { type: integer, minimum: 0, description: "Ouvertes ou en cours" }
+        enAttenteClient: { type: integer, minimum: 0 }
+        enAlerte: { type: integer, minimum: 0 }
+        enRetard: { type: integer, minimum: 0 }
     Regroupement:
       type: string
       description: Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)

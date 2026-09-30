@@ -1,8 +1,8 @@
 # Rapport de recette automatique
 
-Généré par `recette/recette.mjs` le 30 septembre 2026 à 09:02 (heure d'Abidjan), version 1.0.0, Node.js 22.22.2, en 6 minutes.
+Généré par `recette/recette.mjs` le 30 septembre 2026 à 14:50 (heure d'Abidjan), version 1.0.0, Node.js 22.22.2, en 5 minutes.
 
-**11 critère(s) sur 11 vérifié(s) automatiquement** ; 420 tests réussis sur 420 ; toutes les suites passent.
+**11 critère(s) sur 11 vérifié(s) automatiquement** ; 439 tests réussis sur 439 ; toutes les suites passent.
 
 Ce rapport est la partie automatique de la recette. Le MVP est accepté quand chaque critère est vérifié sur l'environnement de démonstration, avec deux banques de test (section 10 du cahier des charges) : [cahier de recette](cahier-de-recette.md).
 
@@ -20,7 +20,7 @@ Ce rapport est la partie automatique de la recette. Le MVP est accepté quand ch
 | ✅ 8 | Le taux de résolution au premier contact correspond à la définition de la section 6.6. | 1/1 `reporting.e2e.test.ts`<br>139/139 `vérifications PostgreSQL` |
 | ✅ 9 | Le journal d'audit restitue toutes les actions d'une réclamation ; une ligne modifiée à la main est détectée par la vérification de la chaîne. | 1/1 `parametrage.e2e.test.ts`<br>1/1 `navigateur/1-parcours.spec.ts`<br>1/1 `navigateur/4-plateforme.spec.ts` |
 | ✅ 10 | Les opérations courantes répondent en moins d'une seconde. | 8/8 `performance.e2e.test.ts` |
-| ✅ 11 | Les listes s'exportent en CSV. | 3/3 `reporting.e2e.test.ts`<br>2/2 `navigateur/7-reporting.spec.ts` |
+| ✅ 11 | Les listes s'exportent en CSV. | 3/3 `reporting.e2e.test.ts`<br>3/3 `navigateur/7-reporting.spec.ts` |
 
 ### Critère 10 : mesures
 
@@ -28,42 +28,42 @@ Banque de 1 000 réclamations, 20 appels par opération à travers toute la pile
 
 | Opération | p95 | max |
 |---|---:|---:|
-| file « toutes », 25 par page | 37 ms | 78 ms |
-| file « reçues » triée par échéance | 36 ms | 37 ms |
-| recherche par nom de client | 134 ms | 182 ms |
-| fiche d'une réclamation | 19 ms | 58 ms |
-| assignation (écriture + notifications + audit) | 49 ms | 55 ms |
-| tableau de bord du mois (indicateurs du §6.6 et courbe) | 28 ms | 50 ms |
-| tableau de bord sur un an, par semaine | 27 ms | 29 ms |
-| export CSV de toute la banque (plus de 1000 lignes) | 139 ms | 182 ms |
+| file « toutes », 25 par page | 42 ms | 74 ms |
+| file « reçues » triée par échéance | 28 ms | 40 ms |
+| recherche par nom de client | 104 ms | 138 ms |
+| fiche d'une réclamation | 20 ms | 60 ms |
+| assignation (écriture + notifications + audit) | 36 ms | 62 ms |
+| tableau de bord du mois (indicateurs du §6.6 et courbe) | 24 ms | 31 ms |
+| tableau de bord sur un an, par semaine | 21 ms | 21 ms |
+| export CSV de toute la banque (plus de 1000 lignes) | 97 ms | 130 ms |
 
 ## Suites
 
 | Suite | Résultat | Tests | Durée |
 |---|---|---:|---:|
 | Contrat d'API (OpenAPI 3.1, Redocly) | ✅ réussie |  | 1 s |
-| Backend : types TypeScript | ✅ réussie |  | 15 s |
-| Backend : tests unitaires | ✅ réussie | 170/170 | 12 s |
-| PostgreSQL : intégrité, sécurité (RLS), cycle de vie et SLA | ✅ réussie |  | 10 s |
-| API de bout en bout (base recréée, jeu des deux banques) | ✅ réussie | 88/88 | 118 s |
-| Frontend : types TypeScript | ✅ réussie |  | 17 s |
-| Frontend : tests unitaires | ✅ réussie | 136/136 | 11 s |
-| Construction de production (API, worker, console, portail) | ✅ réussie |  | 13 s |
-| Écrans dans Chromium (API réelle, CSP de production) | ✅ réussie | 26/26 | 124 s |
-| Sauvegarde chiffrée et restauration (docker/sauvegarde/essai.sh) | ✅ réussie |  | 24 s |
+| Backend : types TypeScript | ✅ réussie |  | 9 s |
+| Backend : tests unitaires | ✅ réussie | 176/176 | 8 s |
+| PostgreSQL : intégrité, sécurité (RLS), cycle de vie et SLA | ✅ réussie |  | 8 s |
+| API de bout en bout (base recréée, jeu des deux banques) | ✅ réussie | 94/94 | 95 s |
+| Frontend : types TypeScript | ✅ réussie |  | 9 s |
+| Frontend : tests unitaires | ✅ réussie | 143/143 | 8 s |
+| Construction de production (API, worker, console, portail) | ✅ réussie |  | 10 s |
+| Écrans dans Chromium (API réelle, CSP de production) | ✅ réussie | 26/26 | 108 s |
+| Sauvegarde chiffrée et restauration (docker/sauvegarde/essai.sh) | ✅ réussie |  | 38 s |
 
 Vérifications PostgreSQL (intégrité, sécurité, cycle de vie) : 32 vérifications réussies, 0 en échec · 62 vérifications réussies, 0 en échec · 45 vérifications réussies, 0 en échec.
 
-Sauvegarde et restauration : 28/28 contrôles réussis (chiffrement, copie hors du VPS et rétention, restauration vérifiée, journal falsifié et pièce perdue détectés, remplacement de la base).
+Sauvegarde et restauration : 39/39 contrôles réussis (chiffrement, copie hors du VPS et rétention, restauration vérifiée, journal falsifié et pièce perdue détectés, remplacement de la base ; copies verrouillées, intrusion avec les clés du compartiment détectée et sans perte).
 
 ## Mise en production
 
-- Écrans construits (JavaScript et CSS compressés) : console 179 Ko, portail 136 Ko.
+- Écrans construits (JavaScript et CSS compressés) : console 180 Ko, portail 140 Ko.
 - `npm audit` backend, dépendances de production : 0 critique(s), 4 élevée(s), 0 moyenne(s), 0 faible(s) ; @prisma/config, deepmerge-ts, mysql2, prisma : CLI Prisma et ses dépendances (image des migrations seulement), retirés de l'image de l'application.
 - `npm audit` backend, toutes les dépendances (outils de développement compris) : 0 critique(s), 4 élevée(s), 0 moyenne(s), 0 faible(s).
 - `npm audit` frontend, dépendances de production : 0 critique(s), 0 élevée(s), 0 moyenne(s), 0 faible(s).
 - `npm audit` frontend, toutes les dépendances (outils de développement compris) : 0 critique(s), 0 élevée(s), 0 moyenne(s), 0 faible(s).
 - Contrôle d'un déploiement réel (HTTPS, en-têtes, santé, conteneurs, pare-feu, sauvegarde) : `./deploiement/verifier.sh --local`, sur le VPS (docs/exploitation.md).
 
-Journaux complets de cette exécution : `recette/.resultats/` (10 fichiers, non versionnés).
+Journaux complets de cette exécution : `recette/.resultats/` (11 fichiers, non versionnés).
 

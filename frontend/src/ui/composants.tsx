@@ -257,12 +257,12 @@ export function Onglets<T extends string>({
 /* ---------------------------------------------------------------- QR code */
 
 /** QR code dessiné en SVG (le vrai sera servi par l'API : telechargerQrCode). */
-export function QrCode({ texte, taille = 160, couleur = '#17212b' }: { texte: string; taille?: number; couleur?: string }) {
+export function QrCode({ texte, taille = 160, couleur = '#17212b', libelle }: { texte: string; taille?: number; couleur?: string; libelle?: string }) {
   const { data, size } = encode(texte, { ecc: 'M', border: 2 });
   let d = '';
   data.forEach((ligne, y) => ligne.forEach((plein, x) => { if (plein) d += `M${x} ${y}h1v1h-1z`; }));
   return (
-    <svg role="img" aria-label={`QR code : ${texte}`} width={taille} height={taille} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
+    <svg role="img" aria-label={libelle ?? `QR code : ${texte}`} width={taille} height={taille} viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges">
       <rect width={size} height={size} fill="#fff" />
       <path d={d} fill={couleur} />
     </svg>

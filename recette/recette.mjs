@@ -206,8 +206,8 @@ const CRITERES = [
     [e2e('performance'), /moins d'une seconde/],
   ]],
   ['Les listes s\'exportent en CSV.', [
-    [e2e('reporting'), /export CSV \(critère 11\)/],
-    [nav('7-reporting'), /export CSV|exportée en CSV/],
+    [e2e('reporting'), /export CSV \(critère 11\)|l'agent exporte ses réclamations/],
+    [nav('7-reporting'), /export CSV|exportée en CSV|exporte ses réclamations/],
   ]],
 ];
 
@@ -309,7 +309,7 @@ L.push('');
 const verifs = bilanVerifications();
 if (verifs.lignes.length) L.push(`Vérifications PostgreSQL (intégrité, sécurité, cycle de vie) : ${verifs.lignes.join(' · ')}.`, '');
 const essai = (suite('sauvegarde').texte ?? '').split('\n').find((l) => /contrôles réussis/.test(l));
-if (essai) L.push(`${essai.trim()} (chiffrement, copie hors du VPS et rétention, restauration vérifiée, journal falsifié et pièce perdue détectés, remplacement de la base).`, '');
+if (essai) L.push(`${essai.trim()} (chiffrement, copie hors du VPS et rétention, restauration vérifiée, journal falsifié et pièce perdue détectés, remplacement de la base ; copies verrouillées, intrusion avec les clés du compartiment détectée et sans perte).`, '');
 
 L.push('## Mise en production', '');
 const tc = tailleGzip('console');

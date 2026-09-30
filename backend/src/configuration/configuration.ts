@@ -6,6 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { MAXIMUM_PAR_DEFAUT } from '../infrastructure/securite/anti-robot.js';
 
 export interface Configuration {
   readonly production: boolean;
@@ -36,6 +37,8 @@ export interface Configuration {
   readonly sms: ConfigurationSms;
   /** Valide chaque réponse contre le contrat et journalise les écarts (développement) */
   readonly validerReponses: boolean;
+  /** Difficulté de base de l'anti-robot du portail (ANTI_ROBOT_MAXIMUM, étape 11) */
+  readonly antiRobotMaximum: number;
 }
 
 export type ConfigurationSms =
@@ -96,6 +99,11 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
   const cookieSecure = booleen('COOKIE_SECURE', true);
   if (production && !cookieSecure) erreurs.push('COOKIE_SECURE=false est interdit en production');
 
+  const antiRobotMaximum = Number(env.ANTI_ROBOT_MAXIMUM?.trim() || MAXIMUM_PAR_DEFAUT);
+  if (!Number.isInteger(antiRobotMaximum) || antiRobotMaximum < 1 || antiRobotMaximum > 10_000_000) {
+    erreurs.push('ANTI_ROBOT_MAXIMUM doit être un entier entre 1 et 10000000');
+  }
+
   const contratChemin = resolve(env.CONTRAT_CHEMIN?.trim() || resolve(process.cwd(), '../contrat/openapi.yaml'));
 
   const config: Configuration = {
@@ -119,6 +127,7 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
     emailExpediteur: env.EMAIL_EXPEDITEUR?.trim() || `Réclamations <no-reply@${domaine}>`,
     sms: lireSms(env, production, erreurs),
     validerReponses: booleen('VALIDER_REPONSES', !production),
+    antiRobotMaximum,
   };
   if (erreurs.length) throw new ErreurConfiguration(erreurs);
   return config;

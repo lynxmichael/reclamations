@@ -244,6 +244,7 @@ Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 | Déploiement de production vérifié | `./deploiement/verifier.sh --portail <slug> --local` sur le VPS | aucun échec | ☐ |
 | Sauvegarde de la nuit copiée hors du VPS | `docker compose … run --rm restauration restaurer liste` | archive du jour, locale et distante | ☐ |
 | Restauration d'essai | `docker compose … run --rm restauration restaurer derniere` (clé privée saisie) | « Sauvegarde vérifiée » : journal intact, fichiers complets | ☐ |
+| Copies hors du VPS verrouillées (étape 12) | `docker compose … exec sauvegarde sauvegarder --controler` | « Verrouillage COMPLIANCE : copie verrouillée, effacement refusé » | ☐ |
 | Alerte de supervision | arrêter le worker 5 minutes (`docker compose … stop worker`) | alerte reçue (santé « dégradée ») ; relancer : retour à « ok » | ☐ |
 
 ## 4. Procès-verbal de recette

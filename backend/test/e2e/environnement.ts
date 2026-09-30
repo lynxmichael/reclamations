@@ -19,6 +19,7 @@ import { creerApplication } from '../../src/app.module.js';
 import { lireConfiguration, type Configuration } from '../../src/configuration/configuration.js';
 import { contratApi, operation, type Schema } from '../../src/infrastructure/contrat/contrat.js';
 import { rattacher } from '../../src/infrastructure/contrat/validation.js';
+import { encoderJeton, resoudreDefi, type Defi } from '../../src/infrastructure/securite/anti-robot.js';
 import { cleAntiRejeu, codeCourant } from '../../src/infrastructure/securite/totp.js';
 import type { Horloge } from '../../src/noyau/noyau.module.js';
 
@@ -44,6 +45,8 @@ export function configurationE2E(): Configuration {
     DOMAINE_PLATEFORME: '',
     URL_PORTAIL: '',
     URL_CONSOLE: '',
+    // Défis anti-robot faciles : les tests en résolvent des centaines (le test dédié le vérifie)
+    ANTI_ROBOT_MAXIMUM: '2000',
   });
 }
 
@@ -110,6 +113,11 @@ export interface Requete {
   readonly ip?: string;
   /** En-tête Cookie (refresh token) */
   readonly cookie?: string;
+  /**
+   * Dépôt et demande de code : le client résout un défi anti-robot et ajoute jetonAntiRobot au corps
+   * s'il n'y est pas déjà (false : ne rien ajouter, pour tester le refus)
+   */
+  readonly antiRobot?: boolean;
 }
 
 export interface Reponse<T = any> {
@@ -130,10 +138,25 @@ export const nouvelleIp = () => {
   return `198.${18 + (n >> 16)}.${(n >> 8) & 255}.${n & 255}`;
 };
 
+/** Opérations qui exigent un jeton anti-robot (étape 11) */
+export const AVEC_ANTI_ROBOT = new Set(['deposerReclamation', 'demanderCodeOtp']);
+
 export class ClientApi {
   constructor(private readonly url: string, private readonly ipParDefaut = nouvelleIp()) {}
 
+  /** Défi demandé à l'API puis résolu, comme le fait le portail. */
+  async jetonAntiRobot(ip?: string): Promise<string> {
+    const d = await this.appeler<Defi>('lireDefiAntiRobot', { ip });
+    if (d.statut !== 200) throw new Error(`Défi anti-robot refusé : ${d.statut}`);
+    const n = resoudreDefi(d.corps);
+    if (n === null) throw new Error('Défi anti-robot sans solution');
+    return encoderJeton(d.corps, n);
+  }
+
   async appeler<T = any>(opId: string, r: Requete = {}): Promise<Reponse<T>> {
+    if (AVEC_ANTI_ROBOT.has(opId) && r.antiRobot !== false && !(r.corps as { jetonAntiRobot?: string } | undefined)?.jetonAntiRobot) {
+      r = { ...r, corps: { ...((r.corps ?? {}) as object), jetonAntiRobot: await this.jetonAntiRobot(r.ip) } };
+    }
     const op = operation(opId);
     appendFileSync(FICHIER_COUVERTURE, `${opId}\n`);
     let chemin = op.chemin.replace(/\{([^}]+)\}/g, (_, nom: string) => encodeURIComponent(r.chemin?.[nom] ?? `{${nom}}`));

@@ -74,6 +74,18 @@ describe('ouverture de la démo', () => {
     expect(i.parStatut.reduce((s, v) => s + v.total, 0)).toBe(i.total);
   });
 
+  it('le tableau de bord de l\'agent ne compte que ses réclamations ; sa charge suit sa file (étape 11)', () => {
+    const banque = m.indicateurs();
+    const agent = m.indicateurs(30, AGENT);
+    const siennes = m.toutesLesReclamations().filter((t) => t.agentId === AGENT && t.creeLe >= new Date(agent.du));
+    expect(agent.total).toBe(siennes.length);
+    expect(agent.total).toBeGreaterThan(0);
+    expect(agent.total).toBeLessThan(banque.total);
+    expect(agent.charge.enRetard).toBe(m.files(AGENT).compteurs.enRetard);
+    expect(agent.charge.aTraiter + agent.charge.enAttenteClient).toBeLessThanOrEqual(m.files(AGENT).compteurs.assignees);
+    expect(banque.charge.aTraiter).toBeGreaterThanOrEqual(agent.charge.aTraiter);
+  });
+
   it('toutes les réponses sont conformes au contrat', () => {
     const erreurs: string[] = [];
     const verifier = (schema: string, v: unknown, ou: string) => erreurs.push(...ecarts(schema, v).map((e) => `${ou} ${e}`));
@@ -86,6 +98,7 @@ describe('ouverture de la démo', () => {
       for (const r of f.donnees) verifier('ReclamationDetail', m.fiche(u, r.id), `fiche ${r.numero}`);
     }
     verifier('Indicateurs', m.indicateurs(), 'indicateurs');
+    verifier('Indicateurs', m.indicateurs(30, AGENT), 'indicateurs de l\'agent');
     verifier('PageAudit', m.journalAudit(), 'journal');
     verifier('VerificationChaine', m.verificationJournal(), 'vérification');
     const t = m.toutesLesReclamations().find((x) => x.statut === 'RESOLUE')!;

@@ -39,12 +39,12 @@ function routes() {
 }
 
 describe('routes de l\'API ↔ opérations du contrat', () => {
-  it('chaque opération du contrat est servie une fois (83, reporting de l\'étape 9 compris)', () => {
+  it('chaque opération du contrat est servie une fois (84, anti-robot de l\'étape 11 compris)', () => {
     const servies = routes().map((r) => r.id);
     expect(new Set(servies).size).toBe(servies.length);
     const attendues = [...contratApi().operations.keys()].sort();
     expect([...servies].sort()).toEqual(attendues);
-    expect(attendues.length).toBe(83);
+    expect(attendues.length).toBe(84);
   });
 
   it('méthode et chemin HTTP de chaque route sont ceux du contrat', () => {
@@ -77,7 +77,7 @@ describe('validation des entrées', () => {
   it('corps multipart : fichiers retirés du schéma, booléens convertis ; e-mail ou téléphone exigé', () => {
     const v = validateurDe(operation('deposerReclamation'));
     expect(v.champsFichiers).toEqual(['fichiers']);
-    const corps: Record<string, unknown> = { categorieId: '0199aaaa-0000-7000-8000-000000000000', description: 'x', nom: 'Yao', consentement: 'true', versionPolitique: '2026-09' };
+    const corps: Record<string, unknown> = { categorieId: '0199aaaa-0000-7000-8000-000000000000', description: 'x', nom: 'Yao', consentement: 'true', versionPolitique: '2026-09', jetonAntiRobot: 'jeton' };
     expect(v.corps!(corps)).toBe(false);
     expect(erreursChamps(v.corps!.errors)).toEqual([{ champ: 'telephone', message: 'Un téléphone ou un e-mail au moins' }]);
     expect(v.corps!({ ...corps, telephone: '0708091011' })).toBe(true);

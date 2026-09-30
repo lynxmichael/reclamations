@@ -289,6 +289,7 @@ export const INDICATEURS: S<'Indicateurs'> = {
   delaiResolutionMoyenMinutes: 1386,
   tauxRespectSla: 0.87,
   tauxResolutionPremierContact: 0.43,
+  charge: { aTraiter: 27, enAttenteClient: 6, enAlerte: 4, enRetard: 2 },
   evolution: EVOLUTION_SEPTEMBRE,
 };
 

@@ -3,6 +3,8 @@
  * pages réservées, première connexion d'une invitée (mot de passe puis TOTP), mot de passe oublié.
  */
 import { expect, test } from '@playwright/test';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
 import { COMPTES, CONSOLE, MOT_DE_PASSE, capture, codeTotp, connecter, lienRecu, saisirCode, secretDemo } from './outils';
 
 test('mauvais mot de passe : message identique que le compte existe ou non', async ({ page }) => {
@@ -61,7 +63,21 @@ test('première connexion d\'une invitée : mot de passe, QR code TOTP, puis son
   await invitee.getByRole('button', { name: 'Continuer' }).click();
   await expect(invitee.getByRole('heading', { name: 'Protégez votre compte' })).toBeVisible();
   await capture(invitee, '21-activation-totp');
-  const secret = (await invitee.locator('[data-secret]').getAttribute('data-secret'))!;
+  // Le QR code affiché se lit comme avec l'appareil photo d'un téléphone (étape 11) : décodé depuis
+  // une capture de l'écran, il donne l'adresse otpauth:// que Google Authenticator enregistre
+  const qr = invitee.getByRole('img', { name: /QR code d'activation/ });
+  expect((await qr.boundingBox())!.width).toBeGreaterThanOrEqual(200);
+  const image = PNG.sync.read(await qr.screenshot());
+  const lu = jsQR(new Uint8ClampedArray(image.data), image.width, image.height);
+  expect(lu?.data).toMatch(/^otpauth:\/\/totp\/[^?]+\?/);
+  const adresse = new URL(lu!.data);
+  expect(decodeURIComponent(adresse.pathname)).toContain(COMPTES.invitee);
+  expect(adresse.searchParams.get('algorithm')).toBe('SHA1');
+  expect(adresse.searchParams.get('digits')).toBe('6');
+  expect(adresse.searchParams.get('period')).toBe('30');
+  const secret = adresse.searchParams.get('secret')!;
+  // La clé à saisir à la main est la même
+  expect(await invitee.locator('[data-secret]').getAttribute('data-secret')).toBe(secret);
   await saisirCode(invitee, await codeTotp(secret));
   await invitee.getByRole('button', { name: 'Activer et me connecter' }).click();
   await expect(invitee.getByRole('tab', { name: /Mes réclamations/ })).toBeVisible();

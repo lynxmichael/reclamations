@@ -170,7 +170,14 @@ export function EcranBanque({ d }: { d: Demo }) {
         );
         break;
       case 'tableau':
-        contenu = <TableauDeBord indicateurs={moteur.indicateurs(30)} periode="30 derniers jours" surExporter={a.exporter} />;
+        contenu = (
+          <TableauDeBord
+            indicateurs={moteur.indicateurs(30, b.role === 'AGENT' ? moiCourant.id : undefined)}
+            agent={b.role === 'AGENT'}
+            periode="30 derniers jours"
+            surExporter={a.exporter}
+          />
+        );
         break;
       case 'categories':
         contenu = <Categories categories={CATEGORIES} enEdition={null} minutesParJour={450} />;

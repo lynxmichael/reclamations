@@ -9,7 +9,7 @@
 #
 #  Options : --env FICHIER  --domaine D  --version V  --portail SLUG (une banque existante)
 #            --ip IP (interroge cette adresse sans attendre le DNS)  --ca FICHIER (autorité de test)
-#            --local (sur le VPS : docker compose, ports publiés, UFW, disque, sauvegarde)
+#            --local (sur le VPS : docker compose, ports publiés, UFW, disque, sauvegarde et verrouillage)
 #  Code de sortie 1 si un contrôle échoue.
 # =============================================================================
 set -Euo pipefail
@@ -123,6 +123,8 @@ code=$(requete "https://$console/interne/tls?domain=$console")
 [[ $code == 404 ]] && ok "route interne de l'API non publiée" || ko "route interne de l'API non publiée" "reçu : $code"
 code=$(requete "https://$console/api/v1/auth/moi")
 [[ $code == 401 ]] && ok "route protégée refusée sans connexion (401)" || ko "route protégée refusée sans connexion" "reçu : $code"
+code=$(requete "https://$console/api/v1/public/defi-anti-robot")
+[[ $code == 200 ]] && grep -q '"algorithme":"SHA-256"' "$T/corps" && ok "anti-robot du portail : défi signé servi" || ko "anti-robot du portail : défi signé servi" "reçu : $code $(head -c 200 "$T/corps")"
 
 # ---- Portails des banques -----------------------------------------------------------------------------------
 echo "Portails des banques"
@@ -169,6 +171,12 @@ if ((local)); then
   elif command -v docker >/dev/null; then
     derniere=$(dc exec -T sauvegarde sh -c 'ls -1 /sauvegardes/reclamations-*.tar.age 2>/dev/null | sort | tail -n 1' 2>/dev/null)
     [[ -n $derniere ]] && ok "dernière sauvegarde : $(basename "$derniere")" || attention "aucune sauvegarde encore" "docker compose … exec sauvegarde sauvegarder   puis   … run --rm restauration restaurer derniere"
+    # Étape 12 : compartiment joignable et copies verrouillées (sonde d'un jour, effacement refusé)
+    if dc exec -T sauvegarde sauvegarder --controler >"$T/controle-sauvegarde" 2>&1; then
+      ok "copie hors du VPS : compartiment joignable, $(grep -o 'Verrouillage [A-Z]* : copie verrouillée, effacement refusé' "$T/controle-sauvegarde" || echo 'sans verrouillage')"
+    else
+      ko "copie hors du VPS et verrouillage" "$(grep -m 2 'ATTENTION' "$T/controle-sauvegarde" | cut -c 23- | tr '\n' ' ')"
+    fi
   fi
 fi
 

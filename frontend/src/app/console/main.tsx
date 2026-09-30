@@ -37,7 +37,7 @@ const routeur = createBrowserRouter([
       { path: '/', element: <Accueil /> },
       { path: ROUTES_BANQUE.reclamations, element: <Reserve roles={[...BANQUE]}><PageFiles /></Reserve> },
       { path: `${ROUTES_BANQUE.reclamations}/:id`, element: <Reserve roles={[...BANQUE]}><PageFiche /></Reserve> },
-      { path: ROUTES_BANQUE.tableau, element: <Reserve roles={[...ENCADREMENT]}><PageTableau /></Reserve> },
+      { path: ROUTES_BANQUE.tableau, element: <Reserve roles={['AGENT', ...ENCADREMENT]}><PageTableau /></Reserve> },
       { path: ROUTES_BANQUE.categories, element: <Reserve roles={[...ADMIN]}><PageCategories /></Reserve> },
       { path: ROUTES_BANQUE.points, element: <Reserve roles={[...ENCADREMENT]}><PagePoints /></Reserve> },
       { path: ROUTES_BANQUE.horaires, element: <Reserve roles={[...ADMIN]}><PageHoraires /></Reserve> },

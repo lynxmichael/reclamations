@@ -1,12 +1,13 @@
 /**
  * Services partagés par tous les modules de l'API : configuration, base, Redis, stockage,
- * jetons, limites de débit, idempotence, horloge et service du cycle de vie (étape 4).
+ * jetons, limites de débit, idempotence, anti-robot (étape 11), horloge et service du cycle de vie (étape 4).
  */
 import { Global, Inject, Injectable, Module, type DynamicModule, type OnApplicationShutdown } from '@nestjs/common';
 import { CycleDeVie } from '../application/reclamations/cycle-de-vie.js';
 import { CONFIGURATION, urlPortail, type Configuration } from '../configuration/configuration.js';
 import { BaseDonnees } from '../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { ServiceRedis } from '../infrastructure/redis/redis.service.js';
+import { AntiRobot } from '../infrastructure/securite/anti-robot.js';
 import { Idempotence } from '../infrastructure/securite/idempotence.js';
 import { Jetons } from '../infrastructure/securite/jetons.js';
 import { Limiteur } from '../infrastructure/securite/limiteur.js';
@@ -49,6 +50,7 @@ export class NoyauModule {
       { provide: Jetons, useFactory: () => new Jetons(config.secretJwt, horloge) },
       { provide: Limiteur, useFactory: (r: ServiceRedis) => new Limiteur(r), inject: [ServiceRedis] },
       { provide: Idempotence, useFactory: (r: ServiceRedis) => new Idempotence(r), inject: [ServiceRedis] },
+      { provide: AntiRobot, useFactory: (r: ServiceRedis) => new AntiRobot(r, config.secretJwt, config.antiRobotMaximum, horloge), inject: [ServiceRedis] },
       {
         provide: CycleDeVie,
         useFactory: (bd: BaseDonnees) => new CycleDeVie(bd.base, {

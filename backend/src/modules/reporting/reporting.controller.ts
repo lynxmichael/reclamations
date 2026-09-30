@@ -94,17 +94,21 @@ export class ServiceReporting {
     @Inject(HORLOGE) private readonly horloge: Horloge,
   ) {}
 
+  /** Toute la banque ; pour un agent (étape 11), ses réclamations seulement, comme sa file. */
   indicateurs(appel: Appel, q: Record<string, unknown>) {
     const moi = personnelBanque(appel);
+    const maintenant = this.horloge();
     return this.bd.enBanque(moi.tenantId, async (tx) => {
       const { fuseauHoraire } = await tx.banque.findUniqueOrThrow({ where: { id: moi.tenantId }, select: { fuseauHoraire: true } });
-      const p = periodeDe(q, fuseauHoraire, this.horloge());
-      return indicateursBanque(tx, filtresDe(q, p), fuseauHoraire, regroupementDe(p, q.regroupement));
+      const p = periodeDe(q, fuseauHoraire, maintenant);
+      const filtres = { ...filtresDe(q, p), ...(moi.role === 'AGENT' ? { agentId: moi.id } : {}) };
+      return indicateursBanque(tx, filtres, fuseauHoraire, regroupementDe(p, q.regroupement), maintenant);
     });
   }
 
   /**
-   * Export CSV diffusé par lots de 1 000 lignes, du plus récent au plus ancien (curseur sur la
+   * Export CSV diffusé par lots de 1 000 lignes (un agent n'exporte que ses réclamations : mêmes
+   * règles que sa file, étape 11), du plus récent au plus ancien (curseur sur la
    * date de dépôt : une réclamation déposée pendant l'export ne décale rien). L'export est inscrit
    * au journal d'audit avant le premier octet envoyé.
    */

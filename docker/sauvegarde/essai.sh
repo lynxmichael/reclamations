@@ -7,8 +7,9 @@
 #  Prérequis : PostgreSQL 16 (psql, pg_dump, pg_restore) joignable avec les variables PG* d'un
 #  superutilisateur, age et age-keygen, rclone, curl, jq. La recette automatique le lance avec ces
 #  outils (docker compose run --rm recette), sur une base semée pour l'occasion.
-#  Compartiment hors du VPS simulé par « rclone serve s3 » (rclone 1.65 et plus), sinon par un
-#  dossier (rclone local) ; supervision simulée si python3 est là, sinon non vérifiée.
+#  Compartiment hors du VPS simulé par moto (python3 -m moto.server, S3 avec verrouillage des
+#  objets, étape 12) et rclone 1.70 ou plus ; sinon par « rclone serve s3 » ou un dossier, sans
+#  verrouillage (contrôles du verrou non vérifiés). Supervision simulée si python3 est là.
 #  ESSAI_SOURCE : une base migrée et semée, au journal d'audit intact (par défaut reclamations_navigateur).
 #
 #  Tout se passe dans des bases reclamations_essai* et un dossier temporaire, supprimés à la fin.
@@ -54,6 +55,7 @@ bases() { psql -XAtd postgres -c "SELECT datname FROM pg_database WHERE datname 
 
 nettoyer() {
   [[ -n ${pid_s3:-} ]] && kill "$pid_s3" 2>/dev/null
+  [[ -n ${pid_moto:-} ]] && kill "$pid_moto" 2>/dev/null
   [[ -n ${pid_ping:-} ]] && kill "$pid_ping" 2>/dev/null
   for b in $(bases); do psql -Xqd postgres -c "DROP DATABASE IF EXISTS \"$b\" WITH (FORCE)" 2>/dev/null; done
   ((echoues == 0)) || echo "Journal détaillé : $JOURNAL"
@@ -87,8 +89,27 @@ port_ping=$((port_s3 + 1))
 # « rclone serve <inconnu> --help » répond pourtant 0 : on cherche une option propre à serve s3, puis
 # on attend que le serveur réponde. Sinon, dossier local : sans serveur, chaque appel rclone
 # réessaierait pendant 4 minutes.
-mode_distant=''
-if rclone serve s3 --help 2>&1 | grep -q -- '--auth-key'; then
+mode_distant='' verrou=0
+# Verrouillage des copies (étape 12) : moto simule un S3 qui l'applique ; rclone 1.70 ou plus l'envoie
+# (grep sans -q : avec pipefail, un grep -q qui s'arrête tôt fait échouer rclone sur SIGPIPE)
+if rclone help flags 2>/dev/null | grep -- '--s3-object-lock-mode' >/dev/null && python3 -c 'import moto.server, flask' 2>/dev/null; then
+  port_moto=$((port_s3 + 2))
+  python3 -m moto.server -H 127.0.0.1 -p "$port_moto" >"$T/moto.txt" 2>&1 &
+  pid_moto=$!
+  for _ in $(seq 1 50); do
+    curl -s -o /dev/null --noproxy "*" --max-time 1 "http://127.0.0.1:$port_moto/" && { mode_distant="S3 simulé avec verrouillage des objets (moto)"; verrou=1; break; }
+    sleep 0.2
+  done
+  if ((verrou)); then
+    export SAUVEGARDE_S3_BUCKET=essai SAUVEGARDE_VERROU=COMPLIANCE
+    export RCLONE_CONFIG_DISTANT_TYPE=s3 RCLONE_CONFIG_DISTANT_PROVIDER=Other RCLONE_CONFIG_DISTANT_ENDPOINT=http://127.0.0.1:$port_moto
+    export RCLONE_CONFIG_DISTANT_ACCESS_KEY_ID=ESSAI RCLONE_CONFIG_DISTANT_SECRET_ACCESS_KEY=SECRET-ESSAI RCLONE_CONFIG_DISTANT_NO_CHECK_BUCKET=true
+  else
+    kill "$pid_moto" 2>/dev/null
+    pid_moto=''
+  fi
+fi
+if [[ -z $mode_distant ]] && rclone serve s3 --help 2>&1 | grep -- '--auth-key' >/dev/null; then
   rclone serve s3 --auth-key ESSAI,SECRET-ESSAI --addr "127.0.0.1:$port_s3" --dir-cache-time 1s "$T/s3" >"$T/s3.txt" 2>&1 &
   pid_s3=$!
   for _ in $(seq 1 50); do
@@ -104,6 +125,7 @@ if rclone serve s3 --help 2>&1 | grep -q -- '--auth-key'; then
     pid_s3=''
   fi
 fi
+((verrou)) || export SAUVEGARDE_VERROU=aucun
 if [[ -z $mode_distant ]]; then
   mode_distant="dossier local (rclone $(rclone version 2>/dev/null | head -n 1 | cut -d' ' -f2), sans « serve s3 »)"
   export SAUVEGARDE_S3_BUCKET=$T/s3/essai RCLONE_CONFIG_DISTANT_TYPE=local RCLONE_CONFIG_DISTANT_ENDPOINT=dossier-local
@@ -135,18 +157,43 @@ export SAUVEGARDE_DOSSIER=$T/sauvegardes SAUVEGARDE_FICHIERS=$T/fichiers VERSION
 SAUVEGARDE_CLES_AGE="$(grep -o 'age1.*' "$T/cle1.txt") $(grep -o 'age1.*' "$T/cle2.txt")"
 export SAUVEGARDE_CLES_AGE
 if ((supervision)); then export SAUVEGARDE_PING_URL=http://127.0.0.1:$port_ping/essai; else export SAUVEGARDE_PING_URL=''; fi
-# Anciennes copies distantes (dates de modification dans le passé) pour la rétention
-for jours in 10 31 45; do
-  n=reclamations-$(date -u -d "$jours days ago" +%Y%m%d)T023000Z.tar.age
-  echo ancienne >"$T/vieux/$n"; touch -d "$jours days ago" "$T/vieux/$n"
-  timeout "$DELAI" rclone copyto -q "$T/vieux/$n" "distant:$B/quotidien/$n"
-done
-for jours in 200 400; do
-  n=reclamations-$(date -u -d "$jours days ago" +%Y%m%d)T023000Z.tar.age
-  echo ancienne >"$T/vieux/$n"; touch -d "$jours days ago" "$T/vieux/$n"
-  timeout "$DELAI" rclone copyto -q "$T/vieux/$n" "distant:$B/mensuel/$n"
-done
+# Compartiment créé avec le verrouillage des objets (étape 12), comme en production
+if ((verrou)); then
+  controle "compartiment créé avec le verrouillage ; sonde verrouillée, effacement refusé" lancer "$ICI/sauvegarder.sh" --preparer
+fi
+# Anciennes copies distantes (dates de modification dans le passé) pour la rétention. Avec le
+# verrouillage, leur verrou finit dans quelques secondes (la rotation doit pouvoir les effacer),
+# sauf une, encore verrouillée : la rotation doit la laisser sans faire échouer la sauvegarde.
+fin_verrou=$(date -u -d '+8 seconds' +%Y-%m-%dT%H:%M:%SZ)
+ancienne() { # ancienne quotidien|mensuel jours [verrou]
+  local n
+  n=reclamations-$(date -u -d "$2 days ago" +%Y%m%d)T023000Z.tar.age
+  echo ancienne >"$T/vieux/$n"; touch -d "$2 days ago" "$T/vieux/$n"
+  local o=()
+  ((verrou)) && o=(--s3-object-lock-mode COMPLIANCE --s3-object-lock-retain-until-date "${3:-$fin_verrou}")
+  timeout "$DELAI" rclone copyto -q "${o[@]}" "$T/vieux/$n" "distant:$B/$1/$n"
+}
+for jours in 10 31 45; do ancienne quotidien "$jours"; done
+for jours in 200 400; do ancienne mensuel "$jours"; done
+((verrou)) && ancienne quotidien 50 1d
+((verrou)) && sleep 8
 quotidiennes() { rclone -q lsf --include '*.tar.age' "distant:$B/quotidien/"; }
+# Verrou d'une copie distante : « COMPLIANCE 29 » (mode, jours restants)
+jours_de_verrou() {
+  local m
+  m=$(rclone -q lsjson --metadata "$1" | jq -r '.[0].Metadata | "\(.["object-lock-mode"]) \(.["object-lock-retain-until-date"])"')
+  echo "${m%% *} $((($(date -u -d "${m#* }" +%s) - $(date +%s)) / 86400))"
+}
+verrous_attendus() {
+  local q m
+  q=$(jours_de_verrou "distant:$B/quotidien/$archive")
+  m=$(jours_de_verrou "distant:$B/mensuel/$archive")
+  echo "quotidienne : $q ; mensuelle : $m"
+  [[ $q == "COMPLIANCE 29" || $q == "COMPLIANCE 30" ]] && [[ $m == "COMPLIANCE 371" || $m == "COMPLIANCE 372" ]]
+}
+verrouillee_gardee() {
+  quotidiennes | grep "$(date -u -d '50 days ago' +%Y%m%d)" >/dev/null && grep -q 'rotation de quotidien/ incomplète' "$T/derniere.txt"
+}
 
 # ---- Sauvegarde ------------------------------------------------------------------------------------
 echo "Sauvegarde"
@@ -157,7 +204,13 @@ controle "archive chiffrée (en-tête age) et empreinte à côté" bash -c "head
 controle "aucun contenu lisible sans la clé" bash -c "! grep -qa 'journal_audit' '$T/sauvegardes/$archive'"
 controle "copie hors du VPS (quotidien/ et mensuel/)" bash -c "rclone -q lsf 'distant:$B/quotidien/' | grep -q '$archive' && rclone -q lsf 'distant:$B/mensuel/' | grep -q '$archive'"
 controle "rétention : quotidiennes de plus de 30 jours et mensuelles de plus de 12 mois supprimées" \
-  bash -c "[[ \$(rclone -q lsf --include '*.tar.age' 'distant:$B/quotidien/' | wc -l) == 2 && \$(rclone -q lsf --include '*.tar.age' 'distant:$B/mensuel/' | wc -l) == 2 ]]"
+  bash -c "[[ \$(rclone -q lsf --include '*.tar.age' 'distant:$B/quotidien/' | wc -l) == $((2 + verrou)) && \$(rclone -q lsf --include '*.tar.age' 'distant:$B/mensuel/' | wc -l) == 2 ]]"
+if ((verrou)); then
+  controle "  copie encore verrouillée gardée, sans faire échouer la sauvegarde" verrouillee_gardee
+  controle "  verrous : quotidienne 30 jours, mensuelle 12 mois et plus (COMPLIANCE, 372 jours)" verrous_attendus
+else
+  ignore "verrouillage des copies : non vérifié (moto ou rclone 1.70 absent)"
+fi
 if ((supervision)); then
   controle "supervision : début puis succès signalés" bash -c "grep -qx /essai/start '$T/pings.txt' && grep -qx /essai '$T/pings.txt'"
 else
@@ -216,6 +269,50 @@ controle "  rôle de l'application : connexion, isolation par banque active" bas
   t=\$(psql -XAtc 'SELECT tenant_id FROM reclamation LIMIT 1');
   n=\$(PGUSER=reclamations_app PGPASSWORD=\$APP_DB_PASSWORD psql -XAtq -c \"BEGIN; SET LOCAL ROLE acces_banque; SELECT set_config('app.tenant_id', '00000000-0000-0000-0000-000000000000', true); SELECT count(*) FROM reclamation; COMMIT;\" | sed -n 2p);
   [[ -n \$t && \$n == 0 ]]"
+
+# ---- Copies protégées contre l'effacement (étape 12) -------------------------------------------------------
+# Un intrus a les clés du compartiment (celles du VPS) : il supprime, purge, remplace. Les versions
+# verrouillées doivent survivre, la sauvegarde suivante doit donner l'alerte, et chaque copie
+# masquée ou remplacée doit rester restaurable.
+copies() { # « dossier/nom taille » de chaque vraie archive (les anciennes simulées, au verrou échu, à part)
+  local d
+  for d in quotidien mensuel; do
+    rclone -q lsjson --s3-versions "distant:$B/$d/" \
+      | jq -r --arg d "$d" '.[] | select(.Size > 100) | select(.Name | test("\\.tar(-v[0-9-]+)?\\.age$")) | "\($d)/\(.Name | sub("-v[0-9-]+\\.age$"; ".age")) \(.Size)"'
+  done | sort
+}
+attaque() {
+  rclone -q --retries 1 purge "distant:$B"
+  rclone -q --retries 1 delete --s3-versions "distant:$B/mensuel/"
+  echo "rançon" >"$T/rancon.tar.age"
+  rclone -q --retries 1 copyto "$T/rancon.tar.age" "distant:$B/mensuel/$archive"
+  rclone -q --retries 1 delete "distant:$B/quotidien/"
+  return 0
+}
+rien_perdu() { comm -23 "$T/copies-avant.txt" <(copies) >"$T/perdues.txt"; cat "$T/perdues.txt"; [[ ! -s $T/perdues.txt ]]; }
+intrusion_signalee() {
+  ! lancer "$ICI/sauvegarder.sh" && grep -q 'ALERTE' "$T/derniere.txt" && grep -q '^    distant:quotidien/.*\.tar-v.*\.age$' "$T/derniere.txt" \
+    && { ((! supervision)) || [[ $(tail -n 1 "$T/pings.txt") == /essai/fail ]]; }
+}
+masquee() { rclone -q lsf --s3-versions "distant:$B/$1/" | grep "^${archive%.tar.age}\.tar-v.*\.age$" | head -n 1; }
+sans_verrou_detecte() {
+  RCLONE_CONFIG_DISTANT_NO_CHECK_BUCKET=false rclone -q mkdir "distant:sans-verrou"
+  ! SAUVEGARDE_S3_BUCKET=sans-verrou lancer "$ICI/sauvegarder.sh" --controler && grep -q 'verrou' "$T/derniere.txt"
+}
+if ((verrou)); then
+  echo "Copies protégées contre l'effacement"
+  copies >"$T/copies-avant.txt"
+  controle "intrus avec les clés : suppression, purge et remplacement tentés" attaque
+  controle "  aucune copie verrouillée perdue ($(wc -l <"$T/copies-avant.txt") archives)" rien_perdu
+  controle "  la sauvegarde suivante donne l'alerte (échec signalé)" intrusion_signalee
+  controle "  « restaurer liste » montre les copies masquées ou remplacées" bash -c "'$ICI/restaurer.sh' liste | grep -q 'masquée ou remplacée'"
+  controle "  copie masquée restaurée et vérifiée (clé 2)" lancer env SAUVEGARDE_CLE_PRIVEE="$T/cle2.txt" "$ICI/restaurer.sh" "distant:quotidien/$(masquee quotidien)"
+  controle "  copie remplacée par l'intrus refusée ; l'originale, restaurable" bash -c "! SAUVEGARDE_CLE_PRIVEE='$T/cle1.txt' '$ICI/restaurer.sh' 'distant:mensuel/$archive' && [[ -n '$(masquee mensuel)' ]]"
+  controle "  après acquittement, les sauvegardes repassent au vert" bash -c "'$ICI/sauvegarder.sh' --acquitter && '$ICI/sauvegarder.sh'"
+  controle "compartiment créé sans verrouillage : détecté" sans_verrou_detecte
+else
+  ignore "copies protégées contre l'effacement : non vérifié (moto ou rclone 1.70 absent)"
+fi
 
 echo
 echo "Sauvegarde et restauration : $reussis/$((reussis + echoues)) contrôles réussis$( ((ignores == 0)) || echo ", $ignores non vérifié(s)")"

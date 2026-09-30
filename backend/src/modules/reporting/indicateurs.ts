@@ -36,6 +36,8 @@ export interface FiltresIndicateurs extends Periode {
   readonly categorieId?: string;
   readonly agenceId?: string;
   readonly canal?: 'QR_CODE' | 'LIEN_WEB';
+  /** Tableau de bord d'un agent (étape 11) : ses réclamations seulement */
+  readonly agentId?: string;
 }
 
 /** Période demandée ; par défaut, du début du mois courant (dans le fuseau donné) à maintenant. */
@@ -82,15 +84,29 @@ export function debutsDesPas(p: Periode, r: Regroupement, fuseau: string): DateT
 const taux = (n: number, sur: number) => (sur ? Math.round((n / sur) * 10_000) / 10_000 : null);
 const moyenne = (v: number | null) => (v === null ? null : Math.round(v));
 
-/** Filtres en SQL, sur la date de dépôt ou de résolution. */
-function conditionsSql(f: FiltresIndicateurs, date: 'cree_le' | 'resolue_le' = 'cree_le'): Prisma.Sql {
-  const colonne = Prisma.raw(date);
-  const c = [Prisma.sql`${colonne} >= ${f.du} AND ${colonne} < ${f.au}`];
+/** Filtres en SQL, sur la date de dépôt ou de résolution ; sans période pour la charge du moment. */
+function conditionsSql(f: FiltresIndicateurs, date: 'cree_le' | 'resolue_le' | null = 'cree_le'): Prisma.Sql {
+  const c = [Prisma.sql`TRUE`];
+  if (date) c.push(Prisma.sql`${Prisma.raw(date)} >= ${f.du} AND ${Prisma.raw(date)} < ${f.au}`);
   if (f.categorieId) c.push(Prisma.sql`categorie_id = ${f.categorieId}::uuid`);
   if (f.agenceId) c.push(Prisma.sql`agence_id = ${f.agenceId}::uuid`);
   if (f.canal) c.push(Prisma.sql`canal = ${f.canal}::canal_depot`);
+  if (f.agentId) c.push(Prisma.sql`agent_id = ${f.agentId}::uuid`);
   return Prisma.join(c, ' AND ');
 }
+
+/**
+ * Charge du moment (étape 11) : réclamations non clôturées à cet instant, quelle que soit leur
+ * date de dépôt. « En alerte » : seuil d'alerte franchi, échéance pas encore passée ; « en retard » :
+ * mêmes règles que la file « En retard » (échéance passée, ou temps épuisé pendant une pause).
+ */
+const CHARGE = (maintenant: Date) => Prisma.sql`
+  count(*) FILTER (WHERE statut IN ('OUVERTE', 'EN_COURS'))::int AS a_traiter,
+  count(*) FILTER (WHERE statut = 'EN_ATTENTE_CLIENT')::int AS en_attente_client,
+  count(*) FILTER (WHERE statut IN ('OUVERTE', 'EN_COURS') AND alerte_preventive_le <= ${maintenant}
+                     AND echeance_sla_le >= ${maintenant})::int AS en_alerte,
+  count(*) FILTER (WHERE echeance_sla_le < ${maintenant}
+                     OR (sla_suspendu_le IS NOT NULL AND sla_minutes_restantes = 0))::int AS en_retard`;
 
 /** Totaux d'un ensemble de réclamations (les mêmes pour une banque et pour la plateforme). */
 const TOTAUX = Prisma.sql`
@@ -115,7 +131,7 @@ interface Compte {
 }
 
 /** Tableau de bord d'une banque (contexte banque : la RLS limite à ses réclamations). */
-export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicateurs, fuseau: string, r: Regroupement): Promise<S<'Indicateurs'>> {
+export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicateurs, fuseau: string, r: Regroupement, maintenant: Date): Promise<S<'Indicateurs'>> {
   const debuts = debutsDesPas(f, r, fuseau);
   const quand = conditionsSql(f);
   // Début local du pas (texte « AAAA-MM-JJTHH:MM:SS »), dans le fuseau de la banque
@@ -124,7 +140,7 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
   const volumes = (colonne: string) =>
     tx.$queryRaw<Compte[]>`SELECT ${Prisma.raw(colonne)}::text AS cle, count(*)::int AS n FROM reclamation WHERE ${quand} GROUP BY 1`;
 
-  const [[totaux], [delais], parStatut, parCategorie, parCanal, parAgence, categories, agences, deposees, resolues] = await enSerie([
+  const [[totaux], [delais], parStatut, parCategorie, parCanal, parAgence, categories, agences, deposees, resolues, [charge]] = await enSerie([
     () => tx.$queryRaw<Totaux[]>`SELECT ${TOTAUX} FROM reclamation WHERE ${quand}`,
     () => tx.$queryRaw<{ premiere: number | null; resolution: number | null }[]>`
       SELECT avg(delai_premiere_reponse_minutes)::float8 AS premiere,
@@ -141,6 +157,9 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
     () => tx.$queryRaw<{ pas: string; n: number }[]>`
       SELECT ${pas('resolue_le')} AS pas, count(*)::int AS n FROM reclamation
       WHERE ${conditionsSql(f, 'resolue_le')} AND sla_respecte IS NOT NULL GROUP BY 1`,
+    () => tx.$queryRaw<{ a_traiter: number; en_attente_client: number; en_alerte: number; en_retard: number }[]>`
+      SELECT ${CHARGE(maintenant)} FROM reclamation
+      WHERE ${conditionsSql(f, null)} AND statut IN ('OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT')`,
   ]);
 
   const nomCategorie = new Map(categories.map((c) => [c.id, c.nom]));
@@ -165,6 +184,7 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
     delaiResolutionMoyenMinutes: moyenne(delais!.resolution),
     tauxRespectSla: taux(totaux!.dans_les_delais, totaux!.resolues),
     tauxResolutionPremierContact: taux(totaux!.premier_contact, totaux!.resolues),
+    charge: { aTraiter: charge!.a_traiter, enAttenteClient: charge!.en_attente_client, enAlerte: charge!.en_alerte, enRetard: charge!.en_retard },
     evolution: {
       regroupement: r,
       points: debuts.map((d) => {

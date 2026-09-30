@@ -3,6 +3,8 @@
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
 Version du 29/09/2026 · **Statut : validé le 29/09/2026** (décisions R1 à R10 retenues telles que proposées).
 
+> Mise à jour du 30/09/2026 : à la demande de Michael, l'agent a désormais son tableau de bord et son export CSV, limités à ses réclamations. Cela révise R3 et R4 ; voir les décisions H10 à H12 de l'[étape 11](etape-11-anti-robot-qr-code.md).
+
 Livrables :
 
 - [`backend/src/modules/reporting/`](../backend/src/modules/reporting/) : les **4 dernières opérations du contrat** — tableau de bord de la banque, export CSV, statistiques de toutes les banques, facturation des SMS. L'API sert maintenant les 83 opérations ;

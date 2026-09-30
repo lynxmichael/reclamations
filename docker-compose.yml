@@ -51,6 +51,10 @@ x-backend: &backend
     URL_PORTAIL: http://{slug}.localhost:${PORTAIL_PORT:-5174}
     # Priment sur un éventuel backend/.env (lancement hors Docker), qui ne sert pas ici
     PORT: "3000"
+    # Rechargement à chaque modification : sous Windows (Docker Desktop), les changements du dossier
+    # partagé n'arrivent pas dans le conteneur ; on les détecte en relisant les fichiers chaque seconde
+    CHOKIDAR_USEPOLLING: "true"
+    CHOKIDAR_INTERVAL: "1000"
   volumes:
     - ./:/depot
     - backend_node_modules:/depot/backend/node_modules
@@ -106,13 +110,20 @@ services:
       - "${MAILPIT_PORT:-8025}:8025"
 
   # Installation du backend (npm ci, client Prisma), rôle de connexion de l'application (créé ou
-  # réaligné sur APP_DB_PASSWORD, même si le volume PostgreSQL est ancien), puis migrations, avant l'API
+  # réaligné sur APP_DB_PASSWORD, même si le volume PostgreSQL est ancien), puis migrations, avant l'API.
+  # npm ci seulement si package-lock.json (ou Node) a changé depuis la dernière installation (repère
+  # dans node_modules) : un « docker compose up -d » ordinaire ne vide pas les modules de l'API et du
+  # worker en marche. Le client Prisma est toujours régénéré (schéma modifié, dossier du dépôt remplacé).
   backend-installation:
     <<: *backend
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "npm ci --no-audit --no-fund && npm run -s roles:dev && npx prisma migrate deploy"
+    command: >-
+      sh -c 'repere="node_modules/.installation-$$( (node -v; cat package-lock.json) | sha256sum | cut -c1-16)";
+      if [ -f "$$repere" ]; then echo "Dépendances du backend à jour" && npx prisma generate;
+      else npm ci --no-audit --no-fund && touch "$$repere"; fi
+      && npm run -s roles:dev && npx prisma migrate deploy'
 
   # API NestJS (étape 7), rechargée à chaque modification du code
   api:
@@ -142,10 +153,14 @@ services:
         condition: service_started
     command: npm run dev:worker
 
-  # Installation des écrans (npm ci), avant les serveurs Vite
+  # Installation des écrans (npm ci), avant les serveurs Vite ; seulement si package-lock.json (ou
+  # Node) a changé depuis la dernière installation, comme pour le backend
   frontend-installation:
     <<: *frontend
-    command: npm ci --no-audit --no-fund
+    command: >-
+      sh -c 'repere="node_modules/.installation-$$( (node -v; cat package-lock.json) | sha256sum | cut -c1-16)";
+      if [ -f "$$repere" ]; then echo "Dépendances des écrans à jour";
+      else npm ci --no-audit --no-fund && touch "$$repere"; fi'
 
   # Console du personnel (étape 8), rechargée à chaque modification ; /api vers l'API
   console:
@@ -153,6 +168,11 @@ services:
     restart: unless-stopped
     environment:
       API_URL: http://api:3000
+      # Dépendances préparées par Vite hors de node_modules : une réinstallation ne les efface pas
+      VITE_CACHE_DIR: /tmp/vite
+      # Modifications du code détectées sous Windows aussi (voir l'API)
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "1000"
     ports:
       - "${CONSOLE_PORT:-5173}:5173"
     depends_on:
@@ -168,6 +188,11 @@ services:
     restart: unless-stopped
     environment:
       API_URL: http://api:3000
+      # Dépendances préparées par Vite hors de node_modules : une réinstallation ne les efface pas
+      VITE_CACHE_DIR: /tmp/vite
+      # Modifications du code détectées sous Windows aussi (voir l'API)
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "1000"
     ports:
       - "${PORTAIL_PORT:-5174}:5174"
     depends_on:
@@ -252,11 +277,13 @@ services:
       && npx playwright test"
 
   # Recette automatique (étape 10, profil « outils ») : toutes les suites, puis le rapport des 11
-  # critères de la section 10 dans docs/recette/rapport.md. Même image que « navigateur », plus les
-  # outils de l'essai de sauvegarde (client PostgreSQL 16, age, rclone, jq) installés au lancement.
+  # critères de la section 10 dans docs/recette/rapport.md. Image construite depuis celle de
+  # « navigateur », plus les outils de l'essai de sauvegarde (recette/Dockerfile : client
+  # PostgreSQL 16, age, jq, rclone 1.75, moto pour le verrouillage des copies de l'étape 12).
   #   docker compose run --rm recette
   recette:
-    image: mcr.microsoft.com/playwright:v1.56.0-noble
+    build: ./recette
+    image: reclamations-recette:local
     profiles: ["outils"]
     working_dir: /depot
     init: true
@@ -276,8 +303,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends postgresql-client-16 age rclone jq >/dev/null
-      && cd /depot/backend && npm ci --no-audit --no-fund && npm run -s roles:dev
+      sh -c "cd /depot/backend && npm ci --no-audit --no-fund && npm run -s roles:dev
       && cd /depot/frontend && npm ci --no-audit --no-fund
       && cd /depot && node recette/recette.mjs"
 

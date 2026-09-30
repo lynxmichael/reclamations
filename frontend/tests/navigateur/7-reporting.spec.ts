@@ -1,6 +1,7 @@
 /**
  * Reporting (étape 9) : tableau de bord et exports CSV de la banque, activité et facturation SMS
- * de la plateforme. Critère 11 : les listes s'exportent en CSV.
+ * de la plateforme ; tableau de bord et exports de l'agent (étape 11). Critère 11 : les listes
+ * s'exportent en CSV.
  */
 import { readFileSync } from 'node:fs';
 import { expect, test, type Download, type Page } from '@playwright/test';
@@ -80,10 +81,25 @@ test.describe.serial('reporting de la banque', () => {
   });
 });
 
-test('un agent n\'a ni tableau de bord ni export', async ({ page }) => {
+test('l\'agent a son tableau de bord et exporte ses réclamations, et seulement les siennes (étape 11)', async ({ page }) => {
   await connecter(page, COMPTES.agent);
-  await expect(page.getByRole('link', { name: 'Tableau de bord' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Exporter en CSV' })).toHaveCount(0);
+  const agent = (lignes: string) => lignes.slice(1).split('\r\n').filter(Boolean).slice(1).map((l) => l.split(';')[7]);
+  await page.getByRole('link', { name: 'Tableau de bord' }).click();
+  await expect(page.getByRole('heading', { name: 'Mon tableau de bord' })).toBeVisible();
+  await expect(page.getByText('Les réclamations qui vous sont assignées.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'En ce moment' })).toBeVisible();
+  await expect(page.getByText('Réclamations assignées')).toBeVisible();
+  await capture(page, '06-tableau-de-bord-agent', 11);
+  const tableau = agent(await texte(await telecharger(page, 'Exporter en CSV')));
+  expect(tableau.length).toBeGreaterThan(0);
+  expect(new Set(tableau)).toEqual(new Set(['Aya Konan']));
+
+  // Depuis sa file : l'export reprend la file affichée, ses réclamations seulement
+  await page.getByRole('link', { name: /Réclamations/ }).click();
+  await expect(page.getByText('Les réclamations qui vous sont assignées.')).toBeVisible();
+  const file = agent(await texte(await telecharger(page, 'Exporter en CSV')));
+  expect(file.length).toBeGreaterThan(0);
+  expect(new Set(file)).toEqual(new Set(['Aya Konan']));
 });
 
 test('plateforme : activité des banques et facturation SMS du mois, exportée en CSV', async ({ page }) => {

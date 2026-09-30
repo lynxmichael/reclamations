@@ -136,7 +136,7 @@ export const ECRANS: Ecran[] = [
     titre: 'Déposer une réclamation',
     format: 'mobile',
     adresse: (b) => site(b, '/d/7K3QX9P2MA'),
-    operations: ['lireFormulaireDepot', 'deposerReclamation'],
+    operations: ['lireFormulaireDepot', 'lireDefiAntiRobot', 'deposerReclamation'],
     roles: 'Client, sans compte : il a scanné le QR code du hall de l\'agence Plateau.',
     notes: [
       'L\'agence vient du QR code : le client n\'a pas à la choisir. Avec un lien web, une liste « Agence concernée » facultative apparaît.',
@@ -190,7 +190,7 @@ export const ECRANS: Ecran[] = [
     titre: 'Suivi par le lien reçu',
     format: 'mobile',
     adresse: (b) => site(b, '/suivi/Qm9uam91ckJhbnF1…'),
-    operations: ['lireSuivi', 'demanderCodeOtp'],
+    operations: ['lireSuivi', 'lireDefiAntiRobot', 'demanderCodeOtp'],
     roles: 'Toute personne qui a le lien de suivi.',
     notes: [
       'Sans code, la page montre seulement le numéro, le statut, la catégorie et les étapes : ni description, ni messages, ni coordonnées.',
@@ -206,7 +206,7 @@ export const ECRANS: Ecran[] = [
     titre: 'Code à usage unique',
     format: 'mobile',
     adresse: (b) => site(b, '/suivi/Qm9uam91ckJhbnF1…/code'),
-    operations: ['verifierCodeOtp', 'demanderCodeOtp'],
+    operations: ['verifierCodeOtp', 'lireDefiAntiRobot', 'demanderCodeOtp'],
     roles: 'Le client, avec le code reçu.',
     notes: [
       '6 chiffres, valable 10 minutes, 5 essais, 3 envois par heure (décision C7).',
@@ -379,9 +379,10 @@ export const ECRANS: Ecran[] = [
     format: 'bureau',
     adresse: () => site(ALPHA, '/back-office/tableau-de-bord'),
     operations: ['lireIndicateurs', 'exporterReclamations'],
-    roles: 'Superviseur et Admin Entreprise.',
+    roles: 'Superviseur et Admin Entreprise, sur toute la banque ; l\'agent a le sien, limité à ses réclamations (étape 11).',
     notes: [
       'Les indicateurs du §6.6, calculés par l\'API sur la période et les filtres choisis.',
+      'En ce moment : les réclamations non clôturées à traiter, en attente du client, en alerte et en retard, quelle que soit la période (étape 11).',
       'Les délais sont en temps ouvré. Le délai de résolution inclut l\'attente du client ; le taux SLA ne compte pas les clôtures forcées sans résolution (S5, S6).',
       'Pas de courbe d\'évolution : le contrat ne fournit pas de série par jour ou par semaine (point à trancher, décision E7).',
     ],

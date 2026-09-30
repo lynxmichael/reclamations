@@ -4,6 +4,8 @@
  *
  *   /d/{code}                 dépôt depuis un QR code ou un lien web (lireFormulaireDepot, deposerReclamation)
  *   /suivi/{jeton}            suivi public, puis code à usage unique (lireSuivi, demanderCodeOtp, verifierCodeOtp)
+ *
+ * Le dépôt et la demande de code exigent un défi anti-robot résolu (lireDefiAntiRobot, étape 11).
  *   /mes-reclamations[/{id}]  espace client, 30 minutes (listerMesReclamations, lireMaReclamation…)
  *   /politique-donnees        politique de données (?point={code} pour les couleurs de la banque)
  */
@@ -11,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { QrCode as IconeQr, MessageSquareText } from 'lucide-react';
+import { useAntiRobot } from '../../api/anti-robot';
 import { ErreurApi, enregistrer, messageErreur } from '../../api/client';
 import { useSessionClientOuverte, type SessionClient } from '../../api/session-client';
 import type { S } from '../../api/types';
@@ -62,10 +65,12 @@ export function PageDepot({ session }: { session: SessionClient }) {
   const [accuse, setAccuse] = useState<{ accuse: S<'AccuseDepot'>; envoiPar: string } | null>(null);
   const cle = useRef(nouvelleCle());
   const navigate = useNavigate();
+  // Défi anti-robot résolu en arrière-plan pendant la saisie (étape 11)
+  const antiRobot = useAntiRobot(appeler);
   useTitre(formulaire.data ? `Réclamation — ${formulaire.data.banque.nom}` : null);
 
   const envoi = useMutation({
-    mutationFn: (v: SaisieDepot & { agenceId: string | null }) =>
+    mutationFn: (v: SaisieDepot & { agenceId: string | null }) => antiRobot.avec((jetonAntiRobot) =>
       appeler('deposerReclamation', {
         chemin: { code },
         entetes: { 'Idempotency-Key': cle.current },
@@ -79,9 +84,10 @@ export function PageDepot({ session }: { session: SessionClient }) {
           ...(v.email.trim() ? { email: v.email } : {}),
           consentement: v.consentement as true,
           versionPolitique: formulaire.data!.politiqueDonnees.version,
+          jetonAntiRobot,
           fichiers: v.fichiers,
         },
-      }),
+      })),
     onSuccess: (a, v) => {
       cle.current = nouvelleCle();
       setErreur(null);
@@ -158,8 +164,11 @@ export function PageSuivi({ session }: { session: SessionClient }) {
     navigate(r ? `/mes-reclamations/${r.id}` : '/mes-reclamations', { replace: true });
   };
 
+  // Chaque code envoyé est un SMS facturé à la banque : défi anti-robot, préparé dès l'affichage
+  const antiRobot = useAntiRobot(appeler);
   const demande = useMutation({
-    mutationFn: (canal?: 'EMAIL') => appeler('demanderCodeOtp', { chemin: { jetonSuivi: jeton }, corps: canal ? { canal } : {} }),
+    mutationFn: (canal?: 'EMAIL') => antiRobot.avec((jetonAntiRobot) =>
+      appeler('demanderCodeOtp', { chemin: { jetonSuivi: jeton }, corps: { jetonAntiRobot, ...(canal ? { canal } : {}) } })),
     onSuccess: (otp) => setCode({ otp, erreur: null }),
     onError: (e) => {
       if (code) setCode({ ...code, erreur: messageErreur(e) });

@@ -48,6 +48,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/defi-anti-robot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Défi anti-robot à résoudre avant un dépôt ou une demande de code
+         * @description Preuve de travail (étape 11), sur le principe d'ALTCHA : trouver l'entier `nombre`, entre 0 et
+         *     `maximum`, tel que SHA-256(`sel` + `nombre`), en hexadécimal, soit égal à `defi`. Le jeton
+         *     à envoyer (`jetonAntiRobot`) est le JSON `{"sel", "nombre", "signature"}` encodé en base64url.
+         *     Un jeton sert une seule fois et expire avec le défi (10 minutes). La difficulté double par
+         *     tranche de 10 défis demandés par une même adresse IP en 10 minutes, jusqu'à 16 fois la
+         *     difficulté de base. Le portail résout le défi en arrière-plan pendant la saisie.
+         */
+        get: operations["lireDefiAntiRobot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/points-depot/{code}/reclamations": {
         parameters: {
             query?: never;
@@ -62,6 +87,8 @@ export interface paths {
          * @description Crée le ticket (numéro `PRÉFIXE-AAAA-NNNNNN`), démarre le SLA et envoie l'accusé de réception
          *     par e-mail et SMS. Idempotent avec l'en-tête `Idempotency-Key` : la même clé renvoie le même
          *     accusé sans créer de doublon. Limité à 5 dépôts par heure et par adresse IP, 3 par téléphone.
+         *     Exige un jeton anti-robot (`lireDefiAntiRobot`) : absent, 400 ; faux, expiré ou déjà
+         *     utilisé, 422 `ANTI_ROBOT_REFUSE`. Un renvoi avec la même clé d'idempotence ne le consomme pas.
          */
         post: operations["deposerReclamation"];
         delete?: never;
@@ -101,7 +128,8 @@ export interface paths {
         put?: never;
         /**
          * Recevoir un code OTP par SMS ou e-mail
-         * @description Code à 6 chiffres, valable 10 minutes. 3 envois par heure et par réclamation.
+         * @description Code à 6 chiffres, valable 10 minutes. 3 envois par heure et par réclamation. Exige un jeton
+         *     anti-robot (`lireDefiAntiRobot`), comme le dépôt : chaque SMS est facturé à la banque.
          */
         post: operations["demanderCodeOtp"];
         delete?: never;
@@ -463,7 +491,8 @@ export interface paths {
          *     priorité, catégorie, agence, canal, agent, échéance, délais, SLA respecté, premier contact,
          *     réouvertures, escalade, mode de clôture. Ni description, ni nom ni coordonnées du client.
          *     50 000 lignes au plus (sinon 400 EXPORT_TROP_VOLUMINEUX). Chaque export est inscrit au
-         *     journal d'audit de la banque.
+         *     journal d'audit de la banque. Un agent n'exporte que les réclamations qui lui sont assignées
+         *     (étape 11).
          */
         get: operations["exporterReclamations"];
         put?: never;
@@ -667,6 +696,8 @@ export interface paths {
          *     fuseau de la banque, jusqu'à maintenant). Délais en minutes ouvrées. Les taux portent sur
          *     les réclamations résolues (et non rouvertes depuis) parmi celles de la période.
          *     `evolution` compte les réclamations déposées et résolues par jour, semaine ou mois (étape 9).
+         *     `charge` compte les réclamations non clôturées à cet instant, hors période (étape 11).
+         *     Pour un agent (étape 11), tout porte sur les réclamations qui lui sont assignées, comme sa file.
          */
         get: operations["lireIndicateurs"];
         put?: never;
@@ -1524,6 +1555,32 @@ export interface components {
                 types: string[];
             };
         };
+        /** @description Défi de preuve de travail (étape 11), champs d'ALTCHA en français */
+        DefiAntiRobot: {
+            /** @constant */
+            algorithme: "SHA-256";
+            /** @description SHA-256(sel + nombre) en hexadécimal */
+            defi: string;
+            /**
+             * @description Aléa et heure d'expiration (secondes Unix)
+             * @example 9f86d081884c7d659a2feaa0?expire=1790000000
+             */
+            sel: string;
+            /**
+             * @description Le nombre cherché est entre 0 et maximum
+             * @example 100000
+             */
+            maximum: number;
+            /** @description HMAC-SHA-256 du défi par l'API */
+            signature: string;
+            expireLe: components["schemas"]["Horodatage"];
+        };
+        /**
+         * @description Défi résolu : JSON `{"sel", "nombre", "signature"}` encodé en base64url (lireDefiAntiRobot).
+         *     À usage unique, valable jusqu'à l'expiration du défi.
+         * @example eyJzZWwiOiI5Zjg2ZDA4MTg4NGM3ZDY1OWEyZmVhYTA_ZXhwaXJlPTE3OTAwMDAwMDAiLCJub21icmUiOjQyLCJzaWduYXR1cmUiOiIuLi4ifQ
+         */
+        JetonAntiRobot: string;
         /** @description Un e-mail ou un téléphone au moins (arbitrage 1) */
         DepotReclamation: {
             /** Format: uuid */
@@ -1550,8 +1607,7 @@ export interface components {
             consentement: true;
             /** @example 2026-09 */
             versionPolitique: string;
-            /** @description Jeton du mécanisme anti-robot (à choisir, point ouvert) */
-            jetonAntiRobot?: string;
+            jetonAntiRobot: components["schemas"]["JetonAntiRobot"];
             fichiers?: components["schemas"]["Fichiers"];
         } | unknown | unknown;
         AccuseDepot: {
@@ -1581,6 +1637,7 @@ export interface components {
             etapes: components["schemas"]["EtapeSuivi"][];
         };
         DemandeOtp: {
+            jetonAntiRobot: components["schemas"]["JetonAntiRobot"];
             /** @description Par défaut le SMS si le client a un téléphone, sinon l'e-mail */
             canal?: components["schemas"]["CanalOtp"];
         };
@@ -1873,7 +1930,20 @@ export interface components {
             tauxRespectSla: number | null;
             /** @description Sans attente client, sans escalade, sans réouverture */
             tauxResolutionPremierContact: number | null;
+            charge: components["schemas"]["Charge"];
             evolution: components["schemas"]["Evolution"];
+        };
+        /**
+         * @description Réclamations non clôturées à cet instant, quelle que soit la période (étape 11) ; les autres
+         *     filtres s'appliquent. En alerte : seuil d'alerte de la banque franchi, échéance pas encore
+         *     passée. En retard : mêmes règles que la file « En retard ».
+         */
+        Charge: {
+            /** @description Ouvertes ou en cours */
+            aTraiter: number;
+            enAttenteClient: number;
+            enAlerte: number;
+            enRetard: number;
         };
         /**
          * @description Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)
@@ -2493,6 +2563,27 @@ export interface operations {
             429: components["responses"]["TropDeRequetes"];
         };
     };
+    lireDefiAntiRobot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Défi signé */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefiAntiRobot"];
+                };
+            };
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     deposerReclamation: {
         parameters: {
             query?: never;
@@ -2566,7 +2657,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["DemandeOtp"];
             };

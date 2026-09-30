@@ -42,6 +42,8 @@ x-application: &application
     SMS_URL: ${SMS_URL:-}
     SMS_CLE: ${SMS_CLE:-}
     SMS_EXPEDITEUR: ${SMS_EXPEDITEUR:-Reclamation}
+    # Difficulté de base de l'anti-robot du portail (étape 11)
+    ANTI_ROBOT_MAXIMUM: ${ANTI_ROBOT_MAXIMUM:-100000}
   logging: *journaux
   networks: [interne]
 
@@ -62,6 +64,8 @@ x-sauvegarde: &sauvegarde
     SAUVEGARDE_MOIS: ${SAUVEGARDE_MOIS:-12}
     SAUVEGARDE_PING_URL: ${SAUVEGARDE_PING_URL:-}
     SAUVEGARDE_S3_BUCKET: ${SAUVEGARDE_S3_BUCKET:-}
+    # Copies hors du VPS verrouillées (étape 12) : COMPLIANCE, GOVERNANCE ou aucun
+    SAUVEGARDE_VERROU: ${SAUVEGARDE_VERROU:-COMPLIANCE}
     RCLONE_CONFIG_DISTANT_TYPE: s3
     RCLONE_CONFIG_DISTANT_PROVIDER: Other
     RCLONE_CONFIG_DISTANT_ENDPOINT: ${SAUVEGARDE_S3_ENDPOINT:-}

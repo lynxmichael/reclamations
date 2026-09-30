@@ -967,10 +967,14 @@ export class Moteur {
 
   /* -------------------------------------------------------------- Indicateurs (§6.6) */
 
-  indicateurs(jours = 30): S<'Indicateurs'> {
+  /** Toute la banque ; pour un agent (étape 11), ses réclamations seulement. */
+  indicateurs(jours = 30, agentId?: string): S<'Indicateurs'> {
     const au = this.maintenant;
     const du = new Date(au.getTime() - jours * 86_400_000);
-    const periode = this.tickets.filter((t) => t.creeLe >= du && t.creeLe <= au);
+    const siens = this.tickets.filter((t) => !agentId || t.agentId === agentId);
+    const periode = siens.filter((t) => t.creeLe >= du && t.creeLe <= au);
+    const actifs = siens.filter((t) => t.statut !== 'RESOLUE' && t.statut !== 'CLOTUREE');
+    const etats = actifs.map((t) => this.chrono(t));
     const compte = <K extends string>(cle: (t: Ticket) => K, libelle: (k: K) => string) => {
       const m = new Map<K, number>();
       for (const t of periode) m.set(cle(t), (m.get(cle(t)) ?? 0) + 1);
@@ -995,21 +999,28 @@ export class Moteur {
       tauxResolutionPremierContact: resolues.length
         ? resolues.filter((t) => !t.aEteQuestionne && !t.escaladeeVersId && t.nbReouvertures === 0).length / resolues.length
         : null,
-      evolution: this.evolution(du, au),
+      charge: {
+        aTraiter: actifs.filter((t) => t.statut === 'OUVERTE' || t.statut === 'EN_COURS').length,
+        enAttenteClient: actifs.filter((t) => t.statut === 'EN_ATTENTE_CLIENT').length,
+        enAlerte: etats.filter((c) => c.etat === 'ALERTE').length,
+        enRetard: etats.filter((c) => c.etat === 'DEPASSE').length,
+      },
+      evolution: this.evolution(du, au, agentId),
     };
   }
 
   /** Courbe par jour (étape 9) : déposées ce jour-là, résolues ce jour-là (quelle que soit la date de dépôt). */
-  private evolution(du: Date, au: Date): S<'Evolution'> {
+  private evolution(du: Date, au: Date, agentId?: string): S<'Evolution'> {
     const JOUR = 86_400_000;
     const points: S<'Evolution'>['points'] = [];
+    const tickets = this.tickets.filter((t) => !agentId || t.agentId === agentId);
     // Fuseau de la banque de démonstration : Abidjan, à l'heure universelle
     for (let d = Math.floor(du.getTime() / JOUR) * JOUR; d < au.getTime(); d += JOUR) {
       const dans = (x: Date | null | undefined) => !!x && x.getTime() >= d && x.getTime() < d + JOUR;
       points.push({
         debut: new Date(d).toISOString().replace('.000Z', 'Z'),
-        deposees: this.tickets.filter((t) => dans(t.creeLe)).length,
-        resolues: this.tickets.filter((t) => t.slaRespecte !== null && dans(t.resolueLe)).length,
+        deposees: tickets.filter((t) => dans(t.creeLe)).length,
+        resolues: tickets.filter((t) => t.slaRespecte !== null && dans(t.resolueLe)).length,
       });
     }
     return { regroupement: 'JOUR', points };

@@ -20,7 +20,7 @@ const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle:
     titre: null,
     liens: [
       { cle: 'reclamations', libelle: 'Réclamations', icone: Inbox, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
-      { cle: 'tableau', libelle: 'Tableau de bord', icone: ChartColumn, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      { cle: 'tableau', libelle: 'Tableau de bord', icone: ChartColumn, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
     ],
   },
   {

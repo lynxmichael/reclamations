@@ -1,9 +1,10 @@
 /**
- * Reporting (étape 9) : tableau de bord de la banque (lireIndicateurs, export CSV) et activité de
- * la plateforme (lireIndicateursPlateforme, lireFacturationSms). Les filtres sont dans l'adresse.
+ * Reporting (étape 9) : tableau de bord de la banque ou, pour un agent, le sien (étape 11)
+ * (lireIndicateurs, export CSV) et activité de la plateforme (lireIndicateursPlateforme,
+ * lireFacturationSms). Les filtres sont dans l'adresse.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { enregistrer, messageErreur, type FichierRecu } from '../../api/client';
 import { TableauDeBord } from '../../ecrans/back-office/TableauDeBord';
@@ -14,7 +15,7 @@ import { PERIODES, bornes, derniersMois, nomMois, type CodePeriode } from '../..
 import { useAnnoncer } from '../commun/Annonces';
 import { Chargement, ErreurChargement } from '../commun/Etats';
 import { INTERVALLE_MS } from './Cadre';
-import { useConsole, useParametres } from './contexte';
+import { ROUTES_BANQUE, useConsole, useParametres } from './contexte';
 
 function useTitre(titre: string) {
   useEffect(() => {
@@ -45,7 +46,8 @@ export function useExport() {
 const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web' } as const;
 
 export function PageTableau() {
-  const { appeler } = useConsole();
+  const { appeler, moi } = useConsole();
+  const navigate = useNavigate();
   const parametres = useParametres();
   const [params, setParams] = useSearchParams();
   useTitre('Tableau de bord');
@@ -82,6 +84,9 @@ export function PageTableau() {
   return (
     <TableauDeBord
       indicateurs={indicateurs.data}
+      // Étape 11 : l'agent a le sien, limité par l'API aux réclamations qui lui sont assignées
+      agent={moi.role === 'AGENT'}
+      surOuvrirRetard={() => navigate(`${ROUTES_BANQUE.reclamations}?file=en-retard`)}
       fuseau={fuseau}
       chargement={indicateurs.isFetching && indicateurs.isPlaceholderData}
       exportEnCours={enCours}

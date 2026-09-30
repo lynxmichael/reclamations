@@ -1,6 +1,7 @@
 /**
  * Portail client, cas complémentaires : dépôt avec un e-mail seulement (code reçu par e-mail),
- * message du client avec une pièce jointe, contestation qui rouvre la réclamation, QR code inconnu.
+ * anti-robot résolu en arrière-plan (étape 11), message du client avec une pièce jointe,
+ * contestation qui rouvre la réclamation, QR code inconnu.
  */
 import { devices, expect, test, type Browser, type Page } from '@playwright/test';
 import { COMPTES, QR_ALPHA, capture, connecter, dernierMessage, portail, saisirCode } from './outils';
@@ -25,13 +26,22 @@ async function ouvrir(page: Page) {
 test.describe.serial('portail : e-mail seul, messages, contestation', () => {
   test('dépôt avec un e-mail seulement ; le code arrive par e-mail', async ({ browser }) => {
     const page = await telephone(browser);
+    // Anti-robot (étape 11) : le défi est demandé dès l'ouverture et résolu dans un Web Worker
+    // (autorisé par la CSP de production), pendant que le client remplit le formulaire
+    const workers: string[] = [];
+    page.on('worker', (w) => workers.push(w.url()));
+    const defi = page.waitForResponse((r) => r.url().includes('/public/defi-anti-robot'));
     await page.goto(`${portail('alpha')}/d/${QR_ALPHA}`);
+    expect((await defi).status()).toBe(200);
+    await expect.poll(() => workers.some((u) => u.includes('anti-robot.worker'))).toBe(true);
     await page.getByText('Virement et transfert', { exact: true }).click();
     await page.getByLabel('Votre réclamation').fill('Mon virement du 20 septembre vers la BICICI n\'est jamais arrivé.');
     await page.getByLabel('Nom et prénom').fill('Adjoua Yao');
     await page.getByLabel('E-mail').fill(EMAIL);
     await page.getByRole('checkbox').check();
+    const envoi = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/reclamations'));
     await page.getByRole('button', { name: 'Envoyer ma réclamation' }).click();
+    expect((await envoi).postDataBuffer()?.toString('latin1')).toMatch(/name="jetonAntiRobot"\r\n\r\n[A-Za-z0-9_-]{40,}\r\n/);
     await expect(page.getByText(/par e-mail\. Gardez-les/)).toBeVisible();
     numero = (await page.locator('.select-all').textContent())!.trim();
     await page.getByRole('button', { name: 'Suivre ma réclamation' }).click();

@@ -40,6 +40,9 @@ export default defineConfig(({ mode, isPreview }) => {
     return {
       root: ici(`./${application}`),
       base: '/',
+      // Docker : dépendances préparées hors de node_modules (VITE_CACHE_DIR=/tmp/vite), pour qu'un
+      // « npm ci » lancé pendant que le serveur tourne ne les efface pas (écran blanc, erreurs 504)
+      cacheDir: process.env.VITE_CACHE_DIR || undefined,
       plugins,
       resolve: { alias },
       build: {

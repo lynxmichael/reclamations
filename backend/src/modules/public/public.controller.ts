@@ -14,6 +14,11 @@ export class PublicControleur {
     return this.service.formulaire(e.chemin.code);
   }
 
+  @Operation('lireDefiAntiRobot')
+  defiAntiRobot(@AppelCourant() appel: Appel) {
+    return this.service.defiAntiRobot(appel);
+  }
+
   @Operation('deposerReclamation')
   deposer(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
     return this.service.deposer(e.chemin.code, e.corps, e.fichiers, e.entetes['idempotency-key'], appel);
@@ -26,7 +31,8 @@ export class PublicControleur {
 
   @Operation('demanderCodeOtp')
   demanderCode(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
-    return this.service.demanderCode(e.chemin.jetonSuivi, (e.corps as { canal?: 'SMS' | 'EMAIL' }).canal, appel);
+    const corps = e.corps as { canal?: 'SMS' | 'EMAIL'; jetonAntiRobot: string };
+    return this.service.demanderCode(e.chemin.jetonSuivi, corps.canal, corps.jetonAntiRobot, appel);
   }
 
   @Operation('verifierCodeOtp')

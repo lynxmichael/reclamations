@@ -14,6 +14,7 @@ import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
 import { traceDe, type Appel, type FichierRecu } from '../../infrastructure/contrat/appel.js';
 import { introuvable, invalide, Probleme, type ErreurChamp } from '../../infrastructure/contrat/probleme.js';
 import { MAX_FICHIERS, MAX_OCTETS, TYPES_PIECES } from '../../infrastructure/fichiers/fichiers.js';
+import { AntiRobot, type Defi } from '../../infrastructure/securite/anti-robot.js';
 import { Idempotence } from '../../infrastructure/securite/idempotence.js';
 import { DUREE_CLIENT, Jetons } from '../../infrastructure/securite/jetons.js';
 import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
@@ -36,6 +37,7 @@ export class ServicePublic {
     @Inject(CycleDeVie) private readonly cycle: CycleDeVie,
     @Inject(Limiteur) private readonly limiteur: Limiteur,
     @Inject(Idempotence) private readonly idempotence: Idempotence,
+    @Inject(AntiRobot) private readonly antiRobot: AntiRobot,
     @Inject(Jetons) private readonly jetons: Jetons,
     @Inject(STOCKAGE) private readonly stockage: Stockage,
     @Inject(CONFIGURATION) private readonly config: Configuration,
@@ -71,9 +73,17 @@ export class ServicePublic {
     };
   }
 
+  /** Défi anti-robot (étape 11) : plus difficile si cette adresse IP en demande beaucoup. */
+  async defiAntiRobot(appel: Appel): Promise<Defi> {
+    return this.antiRobot.defi(appel.ip);
+  }
+
   async deposer(code: string, corps: Record<string, unknown>, recus: readonly FichierRecu[], cleIdempotence: string | undefined, appel: Appel): Promise<S<'AccuseDepot'>> {
+    const d = corps as { categorieId: string; agenceId?: string; description: string; nom: string; email?: string; telephone?: string; versionPolitique: string; jetonAntiRobot: string };
+    // Anti-robot (étape 11) : vérifié avant tout accès à la base, consommé seulement au dépôt réel
+    // (un formulaire à corriger garde son jeton ; un renvoi avec la même clé ne le redemande pas)
+    const defi = this.antiRobot.verifier(d.jetonAntiRobot);
     const p = await this.point(code);
-    const d = corps as { categorieId: string; agenceId?: string; description: string; nom: string; email?: string; telephone?: string; versionPolitique: string };
 
     // Coordonnées : les erreurs rejoignent celles du formulaire, champ par champ
     const erreurs: ErreurChamp[] = [];
@@ -105,6 +115,7 @@ export class ServicePublic {
       .digest('hex');
 
     const { resultat } = await this.idempotence.executer(`depot:${code}`, cleIdempotence, empreinteRequete, async () => {
+      await this.antiRobot.consommer(defi);
       // Limites de débit (décision C9) : seuls comptent les dépôts réels, pas les formulaires à corriger ni les renvois
       await this.limiteur.consommer(LIMITES.depotParIp, appel.ip, 'Trop de réclamations envoyées depuis cette connexion : réessayez dans une heure');
       if (telephone) await this.limiteur.consommer(LIMITES.depotParTelephone, `${p.tenantId}:${telephone}`, 'Trop de réclamations pour ce numéro : réessayez dans une heure');
@@ -159,7 +170,9 @@ export class ServicePublic {
     return createHmac('sha256', this.config.cleOtp).update(`${clientId}:${code}`).digest('hex');
   }
 
-  async demanderCode(jetonSuivi: string, canalDemande: 'SMS' | 'EMAIL' | undefined, appel: Appel): Promise<S<'OtpEnvoye'>> {
+  async demanderCode(jetonSuivi: string, canalDemande: 'SMS' | 'EMAIL' | undefined, jetonAntiRobot: string, appel: Appel): Promise<S<'OtpEnvoye'>> {
+    // Chaque SMS est facturé à la banque : un défi résolu par demande (étape 11)
+    await this.antiRobot.exiger(jetonAntiRobot);
     const ref = await this.ticketParJeton(jetonSuivi);
     await this.limiteur.consommer(LIMITES.otpParReclamation, ref.id, 'Trois codes envoyés en une heure : réessayez plus tard');
     const maintenant = this.horloge();

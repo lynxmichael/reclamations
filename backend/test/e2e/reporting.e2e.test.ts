@@ -1,6 +1,6 @@
 /**
  * Reporting (étape 9) : tableau de bord de la banque, export CSV, statistiques et facturation
- * SMS de la plateforme.
+ * SMS de la plateforme ; tableau de bord et export de l'agent, limités à ses réclamations (étape 11).
  * Recette §10, critère 8 : le taux de résolution au premier contact suit la définition du §6.6
  * (résolue sans attente du client, sans escalade, sans réouverture) ; critère 11 : les listes
  * s'exportent en CSV.
@@ -50,7 +50,8 @@ beforeAll(async () => {
   client = new ClientApi(api.url);
   bd = new BaseDonnees(api.config.baseDeDonneesUrl);
   for (const [cle, email] of Object.entries({
-    aya: j.alpha.comptes.aya.email, serge: j.alpha.comptes.serge.email, fatou: j.alpha.comptes.fatou.email, sa: j.superAdmin.email,
+    aya: j.alpha.comptes.aya.email, mamadou: j.alpha.comptes.mamadou.email, serge: j.alpha.comptes.serge.email,
+    fatou: j.alpha.comptes.fatou.email, sa: j.superAdmin.email,
   })) jt[cle] = (await connecter(client, email)).jeton;
 
   // Catégorie du scénario ; son nom commence par « = » : l'export doit la neutraliser
@@ -154,14 +155,13 @@ describe('tableau de bord de la banque (lireIndicateurs)', () => {
     for (const p of semaines.corps.evolution.points) expect(new Date(p.debut).getUTCDay()).toBe(1);
   });
 
-  it('période invalide, pas trop fin, rôle non autorisé', async () => {
+  it('période invalide, pas trop fin', async () => {
     const inverse = await client.appeler('lireIndicateurs', { jeton: jt.serge, requete: { du: '2026-09-10T00:00:00Z', au: '2026-09-01T00:00:00Z' } });
     expect(inverse.statut).toBe(400);
     expect(inverse.corps.erreurs[0].champ).toBe('au');
     const fin = await client.appeler('lireIndicateurs', { jeton: jt.serge, requete: { du: '2024-01-01T00:00:00Z', au: '2026-01-01T00:00:00Z', regroupement: 'JOUR' } });
     expect(fin.statut).toBe(400);
     expect(fin.corps.erreurs[0].champ).toBe('regroupement');
-    expect((await client.appeler('lireIndicateurs', { jeton: jt.aya })).statut).toBe(403);
   });
 });
 
@@ -208,9 +208,6 @@ describe('export CSV (critère 11)', () => {
     expect(ligne.donnees).toEqual({ lignes: 5, filtres: { file: 'toutes', categorieId: categorie, recherche: true } });
   });
 
-  it('réservé au superviseur et à l\'Admin Entreprise', async () => {
-    expect((await client.appeler('exporterReclamations', { jeton: jt.aya })).statut).toBe(403);
-  });
 });
 
 describe('plateforme (Super Admin)', () => {
@@ -255,5 +252,67 @@ describe('plateforme (Super Admin)', () => {
     // Un mois antérieur à la création des banques : liste vide
     expect((await client.appeler('lireFacturationSms', { jeton: jt.sa, requete: { mois: '2020-01' } })).corps.banques).toEqual([]);
     expect((await client.appeler('lireFacturationSms', { jeton: jt.sa, requete: { mois: '2026-13' } })).statut).toBe(400);
+  });
+});
+
+describe('tableau de bord et export de l\'agent (étape 11)', () => {
+  const indicateurs = async (jeton: string) =>
+    (await client.appeler('lireIndicateurs', { jeton, requete: { categorieId: categorie, du: debutTest.toISOString() } })).corps;
+
+  it('l\'agent voit ses réclamations seulement ; un autre agent n\'en voit aucune', async () => {
+    const aya = await indicateurs(jt.aya);
+    // Les 4 réclamations assignées à Aya ; la 5e, jamais assignée, n'est que dans les chiffres de la banque
+    expect(aya.total).toBe(4);
+    expect(Object.fromEntries(aya.parStatut.map((v: { cle: string; total: number }) => [v.cle, v.total])))
+      .toEqual({ OUVERTE: 0, EN_COURS: 0, EN_ATTENTE_CLIENT: 0, RESOLUE: 4, CLOTUREE: 0 });
+    expect(aya.tauxResolutionPremierContact).toBe(0.25);
+    expect((await indicateurs(jt.serge)).total).toBe(5);
+    const mamadou = await indicateurs(jt.mamadou);
+    expect(mamadou.total).toBe(0);
+    expect(mamadou.evolution.points.every((p: { deposees: number; resolues: number }) => p.deposees + p.resolues === 0)).toBe(true);
+  });
+
+  it('charge du moment : à traiter, en attente du client, en alerte, en retard, quelle que soit la période', async () => {
+    const alerte = await deposer();
+    const retard = await deposer();
+    for (const t of [alerte, retard]) await action('assignerReclamation', jt.serge, t.id, { agentId: j.alpha.comptes.aya.id });
+    await action('prendreEnCharge', jt.aya, retard.id);
+    const maintenant = Date.now();
+    await bd.enSysteme((tx) => tx.reclamation.update({
+      where: { id: alerte.id }, data: { alertePreventiveLe: new Date(maintenant - 60_000), echeanceSlaLe: new Date(maintenant + 3_600_000) },
+    }));
+    await bd.enSysteme((tx) => tx.reclamation.update({
+      where: { id: retard.id }, data: { alertePreventiveLe: new Date(maintenant - 7_200_000), echeanceSlaLe: new Date(maintenant - 3_600_000) },
+    }));
+
+    expect((await indicateurs(jt.aya)).charge).toEqual({ aTraiter: 2, enAttenteClient: 0, enAlerte: 1, enRetard: 1 });
+    // La banque compte aussi la réclamation jamais assignée
+    expect((await indicateurs(jt.serge)).charge).toEqual({ aTraiter: 3, enAttenteClient: 0, enAlerte: 1, enRetard: 1 });
+    expect((await indicateurs(jt.mamadou)).charge).toEqual({ aTraiter: 0, enAttenteClient: 0, enAlerte: 0, enRetard: 0 });
+    // Hors période : la charge reste celle du moment
+    const avant = await client.appeler('lireIndicateurs', { jeton: jt.aya, requete: { categorieId: categorie, du: '2025-01-01T00:00:00Z', au: '2025-02-01T00:00:00Z' } });
+    expect(avant.corps.total).toBe(0);
+    expect(avant.corps.charge.enRetard).toBe(1);
+    // Même définition que la file « En retard » de l'agent
+    const file = await client.appeler('listerReclamations', { jeton: jt.aya, requete: { file: 'en-retard', categorieId: categorie } });
+    expect(file.corps.donnees.map((t: { id: string }) => t.id)).toEqual([retard.id]);
+  });
+
+  it('l\'agent exporte ses réclamations seulement, et l\'export est inscrit au journal', async () => {
+    const lire = (octets: Buffer) => octets.toString('utf8').slice(1).split('\r\n').filter(Boolean).map((l) => l.split(';'));
+    const r = await client.appeler('exporterReclamations', { jeton: jt.aya, requete: { categorieId: categorie } });
+    expect(r.statut).toBe(200);
+    const lignes = lire(r.octets).slice(1);
+    const file = await client.appeler('listerReclamations', { jeton: jt.aya, requete: { categorieId: categorie, parPage: 100 } });
+    expect(new Set(lignes.map((l) => l[0]))).toEqual(new Set(file.corps.donnees.map((t: { numero: string }) => t.numero)));
+    expect(lignes).toHaveLength(6);
+    for (const l of lignes) expect(l[COLONNES_EXPORT.indexOf('Agent')]).toBe('Aya Konan');
+    expect(lignes.map((l) => l[0])).not.toContain(tickets.ouverte.numero);
+    // Demander les réclamations d'un autre agent ne change rien
+    const autre = await client.appeler('exporterReclamations', { jeton: jt.mamadou, requete: { categorieId: categorie, agentId: j.alpha.comptes.aya.id } });
+    expect(lire(autre.octets)).toHaveLength(1);
+    const ligne = await bd.enSysteme((tx) => tx.journalAudit.findFirstOrThrow({ where: { action: 'reclamation.export', tenantId: j.alpha.id }, orderBy: { rang: 'desc' } }));
+    expect(ligne.acteurId).toBe(j.alpha.comptes.mamadou.id);
+    expect(ligne.donnees).toMatchObject({ lignes: 0 });
   });
 });

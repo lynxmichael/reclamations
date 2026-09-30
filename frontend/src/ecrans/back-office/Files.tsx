@@ -134,7 +134,8 @@ export function Files({
             {agent ? 'Les réclamations qui vous sont assignées.' : serveur ? 'Toute la banque, les plus urgentes à portée de main.' : `Toute la banque : ${page.pagination.total} réclamations sur la période.`}
           </p>
         </div>
-        {!agent && (!serveur || surExporter) && (
+        {/* Étape 11 : l'agent exporte aussi, ses réclamations seulement */}
+        {(!serveur || surExporter) && (
           <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter} disabled={exportEnCours}>{exportEnCours ? 'Export…' : 'Exporter en CSV'}</Bouton>
         )}
       </div>

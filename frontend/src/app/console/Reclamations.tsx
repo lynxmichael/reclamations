@@ -120,7 +120,8 @@ export function PageFiles() {
       surCriteres={(c) => setParams(ecrireCriteres(c))}
       chargement={page.isFetching && page.isPlaceholderData}
       // Étape 9 : les réclamations de la file et des filtres affichés, toutes pages confondues
-      surExporter={moi.role === 'AGENT' ? undefined : () => void exporter(() => appeler('exporterReclamations', {
+      // (un agent, depuis l'étape 11 : les siennes seulement, comme sa file)
+      surExporter={() => void exporter(() => appeler('exporterReclamations', {
         requete: {
           file: criteres.file,
           statut: criteres.statut ? [criteres.statut] : undefined,

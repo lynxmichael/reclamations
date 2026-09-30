@@ -265,11 +265,18 @@ export function Activation({
       <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
         Scannez ce code avec une application d'authentification (Google Authenticator, Microsoft Authenticator…), puis saisissez le code qu'elle affiche.
       </p>
-      <div className="mt-5 flex items-center gap-5 rounded-xl border border-trait p-4">
-        <QrCode texte={enrolement.otpauthUrl} taille={132} />
-        <div className="min-w-0 text-sm">
-          <p className="text-encre-3">Saisie manuelle de la clé</p>
-          <p className="chiffres mt-1 font-bold tracking-wider break-all text-encre" data-secret={enrolement.secret}>{groupes.join(' ')}</p>
+      <div className="mt-5 rounded-xl border border-trait p-4">
+        {/* Assez grand pour être lu de loin par un téléphone d'entrée de gamme (étape 11) */}
+        <div className="flex justify-center">
+          <QrCode texte={enrolement.otpauthUrl} taille={216} libelle="QR code d'activation de la double authentification (clé à saisir ci-dessous)" />
+        </div>
+        <p className="mt-2 text-center text-sm text-encre-2">Dans l'application : « + », puis « Scanner un code QR ».</p>
+        <div className="mt-4 border-t border-trait pt-3 text-sm">
+          <p className="text-encre-3">Impossible de scanner ? Choisissez « Saisir une clé de configuration » et recopiez :</p>
+          {/* Groupes de 4 jamais coupés : la clé se recopie groupe par groupe */}
+          <p className="chiffres mt-1 flex flex-wrap gap-x-2 font-bold tracking-wider text-encre" data-secret={enrolement.secret}>
+            {groupes.map((g, i) => <span key={i}>{g}</span>)}
+          </p>
         </div>
       </div>
       <AlerteErreur erreur={erreur} />
