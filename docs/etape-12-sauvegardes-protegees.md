@@ -1,7 +1,7 @@
 # Étape 12 — Sauvegardes protégées contre l'effacement
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 30/09/2026 · **Statut : à valider** (décisions V1 à V8).
+Version du 30/09/2026 · **Statut : validé le 30/09/2026** (décisions V1 à V8 retenues telles que proposées).
 
 Deuxième des trois étapes de la préparation de la mise en production (voir l'[étape 11](etape-11-anti-robot-qr-code.md)).
 
@@ -119,6 +119,6 @@ Le chiffrement (age, clés privées hors du VPS), le contenu et le format des ar
 
 Étape 13, répétition locale complète du déploiement sur le PC Windows : HTTPS local, S3 local avec verrouillage, sauvegarde et restauration, mise à jour et retour arrière, démonstration, contrôle du déploiement. Les scripts se lancent depuis PowerShell.
 
-Pour valider : répondre « suivant », ou indiquer les décisions à changer.
+Suite : [étape 13, répétition locale du déploiement](etape-13-repetition-locale.md).
 
 Sources : [Contabo, verrouillage des objets (base de connaissances, juillet 2024)](https://contabo.com/blog/de/kb/103000282887-wie-verwende-ich-die-objektsperre-fuer-dateien-in-meinem-objektspeicher/) · [rclone, journal des versions (verrouillage des objets S3 depuis la 1.70)](https://rclone.org/changelog/)

@@ -18,8 +18,8 @@ Référence : cahier des charges consolidé (version du 25/09/2026).
 | 9 | Reporting et notifications | Validé | [`backend/src/modules/reporting/`](backend/src/modules/reporting/) · [`frontend/src/app/console/Reporting.tsx`](frontend/src/app/console/Reporting.tsx) · [note](docs/etape-9-reporting-notifications.md) |
 | 10 | Tests et déploiement | Validé | [recette automatique](recette/recette.mjs) · [rapport](docs/recette/rapport.md) · [cahier de recette](docs/recette/cahier-de-recette.md) · [guide d'exploitation](docs/exploitation.md) · [`deploiement/`](deploiement/) · [`docker/sauvegarde/`](docker/sauvegarde/) · [note](docs/etape-10-tests-deploiement.md) |
 | 11 | Anti-robot du dépôt, QR code d'activation agrandi, tableau de bord de l'agent | Validé | [`backend/src/infrastructure/securite/anti-robot.ts`](backend/src/infrastructure/securite/anti-robot.ts) · [`frontend/src/api/anti-robot.ts`](frontend/src/api/anti-robot.ts) · [note](docs/etape-11-anti-robot-qr-code.md) |
-| 12 | Sauvegardes protégées contre l'effacement | À valider | [`docker/sauvegarde/`](docker/sauvegarde/) · [guide d'exploitation, partie 7](docs/exploitation.md#7-sauvegardes) · [note](docs/etape-12-sauvegardes-protegees.md) |
-| 13 | Répétition locale complète du déploiement | À venir | |
+| 12 | Sauvegardes protégées contre l'effacement | Validé | [`docker/sauvegarde/`](docker/sauvegarde/) · [guide d'exploitation, partie 7](docs/exploitation.md#7-sauvegardes) · [note](docs/etape-12-sauvegardes-protegees.md) |
+| 13 | Répétition locale complète du déploiement | À valider | [`deploiement/repetition.ps1`](deploiement/repetition.ps1) · [guide d'exploitation, partie 13](docs/exploitation.md#13-répétition-locale-sur-un-poste-windows) · [note](docs/etape-13-repetition-locale.md) |
 
 ## Structure
 
@@ -28,14 +28,19 @@ contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (84 opérations)
 docker-compose.yml                    développement : PostgreSQL 16, Redis 8, Mailpit, API, worker, écrans, outils
 docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis, sauvegarde
 docker-compose.demo.yml               environnement de démonstration (second serveur) : surcharge de la production
+docker-compose.repetition.yml         répétition locale sur un poste : autorité locale, Mailpit, S3 simulé (étape 13)
 .env.production.example               variables et secrets de la production (.env.demo.example : démonstration)
 deploiement/                          secrets, contrôle d'un déploiement, mise à jour et retour arrière, remise à zéro de la démo
+deploiement/repetition.ps1            répétition locale complète depuis PowerShell (repetition.sh dans le conteneur d'outils)
+deploiement/outils.ps1                les scripts bash de deploiement/ depuis Windows, dans un conteneur (outils/Dockerfile)
 recette/recette.mjs                   recette automatique : toutes les suites, rapport des 11 critères (docs/recette/rapport.md)
 recette/Dockerfile                    image de la recette : Playwright, client PostgreSQL, age, rclone 1.75, moto (S3 verrouillé)
 docker/sauvegarde/                    sauvegarde chiffrée (age) copiée hors du VPS et verrouillée, restauration vérifiée, essai de 39 contrôles
 docker/postgres/init/                 bases et rôles, créés au premier démarrage
+docker/postgres/Dockerfile            PostgreSQL 16 de la production, avec le script des rôles (aucun fichier monté)
 docker/caddy/Caddyfile                HTTPS automatique, console.<domaine> et <slug>.<domaine>
 docker/caddy/commun.caddy             en-têtes de sécurité, /api/* vers l'API, cache et CSP des écrans
+docker/caddy/options-*.caddy          émission des certificats : Let's Encrypt, ou autorité locale en répétition
 backend/
   Dockerfile                          image de l'application (API et worker) et image des migrations
   prisma/schema.prisma                modèle de données (19 modèles, 13 énumérations)
@@ -81,6 +86,7 @@ docs/
   etape-10-tests-deploiement.md       recette, sauvegardes, supervision, déploiement, démonstration
   etape-11-anti-robot-qr-code.md      anti-robot du portail, QR code d'activation, tableau de bord de l'agent
   etape-12-sauvegardes-protegees.md   copies hors du VPS verrouillées, alerte en cas d'intrusion
+  etape-13-repetition-locale.md       répétition complète du déploiement sur un poste Windows, depuis PowerShell
   exploitation.md                     guide d'exploitation : VPS, installation, sauvegardes, supervision, mises à jour, restauration
   recette/                            cahier de recette (à signer) et rapport de la recette automatique
   demo-cliquable.md                   présenter la démo à une banque : préparation, visite, mode libre
@@ -141,6 +147,12 @@ docker compose -f docker-compose.prod.yml --env-file .env.production run --rm ap
 ```
 
 Seuls les ports 80 et 443 (Caddy) sont publiés ; le DNS fait pointer `console.<domaine>` et `*.<domaine>` vers le VPS. La base et les pièces jointes sont sauvegardées chaque nuit, chiffrées, et copiées hors du VPS ; la clé qui les déchiffre n'y est jamais.
+
+**Répétition sur un poste Windows** (étape 13, [guide, partie 13](docs/exploitation.md#13-répétition-locale-sur-un-poste-windows)) : la même installation, avec les mêmes scripts, en HTTPS local, depuis PowerShell et Docker Desktop.
+
+```powershell
+.\deploiement\repetition.ps1 installer     # puis verifier, sauvegarde, intrusion, mise-a-jour 1.0.1, retour, restauration, demo, supprimer
+```
 
 ## Travailler depuis la machine hôte (facultatif)
 

@@ -10,6 +10,8 @@
 #  Options : --env FICHIER  --domaine D  --version V  --portail SLUG (une banque existante)
 #            --ip IP (interroge cette adresse sans attendre le DNS)  --ca FICHIER (autorité de test)
 #            --local (sur le VPS : docker compose, ports publiés, UFW, disque, sauvegarde et verrouillage)
+#  Sans --ip ni --ca : VERIFICATION_IP (adresse ou nom) et VERIFICATION_CA (chemin relatif au
+#  fichier d'environnement) du fichier d'environnement, s'il les contient (répétition locale).
 #  Code de sortie 1 si un contrôle échoue.
 # =============================================================================
 set -Euo pipefail
@@ -26,7 +28,7 @@ while (($#)); do
     --ip) ip=${2:?}; shift ;;
     --ca) ca=${2:?}; shift ;;
     --local) local=1 ;;
-    -h | --help) sed -n '5,13p' "$0" | sed 's/^# \{0,3\}//'; exit 0 ;;
+    -h | --help) sed -n '5,15p' "$0" | sed 's/^# \{0,3\}//'; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
   shift
@@ -36,6 +38,18 @@ done
 [[ -n $version ]] || version=$(valeur_env VERSION)
 [[ -n $domaine ]] || { echo "Domaine inconnu : --domaine ou DOMAINE_PLATEFORME dans $env_fichier" >&2; exit 2; }
 for outil in curl openssl; do command -v $outil >/dev/null || { echo "Outil manquant : $outil" >&2; exit 2; }; done
+# Répétition locale (étape 13) : adresse du poste et autorité locale, lues dans l'environnement
+[[ -n $ip ]] || ip=$(valeur_env VERIFICATION_IP)
+if [[ -z $ca ]]; then
+  ca=$(valeur_env VERIFICATION_CA)
+  [[ -z $ca || $ca == /* ]] || ca=$(dirname "$env_fichier")/$ca
+fi
+[[ -z $ca || -r $ca ]] || { echo "Autorité de certification introuvable : $ca" >&2; exit 2; }
+if [[ -n $ip && ! $ip =~ ^[0-9.]+$|: ]]; then # un nom (host.docker.internal) : son adresse IPv4
+  adresse=$(getent ahostsv4 "$ip" | awk 'NR == 1 { print $1 }')
+  [[ -n $adresse ]] || { echo "Adresse introuvable pour $ip" >&2; exit 2; }
+  ip=$adresse
+fi
 
 console=console.$domaine
 inconnu=verification-$RANDOM$RANDOM.$domaine
@@ -156,7 +170,8 @@ if ((local)); then
     done
     IFS='|' read -r _ etat _ sortie < <(grep '^migrations|' "$T/services")
     [[ $etat == exited && $sortie == 0 ]] && ok "migrations appliquées" || ko "migrations appliquées" "état $etat, code $sortie"
-    publies=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E '0\.0\.0\.0:|\[::\]:' | grep -v -- '-caddy-' || true)
+    # Ports ouverts à tout le réseau par les services de ce projet (pas ceux d'autres projets du poste)
+    publies=$(dc ps --format '{{.Service}} {{.Ports}}' | awk '$1 != "caddy"' | grep -E '0\.0\.0\.0:|\[::\]:' || true)
     [[ -z $publies ]] && ok "seul Caddy publie des ports" || ko "seul Caddy publie des ports" "$publies"
   fi
   if command -v ufw >/dev/null && [[ $EUID == 0 ]]; then

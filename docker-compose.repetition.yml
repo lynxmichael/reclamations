@@ -1,0 +1,43 @@
+# =============================================================================
+#  Répétition locale du déploiement (étape 13) : surcharge de docker-compose.prod.yml, et aussi de
+#  docker-compose.demo.yml pour répéter la démonstration. Sur un poste de développement (Windows et
+#  Docker Desktop), jamais sur un serveur.
+#
+#    .\deploiement\repetition.ps1 installer        (PowerShell ; voir docs/exploitation.md, partie 13)
+#    ./deploiement/repetition.sh installer         (Linux ou macOS)
+#
+#  Les scripts de deploiement/ ajoutent ce fichier quand l'environnement contient REPETITION=1
+#  (.repetition/production/.env, .repetition/demonstration/.env). Mêmes images, mêmes réglages et
+#  mêmes scripts que la production, sauf trois choses propres au poste :
+#    - HTTPS : certificats d'une autorité locale (docker/caddy/options-repetition.caddy), faute de
+#      pouvoir en obtenir de Let's Encrypt pour console.reclamations.localhost ;
+#    - e-mails : Mailpit (http://localhost:8026) au lieu du prestataire transactionnel ;
+#    - copies hors du VPS : un S3 simulé (moto) qui applique le verrouillage des objets, au lieu de
+#      Contabo Object Storage. Il garde ses copies en mémoire : elles disparaissent quand son
+#      conteneur s'arrête (repetition demarrer recrée le compartiment).
+# =============================================================================
+
+services:
+  caddy:
+    environment:
+      CADDY_OPTIONS: repetition
+
+  # Boîte de réception de la répétition : invitations, codes, notifications
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    restart: unless-stopped
+    # Sur ce poste seulement (127.0.0.1) : Caddy reste le seul service joignable depuis le réseau
+    ports:
+      - "127.0.0.1:${REPETITION_PORT_MAILPIT:-8026}:8025"
+    networks: [interne]
+
+  # Stockage S3 simulé, avec le verrouillage des objets (étape 12) : http://s3:5000 dans le réseau
+  s3:
+    image: motoserver/moto:5.2.3
+    restart: unless-stopped
+    networks: [interne]
+
+  sauvegarde:
+    depends_on:
+      s3:
+        condition: service_started

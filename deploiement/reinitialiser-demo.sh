@@ -73,9 +73,5 @@ dc run --rm --no-deps -T api node dist/scripts/semer.js
 
 journal "6/6 Redémarrage"
 dc up -d
-for _ in $(seq 1 60); do
-  [[ $(dc ps --format '{{.Health}}' api 2>/dev/null | head -n 1) == healthy ]] && break
-  sleep 3
-done
-[[ $(dc ps --format '{{.Health}}' api 2>/dev/null | head -n 1) == healthy ]] || arret "l'API n'est pas saine après 3 minutes : docker compose … logs --tail 100 api"
+attendre_sante 60 || arret "API ou worker pas sains après 3 minutes : docker compose … logs --tail 100 api worker"
 journal "Démonstration remise à zéro en $(($(date +%s) - debut)) s"

@@ -9,3 +9,4 @@ playwright-report/
 .deploiement-precedent
 .env.demo
 recette/.resultats/
+.repetition/

@@ -33,6 +33,8 @@ ENV TZ=UTC \
     SAUVEGARDE_FICHIERS=/donnees/fichiers
 
 WORKDIR /sauvegardes
-HEALTHCHECK --interval=5m --timeout=10s --start-period=1m CMD ["/usr/local/lib/sauvegarde/sante.sh"]
+# --start-interval : sain quelques secondes après le démarrage (sinon « starting » pendant 5 minutes,
+# et deploiement/verifier.sh --local échouait juste après une mise à jour)
+HEALTHCHECK --interval=5m --timeout=10s --start-period=1m --start-interval=5s CMD ["/usr/local/lib/sauvegarde/sante.sh"]
 ENTRYPOINT []
 CMD ["planifier"]

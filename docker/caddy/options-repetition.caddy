@@ -1,0 +1,19 @@
+# Options globales de Caddy pour la répétition locale (étape 13), avec CADDY_OPTIONS=repetition
+# (docker-compose.repetition.yml). Aucun nom en *.localhost ne peut recevoir un certificat de
+# Let's Encrypt : ils viennent d'une autorité locale, créée par Caddy dans son volume caddy_data et
+# importée dans Windows par deploiement/repetition.ps1. Le reste de la configuration (certificat à
+# la demande approuvé par l'API, en-têtes, CSP) est celui de la production.
+#
+# Durées : un certificat de 90 jours, comme ceux de Let's Encrypt, pour que deploiement/verifier.sh
+# contrôle leur échéance comme en production (par défaut, l'autorité locale signe pour 12 heures).
+pki {
+	ca local {
+		name "Reclamations - repetition locale"
+		intermediate_lifetime 180d
+	}
+}
+cert_issuer internal {
+	lifetime 90d
+}
+# Caddy ne tente pas d'installer l'autorité dans son propre conteneur
+skip_install_trust

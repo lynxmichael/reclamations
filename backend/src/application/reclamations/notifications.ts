@@ -19,7 +19,10 @@ export type ModelePersonnel =
   | 'sla.alerte_preventive' | 'sla.depassement' | 'reclamation.urgente' | 'superviseur.escalade';
 export type ModelePlateforme = 'plateforme.urgente' | 'plateforme.plafond';
 
-/** Le SMS part toujours au dépôt et à la résolution ; ailleurs, selon l'option de la banque (point ouvert n° 5). */
+/**
+ * Le SMS part toujours au dépôt et à la résolution ; aux autres changements de statut, selon l'option de
+ * la banque, activée par défaut (décision du 01/10/2026 : un SMS à chaque changement de statut).
+ */
 const SMS_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution'];
 
 export interface TicketNotifie {

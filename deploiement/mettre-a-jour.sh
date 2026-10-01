@@ -46,20 +46,14 @@ confirmer() {
   [[ $r =~ ^[oO] ]] || arret "abandon, rien n'a changé"
 }
 
-# Attend que l'API réponde à son contrôle de santé (migrations comprises)
+# Attend que l'API (migrations comprises), le worker et la sauvegarde soient sains
 attendre_api() {
-  local etat=''
-  for _ in $(seq 1 60); do
-    etat=$(dc ps --format '{{.Health}}' api 2>/dev/null | head -n 1)
-    [[ $etat == healthy ]] && return 0
-    sleep 3
-  done
-  arret "l'API n'est pas saine après 3 minutes (état : ${etat:-absente}) : docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail 100 migrations api"
+  attendre_sante 60 || arret "services pas tous sains après 3 minutes (ci-dessus) : docker compose … ps, puis … logs --tail 100 migrations api worker"
 }
 
 verifier_deploiement() {
   etape "Contrôle du déploiement"
-  "$VERIFIER" --env "$env_fichier" --local ${portail:+--portail "$portail"} || arret "des contrôles échouent (ci-dessus) ; retour arrière possible : ./deploiement/mettre-a-jour.sh --retour"
+  bash "$VERIFIER" --env "$env_fichier" --local ${portail:+--portail "$portail"} || arret "des contrôles échouent (ci-dessus) ; retour arrière possible : ./deploiement/mettre-a-jour.sh --retour"
 }
 
 [[ -r $env_fichier ]] || arret "$env_fichier introuvable (./deploiement/generer-env.sh)"

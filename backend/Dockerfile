@@ -49,6 +49,6 @@ COPY contrat/openapi.yaml /app/contrat/openapi.yaml
 RUN mkdir -p /donnees/fichiers && chown node:node /donnees/fichiers
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=3s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/v1/sante').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 CMD ["node", "dist/src/main.js"]

@@ -15,6 +15,9 @@
 #    docker compose -f docker-compose.prod.yml --env-file .env.production run --rm restauration restaurer liste
 #    docker compose -f docker-compose.prod.yml --env-file .env.production run --rm restauration restaurer derniere
 #  (procédures complètes : docs/exploitation.md)
+#  Aucun fichier du dépôt n'est monté dans les conteneurs : tout est dans les images. docker compose
+#  peut donc aussi se lancer depuis un conteneur d'outils (répétition locale, étape 13 :
+#  docker-compose.repetition.yml, deploiement/repetition.ps1).
 #  Journaux de tous les services : 5 fichiers de 20 Mo au plus par conteneur.
 # =============================================================================
 
@@ -128,6 +131,8 @@ services:
       interval: 30s
       timeout: 10s
       start_period: 30s
+      # Pendant les 30 premières secondes, contrôle toutes les 5 s : sain dès son premier battement
+      start_interval: 5s
       retries: 3
     depends_on:
       migrations:
@@ -150,8 +155,11 @@ services:
     logging: *journaux
     networks: [interne]
 
+  # Image officielle et script des rôles (docker/postgres/Dockerfile) : aucun fichier du dépôt monté
   postgres:
-    image: postgres:16-bookworm
+    image: reclamations-postgres:16
+    build:
+      context: docker/postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-reclamations}
@@ -162,7 +170,6 @@ services:
       TZ: UTC
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres/init/02-roles.sh:/docker-entrypoint-initdb.d/02-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d reclamations"]
       interval: 10s

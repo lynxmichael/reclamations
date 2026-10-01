@@ -1,0 +1,2 @@
+# Options globales de Caddy en production et en démonstration (importées par le Caddyfile) : aucune.
+# Les certificats viennent de Let's Encrypt (repli ZeroSSL), à la première visite de chaque nom.

@@ -4,6 +4,8 @@
 **/dist
 **/.env
 .deploiement-precedent
+# Répétition locale (étape 13) : secrets, clé privée de sauvegarde, autorité locale
+.repetition
 **/.env.*
 !**/.env.example
 !**/.env.production.example

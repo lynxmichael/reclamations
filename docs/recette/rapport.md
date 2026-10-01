@@ -1,6 +1,6 @@
 # Rapport de recette automatique
 
-Généré par `recette/recette.mjs` le 30 septembre 2026 à 14:50 (heure d'Abidjan), version 1.0.0, Node.js 22.22.2, en 5 minutes.
+Généré par `recette/recette.mjs` le 1 octobre 2026 à 08:52 (heure d'Abidjan), version 1.0.0, Node.js 22.22.2, en 6 minutes.
 
 **11 critère(s) sur 11 vérifié(s) automatiquement** ; 439 tests réussis sur 439 ; toutes les suites passent.
 
@@ -28,29 +28,29 @@ Banque de 1 000 réclamations, 20 appels par opération à travers toute la pile
 
 | Opération | p95 | max |
 |---|---:|---:|
-| file « toutes », 25 par page | 42 ms | 74 ms |
-| file « reçues » triée par échéance | 28 ms | 40 ms |
-| recherche par nom de client | 104 ms | 138 ms |
-| fiche d'une réclamation | 20 ms | 60 ms |
-| assignation (écriture + notifications + audit) | 36 ms | 62 ms |
-| tableau de bord du mois (indicateurs du §6.6 et courbe) | 24 ms | 31 ms |
-| tableau de bord sur un an, par semaine | 21 ms | 21 ms |
-| export CSV de toute la banque (plus de 1000 lignes) | 97 ms | 130 ms |
+| file « toutes », 25 par page | 43 ms | 120 ms |
+| file « reçues » triée par échéance | 37 ms | 38 ms |
+| recherche par nom de client | 142 ms | 144 ms |
+| fiche d'une réclamation | 26 ms | 51 ms |
+| assignation (écriture + notifications + audit) | 55 ms | 71 ms |
+| tableau de bord du mois (indicateurs du §6.6 et courbe) | 30 ms | 61 ms |
+| tableau de bord sur un an, par semaine | 36 ms | 37 ms |
+| export CSV de toute la banque (plus de 1000 lignes) | 141 ms | 177 ms |
 
 ## Suites
 
 | Suite | Résultat | Tests | Durée |
 |---|---|---:|---:|
-| Contrat d'API (OpenAPI 3.1, Redocly) | ✅ réussie |  | 1 s |
-| Backend : types TypeScript | ✅ réussie |  | 9 s |
-| Backend : tests unitaires | ✅ réussie | 176/176 | 8 s |
-| PostgreSQL : intégrité, sécurité (RLS), cycle de vie et SLA | ✅ réussie |  | 8 s |
-| API de bout en bout (base recréée, jeu des deux banques) | ✅ réussie | 94/94 | 95 s |
-| Frontend : types TypeScript | ✅ réussie |  | 9 s |
-| Frontend : tests unitaires | ✅ réussie | 143/143 | 8 s |
-| Construction de production (API, worker, console, portail) | ✅ réussie |  | 10 s |
-| Écrans dans Chromium (API réelle, CSP de production) | ✅ réussie | 26/26 | 108 s |
-| Sauvegarde chiffrée et restauration (docker/sauvegarde/essai.sh) | ✅ réussie |  | 38 s |
+| Contrat d'API (OpenAPI 3.1, Redocly) | ✅ réussie |  | 3 s |
+| Backend : types TypeScript | ✅ réussie |  | 12 s |
+| Backend : tests unitaires | ✅ réussie | 176/176 | 11 s |
+| PostgreSQL : intégrité, sécurité (RLS), cycle de vie et SLA | ✅ réussie |  | 13 s |
+| API de bout en bout (base recréée, jeu des deux banques) | ✅ réussie | 94/94 | 126 s |
+| Frontend : types TypeScript | ✅ réussie |  | 14 s |
+| Frontend : tests unitaires | ✅ réussie | 143/143 | 13 s |
+| Construction de production (API, worker, console, portail) | ✅ réussie |  | 13 s |
+| Écrans dans Chromium (API réelle, CSP de production) | ✅ réussie | 26/26 | 119 s |
+| Sauvegarde chiffrée et restauration (docker/sauvegarde/essai.sh) | ✅ réussie |  | 49 s |
 
 Vérifications PostgreSQL (intégrité, sécurité, cycle de vie) : 32 vérifications réussies, 0 en échec · 62 vérifications réussies, 0 en échec · 45 vérifications réussies, 0 en échec.
 

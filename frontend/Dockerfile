@@ -7,7 +7,8 @@
 #
 #  /srv/console  : console du personnel, servie sur console.<domaine>
 #  /srv/portail  : portail client, servi sur <slug>.<domaine>
-#  /etc/caddy    : Caddyfile et commun.caddy (HTTPS, en-têtes, cache, CSP, /api vers l'API)
+#  /etc/caddy    : Caddyfile et commun.caddy (HTTPS, en-têtes, cache, CSP, /api vers l'API),
+#                  options-*.caddy (certificats : Let's Encrypt, ou autorité locale en répétition)
 # =============================================================================
 
 # ---- Construction des deux applications ----------------------------------------
@@ -21,6 +22,6 @@ RUN npm run build:applications
 
 # ---- Caddy ---------------------------------------------------------------------
 FROM caddy:2.11.4 AS web
-COPY docker/caddy/Caddyfile docker/caddy/commun.caddy /etc/caddy/
+COPY docker/caddy/Caddyfile docker/caddy/commun.caddy docker/caddy/options-production.caddy docker/caddy/options-repetition.caddy /etc/caddy/
 COPY --from=construction /depot/frontend/dist/console /srv/console
 COPY --from=construction /depot/frontend/dist/portail /srv/portail

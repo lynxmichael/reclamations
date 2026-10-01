@@ -9,9 +9,12 @@
 #                         banque cliente
 #  Les deux applications et ce fichier sont copiés dans l'image web (frontend/Dockerfile) ; les
 #  blocs communs (sécurité, API, cache, CSP) sont dans commun.caddy.
+#  Options de l'émission des certificats : options-production.caddy (Let's Encrypt, rien à ajouter),
+#  ou options-repetition.caddy avec CADDY_OPTIONS=repetition (autorité locale, étape 13).
 # =============================================================================
 {
 	email {$ACME_EMAIL}
+	import options-{$CADDY_OPTIONS:production}.caddy
 	on_demand_tls {
 		ask http://api:3000/interne/tls
 	}

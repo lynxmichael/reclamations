@@ -33,7 +33,8 @@ command -v openssl >/dev/null || { echo "openssl est nécessaire (apt install op
 
 umask 077
 cp "$modele" "$cible"
-chmod 600 "$cible"
+# Sur un dossier Windows partagé avec Docker (répétition locale), les droits Unix sont sans effet
+chmod 600 "$cible" 2>/dev/null || echo "Attention : droits de $cible non restreints (système de fichiers sans droits Unix)" >&2
 
 remplir() { # remplir CLE valeur : seulement si la ligne « CLE= » est vide
   sed -i "s|^$1=\$|$1=$2|" "$cible"
