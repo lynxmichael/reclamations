@@ -14,6 +14,7 @@ export const FUSEAU = 'Africa/Abidjan';
 const PREFIXES = {
   banque: 'a', plan: 'b', categorie: 'c', agence: 'd', point: 'e', utilisateur: 'f',
   client: '1', reclamation: '2', message: '3', piece: '4', notification: '5', ferie: '6',
+  groupe: '7', absence: '8', conversation: '9',
 } as const;
 
 /** Identifiant UUID v7 lisible et stable : id('reclamation', 42). */

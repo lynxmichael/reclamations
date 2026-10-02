@@ -10,8 +10,10 @@
  * Tout passe par le rôle de l'application en contexte système, avec les mêmes droits que l'API.
  */
 import { createHash } from 'node:crypto';
+import { DateTime } from 'luxon';
 import { base32Encode } from './base32.js';
 import { CycleDeVie } from '../src/application/reclamations/cycle-de-vie.js';
+import { lectureClient } from '../src/application/reclamations/conversations.js';
 import type { Acteur } from '../src/domaine/reclamation/machine.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { hacherMotDePasse } from '../src/infrastructure/securite/mots-de-passe.js';
@@ -71,6 +73,21 @@ export interface OptionsSemis {
    * facturation SMS), traité de bout en bout par le cycle de vie ; non par défaut dans les tests
    */
   readonly historique?: number;
+  /**
+   * Étape 15 : enquêtes de satisfaction activées pour la Banque Alpha (pas pour Horizon) ; dans
+   * l'historique, un client sur deux environ répond après la confirmation. Non par défaut dans les tests
+   */
+  readonly enquetes?: boolean;
+  /**
+   * Étape 16 : attribution automatique ouverte pour la Banque Alpha, en mode suggestion, avec trois
+   * groupes d'agents, des seuils d'escalade et une absence à venir. Non par défaut dans les tests
+   */
+  readonly attribution?: boolean;
+  /**
+   * Étape 17 : chat web ouvert pour la Banque Alpha ; avec les réclamations d'exemple, deux clients
+   * y écrivent (boîte de réception des agents). Non par défaut dans les tests
+   */
+  readonly chat?: boolean;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
   /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
@@ -109,7 +126,10 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
 
   const banque = async (nom: string, slug: string, prefixe: string, couleurs: [string, string], domaine: string, equipe: Personne[], codes: { qr: string; lien: string }): Promise<BanqueDemo> => {
     const b = await bd.enSysteme((tx) => tx.banque.create({
-      data: { nom, slug, prefixeTickets: prefixe, planId: plan.id, couleurPrimaire: couleurs[0], couleurSecondaire: couleurs[1], emailContact: `reclamations@${domaine}` },
+      data: {
+        nom, slug, prefixeTickets: prefixe, planId: plan.id, couleurPrimaire: couleurs[0], couleurSecondaire: couleurs[1], emailContact: `reclamations@${domaine}`,
+        enqueteSatisfaction: (o.enquetes ?? false) && slug === 'alpha',
+      },
     }));
     const categories: Record<string, string> = {};
     const agences: Record<string, string> = {};
@@ -152,8 +172,39 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
   ], { qr: 'H7P4XK2RQD', lien: 'H3M9TW6ZLB' });
 
   if (o.historique) await historique(bd, alpha, o, o.historique);
-  if (o.reclamations) await reclamationsExemple(bd, alpha, o);
+  const exemples = o.reclamations ? await reclamationsExemple(bd, alpha, o) : null;
+  // Après l'historique, qui reste assigné à la main comme en phase 1
+  if (o.attribution) await attributionAlpha(bd, alpha, maintenant);
+  if (o.chat) await chatAlpha(bd, alpha, o, exemples);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
+}
+
+/**
+ * Attribution automatique de la Banque Alpha (étape 16) : la carte et la fraude à la monétique, les
+ * comptes et le crédit à un second groupe, l'agence de Bouaké à son équipe. Une réclamation « carte »
+ * déposée à Bouaké va donc à un agent des deux groupes à la fois.
+ */
+async function attributionAlpha(bd: BaseDonnees, alpha: BanqueDemo, maintenant: Date) {
+  const c = alpha.comptes;
+  await bd.enSysteme((tx) => tx.banque.update({
+    where: { id: alpha.id },
+    data: { attributionAutomatique: true, modeAttribution: 'SUGGESTION', seuilEscaladeAdminPourcent: 150, seuilEscaladeAdminUrgentPourcent: 125 },
+  }));
+  await bd.enBanque(alpha.id, async (tx) => {
+    const groupe = async (nom: string, membres: string[], categories: string[], agences: string[]) => {
+      const g = await tx.groupeAgents.create({ data: { tenantId: alpha.id, nom } });
+      await tx.groupeAgentsMembre.createMany({ data: membres.map((m) => ({ tenantId: alpha.id, groupeId: g.id, utilisateurId: c[m]!.id })) });
+      await tx.categorie.updateMany({ where: { id: { in: categories.map((n) => alpha.categories[n]!) } }, data: { groupeId: g.id } });
+      await tx.agence.updateMany({ where: { id: { in: agences.map((n) => alpha.agences[n]!) } }, data: { groupeId: g.id } });
+    };
+    await groupe('Monétique', ['aya', 'mamadou'], ['Carte bancaire', 'Banque mobile', 'Fraude suspectée'], []);
+    await groupe('Comptes et crédits', ['mamadou', 'ibrahim'], ['Virement et transfert', 'Frais et prélèvements', 'Crédit'], []);
+    await groupe('Agence de Bouaké', ['ibrahim', 'aya', 'estelle'], ['Accueil en agence'], ['Bouaké Commerce']);
+    // La fraude remonte plus vite à l'Admin Entreprise
+    await tx.categorie.update({ where: { id: alpha.categories['Fraude suspectée']! }, data: { seuilEscaladeAdminUrgentPourcent: 110 } });
+    const jour = (n: number) => new Date(`${DateTime.fromJSDate(maintenant, { zone: 'Africa/Abidjan' }).plus({ days: n }).toISODate()}T00:00:00Z`);
+    await tx.absenceAgent.create({ data: { tenantId: alpha.id, utilisateurId: c.ibrahim!.id, du: jour(7), au: jour(11) } });
+  });
 }
 
 /** Quelques réclamations de la Banque Alpha, par le service du cycle de vie (étape 4). */
@@ -176,6 +227,23 @@ async function reclamationsExemple(bd: BaseDonnees, alpha: BanqueDemo, o: Option
   await cycle.assigner(alpha.id, d.id, superviseur, alpha.comptes.aya.id);
   await cycle.prendreEnCharge(alpha.id, d.id, agent('aya'));
   await cycle.resoudre(alpha.id, d.id, agent('aya'), 'Nous avons réinitialisé votre accès : reconnectez-vous avec le code reçu par SMS.');
+  return { cycle, carte: a.id, fraude: c.id };
+}
+
+/**
+ * Chat web de la Banque Alpha (étape 17). Après les réponses d'exemple, deux clients ouvrent le chat
+ * et écrivent : la carte (Aya) attend une réponse, la fraude (Ibrahim) deux messages d'affilée.
+ */
+async function chatAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, exemples: Awaited<ReturnType<typeof reclamationsExemple>> | null) {
+  await bd.enSysteme((tx) => tx.banque.update({ where: { id: alpha.id }, data: { chatWeb: true } }));
+  if (!exemples) return;
+  const ecrire = async (id: string, messages: string[]) => {
+    const t = await bd.enBanque(alpha.id, (tx) => tx.reclamation.findUniqueOrThrow({ where: { id }, select: { id: true, tenantId: true, clientId: true } }));
+    await bd.enBanque(alpha.id, (tx) => lectureClient(tx, t, o.horloge?.() ?? new Date()));
+    for (const m of messages) await exemples.cycle.messageDuClient(alpha.id, id, { type: 'CLIENT', clientId: t.clientId }, m);
+  };
+  await ecrire(exemples.carte, ['Merci. C\'était au distributeur de l\'agence du Plateau, vers 21 h. J\'ai gardé le ticket.']);
+  await ecrire(exemples.fraude, ['J\'ai bloqué ma carte depuis l\'application.', 'Faut-il que je passe en agence pour la plainte ?']);
 }
 
 // ---- Historique (étape 9) ---------------------------------------------------------------------
@@ -190,6 +258,24 @@ function aleatoire(graine: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
   };
+}
+
+/** Commentaires des enquêtes simulées, selon la note donnée. */
+const COMMENTAIRES: Record<'positif' | 'mitige' | 'negatif', readonly string[]> = {
+  positif: ['Traitement rapide, merci au conseiller.', 'Très satisfait, le conseiller a été clair.', 'Réponse claire et courtoise.'],
+  mitige: ['Bonne prise en charge, mais j\'ai dû relancer une fois.', 'Le délai était trop long pour un simple virement.'],
+  negatif: ['Le délai était trop long pour un simple virement.', 'On ne m\'a pas expliqué pourquoi l\'opération avait été bloquée.'],
+};
+
+/** Avis simulé : plutôt satisfait, la recommandation suit la note ; un commentaire une fois sur quatre, accordé à la note. */
+function avisSimule(hasard: () => number): { note: number; recommandation: number; commentaire: string | null } {
+  const r = hasard();
+  const note = r < 0.06 ? 1 : r < 0.14 ? 2 : r < 0.28 ? 3 : r < 0.62 ? 4 : 5;
+  const base = [0, 2, 4, 6, 8, 9][note]!;
+  const recommandation = Math.min(10, Math.max(0, base + Math.floor(hasard() * 3) - (note >= 4 ? 0 : 1)));
+  const ton = COMMENTAIRES[note >= 4 ? 'positif' : note === 3 ? 'mitige' : 'negatif'];
+  const commentaire = hasard() < 0.25 ? ton[Math.floor(hasard() * ton.length)]! : null;
+  return { note, recommandation, commentaire };
 }
 
 const PRENOMS = ['Kouadio', 'Adjoua', 'Mamadou', 'Awa', 'Yao', 'Aminata', 'Koffi', 'Mariam', 'Sékou', 'Affoué', 'Brice', 'Nadia', 'Ibrahim', 'Grâce', 'Serge', 'Fanta'];
@@ -275,7 +361,14 @@ async function historique(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, j
         if (!(await a((5 + hasard() * 24) * HEURE, () => cycle.contester(alpha.id, d.id, client, 'Le problème n\'est pas réglé.')))) continue;
         if (!(await a((2 + hasard() * 20) * HEURE, () => cycle.resoudre(alpha.id, d.id, agent, 'Nous avons corrigé l\'opération restante.')))) continue;
       }
-      await a((2 + hasard() * 60) * HEURE, () => cycle.confirmer(alpha.id, d.id, client));
+      if (!(await a((2 + hasard() * 60) * HEURE, () => cycle.confirmer(alpha.id, d.id, client)))) continue;
+      // Étape 15 : un client sur deux donne son avis dans les deux jours (la réponse du portail, sans le journal)
+      if (o.enquetes && hasard() < 0.5) {
+        const avis = avisSimule(hasard);
+        await a((0.5 + hasard() * 48) * HEURE, () => bd.enBanque(alpha.id, (tx) => tx.enqueteSatisfaction.updateMany({
+          where: { reclamationId: d.id, reponduLe: null }, data: { reponduLe: horloge, ...avis },
+        })));
+      }
     }
   }
 

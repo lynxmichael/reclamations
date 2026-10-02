@@ -14,7 +14,7 @@ import { EXEMPLES } from '../src/maquettes/donnees';
 import { CHEMIN_CONTRAT, validateur } from './contrat';
 import { MAINTENANT, id } from '../src/maquettes/donnees/commun';
 import { AYA, SERGE, FATOU } from '../src/maquettes/donnees/parametrage';
-import { FICHE_42 } from '../src/maquettes/donnees/reclamations';
+import { FICHE_42, FICHE_52 } from '../src/maquettes/donnees/reclamations';
 import { MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE } from '../src/maquettes/donnees/portail';
 import { OPERATIONS, actionsPossibles, verifierOperation } from '../../backend/src/domaine/reclamation/machine';
 import type { Acteur, EtatTicket, Operation } from '../../backend/src/domaine/reclamation/machine';
@@ -50,6 +50,12 @@ describe("boutons d'une réclamation = machine d'états de l'étape 4", () => {
     const fiche = FICHE_42[role];
     expect(fiche.actionsPossibles).toEqual(actionsPossibles(ticket42, personnel[role], maintenant));
     expect(fiche.operationsPossibles).toEqual(operations(ticket42, personnel[role]));
+  });
+
+  it('fiche à assigner (étape 16), vue par le superviseur', () => {
+    const ticket: EtatTicket = { statut: 'OUVERTE', agentId: null, clientId: FICHE_52.client.id, clotureAutoPrevueLe: null };
+    expect(FICHE_52.actionsPossibles).toEqual(actionsPossibles(ticket, personnel.SUPERVISEUR, maintenant));
+    expect(FICHE_52.operationsPossibles).toEqual(operations(ticket, personnel.SUPERVISEUR));
   });
 
   it.each([

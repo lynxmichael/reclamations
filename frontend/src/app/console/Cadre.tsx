@@ -15,7 +15,7 @@ import { CadreConsole } from '../../ecrans/plateforme/Console';
 import { ROLE } from '../../ui/libelles';
 import { useAnnoncer } from '../commun/Annonces';
 import { Chargement, ErreurChargement } from '../commun/Etats';
-import { ContexteConsole, PAGES_BANQUE, PAGES_PLATEFORME, ROUTES_BANQUE, ROUTES_PLATEFORME, pageDe, useConsole, type Console } from './contexte';
+import { ContexteConsole, PAGES_PLATEFORME, ROUTES_BANQUE, ROUTES_PLATEFORME, pageDe, pagesBanque, useConsole, type Console } from './contexte';
 
 /** Rafraîchissement des notifications et des compteurs (décision F6) */
 export const INTERVALLE_MS = 30_000;
@@ -62,6 +62,15 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
     refetchInterval: INTERVALLE_MS,
     select: (p) => p.compteurs,
   });
+  // Chat web (étape 17) : clients qui attendent une réponse, pour la pastille du menu
+  const chat = !!parametres.data?.chatWeb;
+  const aRepondre = useQuery({
+    queryKey: ['conversations-a-repondre'],
+    queryFn: () => appeler('listerConversations', { requete: { filtre: 'a-repondre', parPage: 1 } }),
+    enabled: chat,
+    refetchInterval: INTERVALLE_MS,
+    select: (p) => p.compteurs.aRepondre,
+  });
   useEffect(() => setNotifsOuvertes(false), [location.pathname]);
 
   const lue = useMutation({
@@ -90,8 +99,9 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
         banque={banque}
         moi={moi}
         page={page}
-        pages={PAGES_BANQUE}
+        pages={pagesBanque(p)}
         aTraiter={compteurs.data ? (agent ? compteurs.data.assignees : compteurs.data.recues) : undefined}
+        aRepondre={chat ? aRepondre.data : undefined}
         notifications={notifications.data ?? { donnees: [], pagination: { page: 1, parPage: 20, total: 0 }, nonLues: 0 }}
         notificationsOuvertes={notifsOuvertes}
         maintenant={new Date().toISOString()}

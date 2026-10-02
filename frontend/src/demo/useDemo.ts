@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { S } from '../api/types';
 import type { PageBackOffice } from '../ecrans/back-office/CadreBackOffice';
+import type { ActionsConversations, FiltreConversations } from '../ecrans/back-office/Conversations';
 import type { ActionsFiche } from '../ecrans/back-office/Ticket';
 import { fichierExemple, type SaisieDepot } from '../ecrans/portail/Depot';
 import { CATEGORIES } from '../maquettes/donnees/parametrage';
@@ -21,7 +22,8 @@ export type EcranClient =
   | { e: 'suivi'; jeton: string }
   | { e: 'code'; jeton: string; otp: S<'OtpEnvoye'>; saisi: string; erreur: string | null }
   | { e: 'espace' }
-  | { e: 'detail'; id: string };
+  | { e: 'detail'; id: string }
+  | { e: 'avis'; jeton: string; erreur: string | null };
 
 export type Role = 'SUPERVISEUR' | 'AGENT' | 'ADMIN_ENTREPRISE';
 export const UTILISATEUR: Record<Role, string> = {
@@ -35,6 +37,9 @@ export interface EtatBanque {
   page: PageBackOffice;
   ficheId: string | null;
   notifs: boolean;
+  /** Boîte de réception (étape 17) : conversation ouverte et filtre */
+  conversationId?: string | null;
+  filtre?: FiltreConversations;
 }
 
 export interface Message {
@@ -62,7 +67,7 @@ export const SUGGESTIONS = {
 };
 
 /** Temps de réflexion simulé avant chaque action, en minutes : les chronologies restent crédibles. */
-const DUREE = { depot: 3, lecture: 1, assignation: 6, prise: 3, reponse: 14, note: 3, resolution: 22, priorite: 1, escalade: 2, cloture: 3, client: 2 } as const;
+const DUREE = { depot: 3, lecture: 1, assignation: 6, prise: 3, reponse: 14, chat: 2, note: 3, resolution: 22, priorite: 1, escalade: 2, cloture: 3, client: 2 } as const;
 
 export function useDemo(prospectInitial: Prospect) {
   const [prospect, setProspect] = useState(prospectInitial);
@@ -121,6 +126,17 @@ export function useDemo(prospectInitial: Prospect) {
     const t = window.setTimeout(() => setSmsVus((v) => new Set(v).add(smsAffiche.id)), 9000);
     return () => window.clearTimeout(t);
   }, [smsAffiche]);
+
+  // Chat web (étape 17) : le téléphone affiche la réclamation, donc son chat (lu, client en ligne)
+  useEffect(() => {
+    if (client.e === 'detail' && session) {
+      try {
+        moteur.lireChat(session, client.id);
+      } catch {
+        // session expirée : le téléphone repasse par le code
+      }
+    }
+  }, [moteur, client, session, version]);
 
   const actionsClient = {
     deposer: (v: SaisieDepot & { agenceId: string | null }) => {
@@ -184,7 +200,21 @@ export function useDemo(prospectInitial: Prospect) {
         setClient((c) => (c.e === 'code' ? { ...c, saisi: code, erreur: null } : c));
         return;
       }
-      if (envoi.lien) actionsClient.suivre(envoi.lien.jeton);
+      if (envoi.lien?.avis) actionsClient.avis(envoi.lien.jeton);
+      else if (envoi.lien) actionsClient.suivre(envoi.lien.jeton);
+    },
+    /** Enquête de satisfaction (étape 15) : depuis le SMS de clôture, le suivi ou l'espace client */
+    avis: (jeton: string) => setClient({ e: 'avis', jeton, erreur: null }),
+    donnerAvis: (jeton: string, r: S<'ReponseAvis'>) => {
+      avancer(DUREE.client);
+      try {
+        moteur.donnerAvis(jeton, r);
+        informer('Avis enregistré : il apparaît sur la fiche et dans le tableau de bord.');
+        setClient({ e: 'avis', jeton, erreur: null });
+      } catch (e) {
+        if (!(e instanceof ErreurDemo)) throw e;
+        setClient({ e: 'avis', jeton, erreur: e.probleme.detail ?? e.probleme.title });
+      }
     },
     fermerSms: (envoi: Envoi) => setSmsVus((v) => new Set(v).add(envoi.id)),
     /** Visite guidée : ouvrir le lien, recevoir le code, le saisir. */
@@ -240,11 +270,19 @@ export function useDemo(prospectInitial: Prospect) {
           }
         }
         const visibles: Record<Role, PageBackOffice[]> = {
-          AGENT: ['reclamations', 'tableau'],
-          SUPERVISEUR: ['reclamations', 'tableau', 'points', 'personnel'],
-          ADMIN_ENTREPRISE: ['reclamations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'personnel', 'audit'],
+          AGENT: ['reclamations', 'conversations', 'tableau'],
+          SUPERVISEUR: ['reclamations', 'conversations', 'tableau', 'points', 'attribution', 'personnel', 'absences'],
+          ADMIN_ENTREPRISE: ['reclamations', 'conversations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'attribution', 'personnel', 'absences', 'audit'],
         };
-        return { ...b, role, ficheId, notifs: false, page: visibles[role].includes(b.page) ? b.page : 'reclamations' };
+        let conversationId = b.conversationId ?? null;
+        if (conversationId) {
+          try {
+            moteur.conversation(UTILISATEUR[role], conversationId);
+          } catch {
+            conversationId = null;
+          }
+        }
+        return { ...b, role, ficheId, conversationId, notifs: false, page: visibles[role].includes(b.page) ? b.page : 'reclamations' };
       }),
     naviguer: (page: PageBackOffice) => setBanque((b) => ({ ...b, page, ficheId: null, notifs: false })),
     ouvrirFiche: (id: string) => setBanque((b) => ({ ...b, page: 'reclamations', ficheId: id, notifs: false })),
@@ -252,12 +290,48 @@ export function useDemo(prospectInitial: Prospect) {
     cloche: () => setBanque((b) => ({ ...b, notifs: !b.notifs })),
     toutLire: () => moteur.toutLire(utilisateur),
     exporter: () => informer('Dans la version installée, l\'export CSV (séparateur « ; », accents lisibles dans Excel) se télécharge ici.', 'info'),
+    // Étape 16 : mode d'attribution et absences, en mémoire ; les groupes de la démo sont fixes
+    modeAttribution: (mode: S<'ModeAttribution'>) =>
+      tenter(() => moteur.changerModeAttribution(mode), mode === 'AUTOMATIQUE'
+        ? 'Attribution automatique : déposez une réclamation, elle part à l\'agent disponible le moins chargé de son groupe.'
+        : mode === 'SUGGESTION' ? 'Attribution par suggestion : le superviseur voit l\'agent proposé et valide.' : 'Attribution manuelle : le superviseur assigne chaque réclamation.'),
+    ajouterAbsence: (v: S<'NouvelleAbsence'>) => tenter(() => { moteur.ajouterAbsence(utilisateur, v); return true; }, 'Absence déclarée : cet agent ne recevra pas de réclamation ces jours-là.') ?? false,
+    supprimerAbsence: (a: S<'Absence'>) => tenter(() => { moteur.supprimerAbsence(utilisateur, a.id); return true; }, `Absence de ${a.agent.nom} retirée.`) ?? false,
+    groupesFixes: () => {
+      informer('Dans la démonstration, les groupes sont fixes. Dans la version installée, l\'Admin Entreprise les compose ici.', 'info');
+      return true;
+    },
     couleur: (couleur: string) => {
       moteur.changerCouleur(couleur);
       const p = { ...prospect, couleur };
       setProspect(p);
       if (prospect.nom !== 'Banque Alpha' || couleur !== '#0b6e5f') enregistrerProspect(p);
       informer('Nouvelle couleur appliquée au portail et au back-office.');
+    },
+  };
+
+  // Boîte de réception : la conversation affichée est lue (l'agent assigné, ou un superviseur sans agent)
+  useEffect(() => {
+    if (banque.page !== 'conversations' || banque.ficheId || !banque.conversationId) return;
+    try {
+      moteur.marquerConversationLue(utilisateur, banque.conversationId);
+    } catch {
+      // conversation hors de portée de cette personne
+    }
+  }, [moteur, banque, utilisateur, version]);
+
+  const actionsConversations: ActionsConversations = {
+    filtrer: (filtre) => setBanque((b) => ({ ...b, filtre })),
+    ouvrir: (conversationId) => setBanque((b) => ({ ...b, conversationId })),
+    ouvrirFiche: (id) => setBanque((b) => ({ ...b, page: 'reclamations', ficheId: id, notifs: false })),
+    repondre: (contenu, attendre) => {
+      const id = banque.conversationId ? moteur.conversation(utilisateur, banque.conversationId).reclamation.id : null;
+      if (!id) return false;
+      avancer(DUREE.chat);
+      return tenter(() => {
+        moteur.repondre(utilisateur, id, contenu, attendre);
+        return true;
+      }, attendre ? 'Question envoyée : le chrono SLA est en pause jusqu\'à la réponse du client.' : 'Réponse envoyée dans le chat. S\'il ne la lit pas sous 2 minutes, le client reçoit un SMS.') ?? false;
     },
   };
 
@@ -269,6 +343,7 @@ export function useDemo(prospectInitial: Prospect) {
   function actionsFiche(id: string): ActionsFiche {
     return {
       retour: actionsBanque.fermerFiche,
+      ouvrirConversation: (conversationId) => setBanque((b) => ({ ...b, page: 'conversations', ficheId: null, conversationId, filtre: 'toutes', notifs: false })),
       prendreEnCharge: () => {
         avancer(DUREE.prise);
         tenter(() => moteur.prendreEnCharge(utilisateur, id), 'Réclamation prise en charge : le client est prévenu par SMS.');
@@ -373,6 +448,7 @@ export function useDemo(prospectInitial: Prospect) {
     actionsClient,
     actionsBanque,
     actionsFiche,
+    actionsConversations,
     avancerHorloge,
     recommencer,
   };

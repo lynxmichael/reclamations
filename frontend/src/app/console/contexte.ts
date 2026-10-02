@@ -32,15 +32,26 @@ export function useParametres(): S<'ParametresBanque'> {
 /** Adresses des pages (décision F4) ; tableau de bord et activité depuis l'étape 9. */
 export const ROUTES_BANQUE: Record<PageBackOffice, string> = {
   reclamations: '/reclamations',
+  conversations: '/conversations',
   tableau: '/tableau-de-bord',
   categories: '/parametrage/categories',
   points: '/parametrage/agences',
   horaires: '/parametrage/horaires',
   banque: '/parametrage/banque',
+  attribution: '/parametrage/attribution',
   personnel: '/personnel',
+  absences: '/absences',
   audit: '/journal-audit',
 };
-export const PAGES_BANQUE: PageBackOffice[] = ['reclamations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'personnel', 'audit'];
+export const PAGES_BANQUE: PageBackOffice[] = [
+  'reclamations', 'conversations', 'tableau', 'categories', 'points', 'horaires', 'banque', 'attribution', 'personnel', 'absences', 'audit',
+];
+/** Pages de l'attribution automatique (étape 16) : offertes quand Makor a ouvert la fonction à la banque. */
+export const PAGES_ATTRIBUTION: PageBackOffice[] = ['attribution', 'absences'];
+/** Boîte de réception du chat web (étape 17) : offerte quand Makor a ouvert le chat à la banque. */
+export const PAGES_CHAT: PageBackOffice[] = ['conversations'];
+export const pagesBanque = (p: S<'ParametresBanque'>): PageBackOffice[] =>
+  PAGES_BANQUE.filter((page) => (p.attributionAutomatique || !PAGES_ATTRIBUTION.includes(page)) && (p.chatWeb || !PAGES_CHAT.includes(page)));
 
 export const ROUTES_PLATEFORME: Record<PageConsole, string> = {
   banques: '/plateforme/banques',

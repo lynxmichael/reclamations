@@ -7,7 +7,7 @@ import { SessionClient } from '../../api/session-client';
 import { Annonces } from '../commun/Annonces';
 import { Introuvable } from '../commun/Etats';
 import { creerCache } from '../commun/requetes';
-import { PageAccueil, PageDepot, PageMaReclamation, PageMesReclamations, PagePolitique, PageSuivi } from './Portail';
+import { PageAccueil, PageAvis, PageDepot, PageMaReclamation, PageMesReclamations, PagePolitique, PageSuivi } from './Portail';
 import '../../styles.css';
 import '../commun/cadre.css';
 
@@ -18,6 +18,7 @@ const routeur = createBrowserRouter([
   { path: '/', element: <PageAccueil /> },
   { path: '/d/:code', element: <PageDepot session={session} /> },
   { path: '/suivi/:jeton', element: <PageSuivi session={session} /> },
+  { path: '/suivi/:jeton/avis', element: <PageAvis session={session} /> },
   { path: '/mes-reclamations', element: <PageMesReclamations session={session} /> },
   { path: '/mes-reclamations/:id', element: <PageMaReclamation session={session} /> },
   { path: '/politique-donnees', element: <PagePolitique session={session} /> },

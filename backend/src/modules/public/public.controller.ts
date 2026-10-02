@@ -29,6 +29,16 @@ export class PublicControleur {
     return this.service.suivi(e.chemin.jetonSuivi);
   }
 
+  @Operation('lireAvis')
+  avis(@EntreesValidees() e: Entrees) {
+    return this.service.avis(e.chemin.jetonSuivi);
+  }
+
+  @Operation('donnerAvis')
+  donnerAvis(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
+    return this.service.donnerAvis(e.chemin.jetonSuivi, e.corps as { note: number; recommandation: number; commentaire?: string }, appel);
+  }
+
   @Operation('demanderCodeOtp')
   demanderCode(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
     const corps = e.corps as { canal?: 'SMS' | 'EMAIL'; jetonAntiRobot: string };

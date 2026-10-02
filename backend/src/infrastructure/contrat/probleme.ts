@@ -52,6 +52,11 @@ const TITRES: Partial<Record<CodeErreur, string>> = {
   INVITATION_DEJA_ACCEPTEE: 'Invitation déjà acceptée',
   JOUR_FERIE_EXISTANT: 'Jour férié déjà enregistré',
   EXPORT_TROP_VOLUMINEUX: 'Export trop volumineux',
+  AVIS_DEJA_DONNE: 'Avis déjà donné',
+  ENQUETE_TERMINEE: 'Enquête terminée',
+  FONCTION_NON_OUVERTE: 'Fonction non ouverte à cette banque',
+  GROUPE_INVALIDE: 'Groupe d\'agents invalide',
+  ABSENCE_INVALIDE: 'Absence invalide',
   ERREUR_INTERNE: 'Erreur interne',
 };
 

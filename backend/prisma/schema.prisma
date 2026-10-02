@@ -132,12 +132,32 @@ enum TypeEvenement {
   ASSIGNATION
   CHANGEMENT_PRIORITE
   ESCALADE
+  /// Second niveau d'escalade, vers l'Admin Entreprise (étape 16)
+  ESCALADE_ADMIN
   ALERTE_SLA_PREVENTIVE
   DEPASSEMENT_SLA
   MESSAGE
   PIECE_JOINTE
 
   @@map("type_evenement")
+}
+
+/// Attribution des nouvelles réclamations (étape 16) : par le superviseur, suggérée, ou automatique.
+enum ModeAttribution {
+  MANUELLE
+  SUGGESTION
+  AUTOMATIQUE
+
+  @@map("mode_attribution")
+}
+
+/// Canal d'une conversation (étape 17) : chat du portail ; WhatsApp et SMS entrant à l'étape 19.
+enum CanalConversation {
+  WEB
+  WHATSAPP
+  SMS
+
+  @@map("canal_conversation")
 }
 
 /// Auteur d'une action : client final, membre du personnel ou tâche automatique.
@@ -210,6 +230,18 @@ model Banque {
   delaiClotureAutoJours     Int       @default(5) @map("delai_cloture_auto_jours")
   /// SMS à chaque changement de statut, ou seulement au dépôt et à la résolution (point ouvert n° 5)
   smsChaqueChangementStatut Boolean   @default(true) @map("sms_chaque_changement_statut")
+  /// Enquête de satisfaction à la clôture (étape 15), activée par Makor banque par banque (décision I2)
+  enqueteSatisfaction       Boolean   @default(false) @map("enquete_satisfaction")
+  /// Attribution et escalade automatiques (étape 16), ouvertes par Makor banque par banque (décision I2)
+  attributionAutomatique    Boolean         @default(false) @map("attribution_automatique")
+  /// Réglé par l'Admin Entreprise quand la fonction est ouverte
+  modeAttribution           ModeAttribution @default(MANUELLE) @map("mode_attribution")
+  /// Escalade à l'Admin Entreprise à ce pourcentage du délai cible ; vide : pas de second niveau
+  seuilEscaladeAdminPourcent       Int?     @map("seuil_escalade_admin_pourcent")
+  /// Même seuil pour une réclamation urgente
+  seuilEscaladeAdminUrgentPourcent Int?     @map("seuil_escalade_admin_urgent_pourcent")
+  /// Chat web sur le portail (étape 17), ouvert par Makor banque par banque (décision I2)
+  chatWeb                   Boolean   @default(false) @map("chat_web")
   suspendueLe               DateTime? @map("suspendue_le") @db.Timestamptz(3)
   motifSuspension           String?   @map("motif_suspension")
   creeLe                    DateTime  @default(now()) @map("cree_le") @db.Timestamptz(3)
@@ -226,6 +258,9 @@ model Banque {
   reclamations  Reclamation[]
   compteurs     CompteurNumero[]
   notifications Notification[]
+  groupes       GroupeAgents[]
+  absences      AbsenceAgent[]
+  conversations Conversation[]
 
   @@index([planId])
   @@map("banque")
@@ -244,10 +279,13 @@ model Agence {
   ville     String?  @db.VarChar(120)
   adresse   String?  @db.VarChar(255)
   active    Boolean  @default(true)
+  /// Groupe d'agents qui traite les réclamations de l'agence (étape 16)
+  groupeId  String?  @map("groupe_id") @db.Uuid
   creeLe    DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
   banque       Banque        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  groupe       GroupeAgents? @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Restrict)
   pointsDepot  PointDepot[]
   reclamations Reclamation[]
 
@@ -291,10 +329,16 @@ model Categorie {
   delaiCibleMinutes Int      @map("delai_cible_minutes")
   ordre             Int      @default(0)
   active            Boolean  @default(true)
+  /// Groupe d'agents spécialiste de la catégorie (étape 16)
+  groupeId          String?  @map("groupe_id") @db.Uuid
+  /// Seuils d'escalade à l'Admin Entreprise propres à la catégorie ; vides : ceux de la banque
+  seuilEscaladeAdminPourcent       Int? @map("seuil_escalade_admin_pourcent")
+  seuilEscaladeAdminUrgentPourcent Int? @map("seuil_escalade_admin_urgent_pourcent")
   creeLe            DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe         DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
   banque       Banque        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  groupe       GroupeAgents? @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Restrict)
   reclamations Reclamation[]
 
   @@unique([tenantId, id])
@@ -365,6 +409,8 @@ model Utilisateur {
   verrouilleJusquA    DateTime?         @map("verrouille_jusqu_a") @db.Timestamptz(3)
   derniereConnexionLe DateTime?         @map("derniere_connexion_le") @db.Timestamptz(3)
   desactiveLe         DateTime?         @map("desactive_le") @db.Timestamptz(3)
+  /// Dernière réclamation reçue : départage les agents également chargés (étape 16)
+  derniereAttributionLe DateTime?       @map("derniere_attribution_le") @db.Timestamptz(3)
   creeLe              DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe           DateTime          @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
@@ -381,11 +427,61 @@ model Utilisateur {
   piecesJointes          PieceJointe[]
   evenements             ReclamationEvenement[]
   notifications          Notification[]
+  groupes                GroupeAgentsMembre[]
+  absences               AbsenceAgent[]
 
   @@unique([tenantId, id])
   @@index([tenantId, role, statut])
   @@index([tenantId, superviseurId])
   @@map("utilisateur")
+}
+
+/// Groupe d'agents (étape 16) : les agents qui reçoivent les réclamations de ses catégories et agences.
+model GroupeAgents {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  nom       String   @db.VarChar(120)
+  creeLe    DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
+
+  banque     Banque               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  membres    GroupeAgentsMembre[]
+  categories Categorie[]
+  agences    Agence[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, nom])
+  @@map("groupe_agents")
+}
+
+model GroupeAgentsMembre {
+  tenantId      String @map("tenant_id") @db.Uuid
+  groupeId      String @map("groupe_id") @db.Uuid
+  utilisateurId String @map("utilisateur_id") @db.Uuid
+
+  groupe      GroupeAgents @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Cascade)
+  utilisateur Utilisateur  @relation(fields: [tenantId, utilisateurId], references: [tenantId, id], onDelete: Restrict)
+
+  @@id([groupeId, utilisateurId])
+  @@index([tenantId, utilisateurId])
+  @@map("groupe_agents_membre")
+}
+
+/// Absence d'un agent (étape 16), jours inclus, dans le fuseau de la banque : il ne reçoit pas de
+/// réclamation pendant ces jours. Sans motif : la cause d'une absence (maladie…) ne regarde pas l'outil.
+model AbsenceAgent {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  utilisateurId String   @map("utilisateur_id") @db.Uuid
+  du            DateTime @db.Date
+  au            DateTime @db.Date
+  creeLe        DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
+
+  banque      Banque      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  utilisateur Utilisateur @relation(fields: [tenantId, utilisateurId], references: [tenantId, id], onDelete: Restrict)
+
+  @@index([tenantId, utilisateurId, au])
+  @@map("absence_agent")
 }
 
 /// Refresh token (seule son empreinte est stockée), avec rotation et révocation.
@@ -525,6 +621,8 @@ model Reclamation {
   // Escalade (manuelle par l'agent, ou au dépassement du SLA)
   escaladeeLe     DateTime? @map("escaladee_le") @db.Timestamptz(3)
   escaladeeVersId String?   @map("escaladee_vers_id") @db.Uuid
+  /// Second niveau : Admin Entreprise prévenu (étape 16), une seule fois
+  escaladeeAdminLe DateTime? @map("escaladee_admin_le") @db.Timestamptz(3)
 
   // Jalons et indicateurs (§6.6)
   prisEnChargeLe              DateTime? @map("pris_en_charge_le") @db.Timestamptz(3)
@@ -564,6 +662,8 @@ model Reclamation {
   piecesJointes PieceJointe[]
   evenements    ReclamationEvenement[]
   notifications Notification[]
+  enquete       EnqueteSatisfaction?
+  conversation  Conversation?
 
   @@unique([tenantId, id])
   @@unique([tenantId, numero])
@@ -614,6 +714,38 @@ model Commentaire {
   @@unique([tenantId, id])
   @@index([tenantId, reclamationId, creeLe])
   @@map("commentaire")
+}
+
+/// Conversation avec le client d'une réclamation (étape 17, décision I8), commune à tous les canaux :
+/// une par réclamation. Ses messages sont les commentaires publics de la réclamation (réponses de la
+/// banque, messages du client) : SLA, chronologie, pièces jointes et immuabilité ne changent pas.
+/// La conversation porte le canal, les marques de lecture et la présence du client.
+model Conversation {
+  id                     String            @id @default(uuid(7)) @db.Uuid
+  tenantId               String            @map("tenant_id") @db.Uuid
+  reclamationId          String            @map("reclamation_id") @db.Uuid
+  /// Canal où le client a écrit en dernier ; la réponse de la banque y part (WhatsApp et SMS à l'étape 19)
+  canal                  CanalConversation @default(WEB)
+  creeLe                 DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
+  dernierMessageClientLe DateTime?         @map("dernier_message_client_le") @db.Timestamptz(3)
+  dernierMessageBanqueLe DateTime?         @map("dernier_message_banque_le") @db.Timestamptz(3)
+  /// Dernière lecture par le client, chat ouvert à l'écran : sert aussi à savoir s'il est en ligne
+  luClientLe             DateTime?         @map("lu_client_le") @db.Timestamptz(3)
+  /// Dernière lecture par l'agent assigné (par un superviseur si la réclamation n'est pas assignée)
+  luBanqueLe             DateTime?         @map("lu_banque_le") @db.Timestamptz(3)
+  /// Dernier avis (e-mail, SMS) d'une réponse restée non lue dans le chat
+  avisClientLe           DateTime?         @map("avis_client_le") @db.Timestamptz(3)
+
+  banque      Banque      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  reclamation Reclamation @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, reclamationId])
+  // Boîte de réception des agents
+  @@index([tenantId, dernierMessageClientLe])
+  // Avis différés au client (worker)
+  @@index([dernierMessageBanqueLe])
+  @@map("conversation")
 }
 
 /// Fichier joint (image ou PDF, 5 au plus au dépôt), avec empreinte SHA-256.
@@ -667,6 +799,30 @@ model ReclamationEvenement {
   @@index([tenantId, reclamationId, creeLe])
   @@index([tenantId, type, creeLe])
   @@map("reclamation_evenement")
+}
+
+/// Enquête de satisfaction (étape 15) : ouverte à la clôture confirmée ou automatique d'une
+/// réclamation, une seule par réclamation, pendant 7 jours. Une fois donnée, la réponse ne se
+/// modifie plus (trigger). Le Super Admin n'en lit jamais le commentaire (arbitrage 7).
+model EnqueteSatisfaction {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  reclamationId  String    @map("reclamation_id") @db.Uuid
+  /// Ouverture : la clôture de la réclamation
+  creeLe         DateTime  @default(now()) @map("cree_le") @db.Timestamptz(3)
+  expireLe       DateTime  @map("expire_le") @db.Timestamptz(3)
+  reponduLe      DateTime? @map("repondu_le") @db.Timestamptz(3)
+  /// Satisfaction sur le traitement de la réclamation (CSAT), de 1 à 5
+  note           Int?      @db.SmallInt
+  /// Recommandation de la banque à un proche (NPS), de 0 à 10
+  recommandation Int?      @db.SmallInt
+  commentaire    String?   @db.VarChar(1000)
+
+  reclamation Reclamation @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, reclamationId])
+  @@index([tenantId, creeLe])
+  @@map("enquete_satisfaction")
 }
 
 // -----------------------------------------------------------------------------

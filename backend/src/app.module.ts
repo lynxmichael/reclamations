@@ -2,6 +2,7 @@
  * Application HTTP : l'API du contrat sous /api/v1, la documentation Swagger sous /api/docs.
  */
 import 'reflect-metadata';
+import type { Server } from 'node:http';
 import { Module, type DynamicModule, type INestApplication } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -10,6 +11,8 @@ import { InterceptionContrat } from './infrastructure/contrat/contrat.intercepto
 import { FiltreErreurs } from './infrastructure/contrat/filtre-erreurs.js';
 import { monterDocumentation } from './infrastructure/contrat/documentation.js';
 import { monterVerificationTls } from './infrastructure/tls.js';
+import { AttributionModule } from './modules/attribution/attribution.controller.js';
+import { ConversationsModule } from './modules/conversations/conversations.controller.js';
 import { AuditModule } from './modules/audit/audit.controller.js';
 import { AuthModule } from './modules/auth/auth.controller.js';
 import { ClientModule } from './modules/client/client.controller.js';
@@ -41,6 +44,8 @@ export class AppModule {
         ReclamationsModule,
         NotificationsModule,
         ParametrageModule,
+        AttributionModule,
+        ConversationsModule,
         PersonnelModule,
         AuditModule,
         PlateformeModule,
@@ -54,12 +59,19 @@ export class AppModule {
 }
 
 /** Crée l'application (utilisé par main.ts et par les tests de bout en bout). */
-export async function creerApplication(options: OptionsNoyau & { journaux?: boolean }): Promise<INestApplication> {
+export async function creerApplication(options: OptionsNoyau & { journaux?: boolean | 'erreurs' }): Promise<INestApplication> {
   const config: Configuration = options.configuration;
   const app = await NestFactory.create<NestExpressApplication>(AppModule.pour(options), {
-    logger: options.journaux === false ? false : ['error', 'warn', 'log'],
+    // Tests de bout en bout : les erreurs seules (une coupure d'export, par exemple, y dit sa cause)
+    logger: options.journaux === false ? false : options.journaux === 'erreurs' ? ['error'] : ['error', 'warn', 'log'],
     bodyParser: false,
   });
+  // Connexions inactives gardées 65 s, plus longtemps que celles des clients (Caddy : 30 s) : un client
+  // ne réutilise jamais une connexion que l'API vient de fermer, ce qui ferait échouer sa requête
+  // (502 derrière Caddy, ECONNRESET en direct). Node les ferme sinon après 5 s
+  const serveur = app.getHttpServer() as Server;
+  serveur.keepAliveTimeout = 65_000;
+  serveur.headersTimeout = 66_000;
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
   app.useBodyParser('json', { limit: '100kb' });

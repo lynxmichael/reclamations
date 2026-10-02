@@ -133,6 +133,27 @@ export function ajouterMinutesOuvrees(debut: Date, minutes: number, cal: Calendr
   throw new Error('Aucune plage ouvrée exploitable dans les trois prochaines années');
 }
 
+/**
+ * Premier instant ouvré à partir de `instant` : lui-même s'il tombe dans les heures ouvrées, sinon
+ * la prochaine ouverture (étape 16 : le jour où une réclamation déposée la nuit sera traitée).
+ */
+export function prochainInstantOuvre(instant: Date, cal: CalendrierNormalise): Date {
+  if (cal.continu) return new Date(instant);
+  const t = instant.getTime();
+  const premier = jourCivil(t, cal.zone);
+  for (let jour = premier; jour < premier + LIMITE_JOURS; jour++) {
+    for (const [a, b] of intervallesDuJour(jour, cal)) {
+      if (t < b) return new Date(Math.max(a, t));
+    }
+  }
+  throw new Error('Aucune plage ouvrée exploitable dans les trois prochaines années');
+}
+
+/** Date locale AAAA-MM-JJ d'un instant, dans le fuseau du calendrier. */
+export function dateLocale(instant: Date, cal: CalendrierNormalise): string {
+  return DateTime.fromJSDate(instant, { zone: cal.zone }).toISODate()!;
+}
+
 /** Minutes ouvrées écoulées entre deux instants (0 si fin <= début). Valeur décimale. */
 export function minutesOuvreesEntre(debut: Date, fin: Date, cal: CalendrierNormalise): number {
   const a = debut.getTime();

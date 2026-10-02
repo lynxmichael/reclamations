@@ -3,7 +3,7 @@
  * onglets et chrono de chaque réclamation (SlaResume), sans recalcul côté interface.
  */
 import { useState, type ReactNode } from 'react';
-import { ArrowDownUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame, QrCode, Globe, ArrowUpRight, X } from 'lucide-react';
+import { ArrowDownUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame, QrCode, Globe, ArrowUpRight, Sparkles, X } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, BadgeStatut, Bouton, Onglets, cx } from '../../ui/composants';
 import { ChoixFiltre } from '../../ui/Filtre';
@@ -86,6 +86,7 @@ export function Files({
   references,
   chargement,
   exportEnCours,
+  surValiderSuggestion,
 }: {
   page: S<'PageReclamations'>;
   moi: S<'Moi'>;
@@ -104,6 +105,8 @@ export function Files({
   /** Nouvelle page en cours de chargement : les lignes actuelles restent visibles */
   chargement?: boolean;
   exportEnCours?: boolean;
+  /** Mode suggestion (étape 16) : le superviseur assigne à l'agent proposé, sans ouvrir la fiche */
+  surValiderSuggestion?: (r: S<'ReclamationResume'>, agent: S<'ReferenceNommee'>) => void;
 }) {
   const [fileLocale, setFileLocale] = useState<File>(fileInitiale);
   const serveur = !!(criteres && surCriteres);
@@ -260,6 +263,25 @@ export function Files({
                     <span className="text-encre-3">Non assignée</span>
                   ) : r.statut === 'CLOTUREE' ? (
                     <span className="text-encre-3">—</span>
+                  ) : r.agentSuggere ? (
+                    <span className="flex flex-col items-start gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-marque bg-marque-doux/60 py-0.5 pr-2.5 pl-2 text-sm" title="Agent disponible le moins chargé du groupe">
+                        <Sparkles aria-hidden size={13} className="text-marque-texte" />
+                        <span className="sr-only">Suggéré :</span>
+                        {r.agentSuggere.nom}
+                      </span>
+                      <Bouton
+                        taille="petit"
+                        variante="secondaire"
+                        aria-label={`Assigner ${r.numero} à ${r.agentSuggere.nom}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          surValiderSuggestion?.(r, r.agentSuggere!);
+                        }}
+                      >
+                        Valider
+                      </Bouton>
+                    </span>
                   ) : (
                     <Bouton taille="petit" variante="secondaire">Assigner</Bouton>
                   )}

@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import {
-  Bell, Building2, CalendarClock, ChartColumn, Inbox, ListChecks, LogOut, QrCode, ScrollText, Search, Users,
+  Bell, Building2, CalendarClock, CalendarOff, ChartColumn, Inbox, ListChecks, LogOut, MessagesSquare, QrCode, ScrollText, Search, Users, Waypoints,
 } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, LogoBanque, Pastille, cx } from '../../ui/composants';
@@ -13,13 +13,16 @@ import { relatif } from '../../ui/format';
 import { ROLE } from '../../ui/libelles';
 import { styleMarque } from '../../ui/marque';
 
-export type PageBackOffice = 'reclamations' | 'tableau' | 'categories' | 'points' | 'horaires' | 'banque' | 'personnel' | 'audit';
+export type PageBackOffice =
+  | 'reclamations' | 'conversations' | 'tableau' | 'categories' | 'points' | 'horaires' | 'banque' | 'attribution' | 'personnel' | 'absences' | 'audit';
 
 const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle: string; icone: typeof Inbox; roles: S<'RoleUtilisateur'>[] }[] }[] = [
   {
     titre: null,
     liens: [
       { cle: 'reclamations', libelle: 'Réclamations', icone: Inbox, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      // Étape 17 : seulement si Makor a ouvert le chat web à la banque (pages offertes)
+      { cle: 'conversations', libelle: 'Conversations', icone: MessagesSquare, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
       { cle: 'tableau', libelle: 'Tableau de bord', icone: ChartColumn, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
     ],
   },
@@ -30,12 +33,15 @@ const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle:
       { cle: 'points', libelle: 'Agences et QR codes', icone: QrCode, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
       { cle: 'horaires', libelle: 'Horaires et jours fériés', icone: CalendarClock, roles: ['ADMIN_ENTREPRISE'] },
       { cle: 'banque', libelle: 'Banque et apparence', icone: Building2, roles: ['ADMIN_ENTREPRISE'] },
+      // Étape 16 : seulement si Makor a ouvert l'attribution automatique à la banque (pages offertes)
+      { cle: 'attribution', libelle: 'Attribution et escalade', icone: Waypoints, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
     ],
   },
   {
     titre: 'Équipe',
     liens: [
       { cle: 'personnel', libelle: 'Personnel', icone: Users, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      { cle: 'absences', libelle: 'Absences', icone: CalendarOff, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
       { cle: 'audit', libelle: "Journal d'audit", icone: ScrollText, roles: ['ADMIN_ENTREPRISE'] },
     ],
   },
@@ -46,6 +52,7 @@ export function CadreBackOffice({
   moi,
   page,
   aTraiter,
+  aRepondre,
   notifications,
   notificationsOuvertes,
   maintenant,
@@ -65,6 +72,8 @@ export function CadreBackOffice({
   page: PageBackOffice;
   /** Pastille du menu Réclamations : les réclamations à traiter de l'utilisateur */
   aTraiter?: number;
+  /** Pastille du menu Conversations : les clients qui attendent une réponse (étape 17) */
+  aRepondre?: number;
   notifications: S<'PageNotifications'>;
   notificationsOuvertes?: boolean;
   maintenant: string;
@@ -126,6 +135,7 @@ export function CadreBackOffice({
                           <l.icone aria-hidden size={18} strokeWidth={2.1} className={actif ? 'text-marque-texte' : undefined} />
                           <span className="flex-1">{l.libelle}</span>
                           {l.cle === 'reclamations' && aTraiter !== undefined && <Pastille n={aTraiter} />}
+                          {l.cle === 'conversations' && aRepondre !== undefined && aRepondre > 0 && <Pastille n={aRepondre} ton="marque" />}
                         </a>
                       </li>
                     );

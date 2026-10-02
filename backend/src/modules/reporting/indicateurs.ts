@@ -13,6 +13,7 @@ import { DateTime } from 'luxon';
 import { Prisma } from '../../generated/prisma/client.js';
 import { enSerie, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
 import { invalideChamp } from '../../infrastructure/contrat/probleme.js';
+import { nps } from '../../domaine/satisfaction.js';
 import type { S } from '../commun.js';
 
 export type Regroupement = S<'Regroupement'>;
@@ -130,8 +131,74 @@ interface Compte {
   n: number;
 }
 
+/**
+ * Enquêtes de satisfaction (étape 15) : satisfaits = notes 4 et 5 (CSAT) ; promoteurs 9 et 10,
+ * passifs 7 et 8, détracteurs 0 à 6 (NPS). Préfixe « e » : la table enquete_satisfaction.
+ */
+const AVIS = Prisma.sql`
+  count(*)::int AS enquetes,
+  count(*) FILTER (WHERE e.repondu_le IS NOT NULL)::int AS reponses,
+  count(*) FILTER (WHERE e.note >= 4)::int AS satisfaits,
+  count(*) FILTER (WHERE e.recommandation >= 9)::int AS promoteurs,
+  count(*) FILTER (WHERE e.recommandation BETWEEN 7 AND 8)::int AS passifs,
+  count(*) FILTER (WHERE e.recommandation <= 6)::int AS detracteurs`;
+
+interface TotauxAvis {
+  enquetes: number;
+  reponses: number;
+  satisfaits: number;
+  promoteurs: number;
+  passifs: number;
+  detracteurs: number;
+}
+
+/**
+ * Satisfaction des clients (étape 15) : enquêtes ouvertes pendant la période (à la clôture),
+ * pour les réclamations des autres filtres (catégorie, agence, canal, agent). Vide si la banque
+ * n'a pas activé les enquêtes et n'en a aucune sur la période.
+ */
+async function satisfactionBanque(tx: ClientTransaction, f: FiltresIndicateurs, active: boolean): Promise<S<'Satisfaction'> | null> {
+  const perimetre = Prisma.sql`e.cree_le >= ${f.du} AND e.cree_le < ${f.au}
+    AND e.reclamation_id IN (SELECT id FROM reclamation WHERE ${conditionsSql(f, null)})`;
+  const [[t], [moyenne], agents, commentaires] = await enSerie([
+    () => tx.$queryRaw<TotauxAvis[]>`SELECT ${AVIS} FROM enquete_satisfaction e WHERE ${perimetre}`,
+    () => tx.$queryRaw<{ note: number | null }[]>`SELECT avg(e.note)::float8 AS note FROM enquete_satisfaction e WHERE ${perimetre}`,
+    () => tx.$queryRaw<(TotauxAvis & { cle: string; prenom: string; nom: string })[]>`
+      SELECT r.agent_id::text AS cle, u.prenom, u.nom, ${AVIS}
+      FROM enquete_satisfaction e JOIN reclamation r ON r.id = e.reclamation_id JOIN utilisateur u ON u.id = r.agent_id
+      WHERE ${perimetre} AND e.repondu_le IS NOT NULL
+      GROUP BY r.agent_id, u.prenom, u.nom`,
+    () => tx.$queryRaw<{ reclamation_id: string; numero: string; note: number; recommandation: number; commentaire: string; repondu_le: Date }[]>`
+      SELECT e.reclamation_id::text, r.numero, e.note::int, e.recommandation::int, e.commentaire, e.repondu_le
+      FROM enquete_satisfaction e JOIN reclamation r ON r.id = e.reclamation_id
+      WHERE ${perimetre} AND e.commentaire IS NOT NULL
+      ORDER BY e.repondu_le DESC, e.id DESC LIMIT 10`,
+  ]);
+  if (!active && t!.enquetes === 0) return null;
+  return {
+    enquetes: t!.enquetes,
+    reponses: t!.reponses,
+    tauxReponse: taux(t!.reponses, t!.enquetes),
+    tauxSatisfaits: taux(t!.satisfaits, t!.reponses),
+    noteMoyenne: moyenne!.note === null ? null : Math.round(moyenne!.note * 10) / 10,
+    nps: nps(t!.promoteurs, t!.detracteurs, t!.reponses),
+    promoteurs: t!.promoteurs,
+    passifs: t!.passifs,
+    detracteurs: t!.detracteurs,
+    parAgent: agents
+      .map((a) => ({ cle: a.cle, libelle: `${a.prenom} ${a.nom}`, reponses: a.reponses, tauxSatisfaits: taux(a.satisfaits, a.reponses)!, nps: nps(a.promoteurs, a.detracteurs, a.reponses)! }))
+      .sort((a, b) => b.reponses - a.reponses || a.libelle.localeCompare(b.libelle, 'fr')),
+    commentaires: commentaires.map((c) => ({
+      reclamationId: c.reclamation_id, numero: c.numero, note: c.note, recommandation: c.recommandation,
+      commentaire: c.commentaire, reponduLe: c.repondu_le.toISOString(),
+    })),
+  };
+}
+
 /** Tableau de bord d'une banque (contexte banque : la RLS limite à ses réclamations). */
-export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicateurs, fuseau: string, r: Regroupement, maintenant: Date): Promise<S<'Indicateurs'>> {
+export async function indicateursBanque(
+  tx: ClientTransaction, f: FiltresIndicateurs, fuseau: string, r: Regroupement, maintenant: Date, enqueteActive = false,
+): Promise<S<'Indicateurs'>> {
   const debuts = debutsDesPas(f, r, fuseau);
   const quand = conditionsSql(f);
   // Début local du pas (texte « AAAA-MM-JJTHH:MM:SS »), dans le fuseau de la banque
@@ -162,6 +229,7 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
       WHERE ${conditionsSql(f, null)} AND statut IN ('OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT')`,
   ]);
 
+  const satisfaction = await satisfactionBanque(tx, f, enqueteActive);
   const nomCategorie = new Map(categories.map((c) => [c.id, c.nom]));
   const nomAgence = new Map(agences.map((a) => [a.id, a.nom]));
   const tri = (a: S<'Volume'>, b: S<'Volume'>) => b.total - a.total || a.libelle.localeCompare(b.libelle, 'fr');
@@ -192,6 +260,7 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
         return { debut: d.toUTC().toISO({ suppressMilliseconds: true })!, deposees: dep.get(cle) ?? 0, resolues: res.get(cle) ?? 0 };
       }),
     },
+    satisfaction,
   };
 }
 
@@ -201,11 +270,15 @@ export async function indicateursBanque(tx: ClientTransaction, f: FiltresIndicat
  */
 export async function indicateursPlateforme(tx: ClientTransaction, p: Periode, banqueId?: string): Promise<S<'IndicateursPlateforme'>> {
   const quand = Prisma.sql`cree_le >= ${p.du} AND cree_le < ${p.au}${banqueId ? Prisma.sql` AND tenant_id = ${banqueId}::uuid` : Prisma.empty}`;
-  const [banques, totaux, parStatut] = await enSerie([
+  const quandAvis = Prisma.sql`e.cree_le >= ${p.du} AND e.cree_le < ${p.au}${banqueId ? Prisma.sql` AND e.tenant_id = ${banqueId}::uuid` : Prisma.empty}`;
+  const [banques, totaux, parStatut, avis] = await enSerie([
     () => tx.banque.findMany({ where: banqueId ? { id: banqueId } : {}, select: { id: true, nom: true }, orderBy: { nom: 'asc' } }),
     () => tx.$queryRaw<(Totaux & { tenant_id: string })[]>`SELECT tenant_id, ${TOTAUX} FROM reclamation WHERE ${quand} GROUP BY tenant_id`,
     () => tx.$queryRaw<{ tenant_id: string; statut: string; n: number }[]>`
       SELECT tenant_id, statut::text AS statut, count(*)::int AS n FROM reclamation WHERE ${quand} GROUP BY 1, 2`,
+    // Notes seulement : le rôle de la plateforme ne lit pas le commentaire du client (étape 15)
+    () => tx.$queryRaw<(TotauxAvis & { tenant_id: string })[]>`
+      SELECT e.tenant_id, ${AVIS} FROM enquete_satisfaction e WHERE ${quandAvis} GROUP BY e.tenant_id`,
   ]);
   return {
     du: p.du.toISOString(),
@@ -221,6 +294,9 @@ export async function indicateursPlateforme(tx: ClientTransaction, p: Periode, b
         urgentes: t?.urgentes ?? 0,
         tauxRespectSla: t ? taux(t.dans_les_delais, t.resolues) : null,
         tauxResolutionPremierContact: t ? taux(t.premier_contact, t.resolues) : null,
+        satisfaction: ((a) => (a
+          ? { enquetes: a.enquetes, reponses: a.reponses, tauxSatisfaits: taux(a.satisfaits, a.reponses), nps: nps(a.promoteurs, a.detracteurs, a.reponses) }
+          : null))(avis.find((l) => l.tenant_id === b.id)),
       };
     }),
   };

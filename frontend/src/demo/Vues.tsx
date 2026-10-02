@@ -5,15 +5,19 @@
 import { MessageSquareText, X } from 'lucide-react';
 import type { S } from '../api/types';
 import { Accuse } from '../ecrans/portail/Accuse';
+import { Avis } from '../ecrans/portail/Avis';
 import { CodeOtp } from '../ecrans/portail/CodeOtp';
 import { Depot } from '../ecrans/portail/Depot';
 import { MaReclamation } from '../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../ecrans/portail/MesReclamations';
 import { Suivi } from '../ecrans/portail/Suivi';
+import { Absences } from '../ecrans/back-office/Absences';
+import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
 import { CadreBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
+import { Conversations } from '../ecrans/back-office/Conversations';
 import { Files } from '../ecrans/back-office/Files';
 import { Horaires } from '../ecrans/back-office/Horaires';
 import { Personnel } from '../ecrans/back-office/Personnel';
@@ -21,7 +25,7 @@ import { PointsDepot } from '../ecrans/back-office/PointsDepot';
 import { TableauDeBord } from '../ecrans/back-office/TableauDeBord';
 import { Ticket } from '../ecrans/back-office/Ticket';
 import { DOMAINE } from '../maquettes/donnees/commun';
-import { AGENCES, CATEGORIES, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, moi } from '../maquettes/donnees/parametrage';
+import { AGENCES, AGENTS_DES_GROUPES, CATEGORIES, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, moi } from '../maquettes/donnees/parametrage';
 import { heure } from '../ui/format';
 import { SUGGESTIONS, UTILISATEUR, type Demo } from './useDemo';
 
@@ -44,7 +48,11 @@ export function EcranClient({ d }: { d: Demo }) {
     case 'accuse':
       return <Accuse banque={banque} accuse={c.accuse} envoiPar="par SMS et par e-mail" surSuivre={() => a.suivre()} surAutre={a.nouveauDepot} />;
     case 'suivi':
-      return <Suivi suivi={moteur.suivi(c.jeton)} surDemanderCode={(canal) => a.demanderCode(c.jeton, canal)} />;
+      return <Suivi suivi={moteur.suivi(c.jeton)} surDemanderCode={(canal) => a.demanderCode(c.jeton, canal)} surAvis={() => a.avis(c.jeton)} />;
+    case 'avis': {
+      const avis = moteur.lireAvis(c.jeton);
+      return <Avis key={`${c.jeton}-${avis.etat}`} avis={avis} erreur={c.erreur} surEnvoyer={(r) => a.donnerAvis(c.jeton, r)} surSuivi={() => a.suivre(c.jeton)} />;
+    }
     case 'code':
       return (
         <CodeOtp
@@ -73,6 +81,7 @@ export function EcranClient({ d }: { d: Demo }) {
           surConfirmer={() => a.confirmer(c.id)}
           surContester={(motif) => a.contester(c.id, motif)}
           surEnvoyer={(texte) => a.envoyer(c.id, texte)}
+          surAvis={() => a.avis(moteur.ticket(c.id).jetonSuivi)}
         />
       ) : null;
   }
@@ -111,7 +120,8 @@ export function adresseBanque(d: Demo) {
   const base = `${d.moteur.banque.slug}.${DOMAINE}/back-office`;
   const { page, ficheId } = d.banque;
   if (ficheId) return `${base}/reclamations/${d.moteur.ticket(ficheId).numero}`;
-  return `${base}/${{ reclamations: 'reclamations', tableau: 'tableau-de-bord', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', personnel: 'personnel', audit: 'journal-audit' }[page]}`;
+  if (page === 'conversations' && d.banque.conversationId) return `${base}/conversations/${d.banque.conversationId.slice(-6)}`;
+  return `${base}/${{ reclamations: 'reclamations', conversations: 'conversations', tableau: 'tableau-de-bord', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', attribution: 'parametrage/attribution', personnel: 'personnel', absences: 'absences', audit: 'journal-audit' }[page]}`;
 }
 
 /** Textes proposés dans la fiche de la réclamation de la démo, tant qu'ils servent. */
@@ -165,10 +175,22 @@ export function EcranBanque({ d }: { d: Demo }) {
             fileInitiale={b.role === 'AGENT' ? 'assignees' : files.compteurs.recues > 0 ? 'recues' : 'toutes'}
             surOuvrir={a.ouvrirFiche}
             surExporter={a.exporter}
+            surValiderSuggestion={(r, agent) => d.actionsFiche(r.id).assigner?.(agent.id)}
             enAvant={d.demoId}
           />
         );
         break;
+      case 'conversations': {
+        const filtre = b.filtre ?? 'a-repondre';
+        let selection = null;
+        try {
+          selection = b.conversationId ? moteur.conversation(utilisateur, b.conversationId) : null;
+        } catch {
+          selection = null;
+        }
+        contenu = <Conversations page={moteur.conversations(utilisateur, filtre)} filtre={filtre} selection={selection} maintenant={maintenant} actions={d.actionsConversations} />;
+        break;
+      }
       case 'tableau':
         contenu = (
           <TableauDeBord
@@ -196,6 +218,33 @@ export function EcranBanque({ d }: { d: Demo }) {
           <Personnel page={PAGE_PERSONNEL} plan={PARAMETRES.plan} consommation={PARAMETRES.consommation} modifiable={b.role === 'ADMIN_ENTREPRISE'} maintenant={maintenant} />
         );
         break;
+      case 'attribution':
+        contenu = (
+          <Attribution
+            regles={moteur.regles()}
+            groupes={moteur.groupes()}
+            agents={AGENTS_DES_GROUPES}
+            modifiable={b.role === 'ADMIN_ENTREPRISE'}
+            actions={b.role === 'ADMIN_ENTREPRISE' ? {
+              changerMode: a.modeAttribution,
+              enregistrerRegles: a.groupesFixes,
+              creerGroupe: a.groupesFixes,
+              modifierGroupe: a.groupesFixes,
+              supprimerGroupe: a.groupesFixes,
+            } : undefined}
+          />
+        );
+        break;
+      case 'absences':
+        contenu = (
+          <Absences
+            absences={moteur.absencesAVenir()}
+            agents={AGENTS_DES_GROUPES.map((x) => ({ id: x.id, nom: x.nom }))}
+            aujourdhui={moteur.aujourdhui()}
+            actions={{ ajouter: a.ajouterAbsence, supprimer: a.supprimerAbsence }}
+          />
+        );
+        break;
       case 'audit':
         contenu = <Audit journal={moteur.journalAudit()} verification={moteur.verificationJournal()} />;
         break;
@@ -208,6 +257,7 @@ export function EcranBanque({ d }: { d: Demo }) {
       moi={moiCourant}
       page={b.ficheId ? 'reclamations' : b.page}
       aTraiter={b.role === 'AGENT' ? files.compteurs.assignees : files.compteurs.recues}
+      aRepondre={moteur.conversations(utilisateur).compteurs.aRepondre}
       notifications={moteur.notificationsDe(utilisateur)}
       notificationsOuvertes={b.notifs}
       maintenant={maintenant}

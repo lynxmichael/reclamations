@@ -9,5 +9,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.{ts,tsx}'],
     environment: 'node',
+    // Délais larges, comme au backend : un poste sous Docker Desktop est plusieurs fois plus lent
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

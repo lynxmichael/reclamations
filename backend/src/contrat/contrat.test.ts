@@ -81,7 +81,7 @@ describe('codes d\'erreur', () => {
 
   it('toutes les réponses d\'erreur sont au format problem+json (RFC 9457)', () => {
     for (const [nom, reponse] of Object.entries(contrat.components.responses)) {
-      if (['Fichier', 'Reclamation', 'SessionOuverte', 'Parametres', 'Horaires', 'UnUtilisateur', 'UneBanque', 'Verification'].includes(nom)) continue;
+      if (['Fichier', 'Reclamation', 'SessionOuverte', 'Parametres', 'Regles', 'Horaires', 'UnUtilisateur', 'UneBanque', 'Verification'].includes(nom)) continue;
       expect(Object.keys(reponse.content ?? {}), nom).toEqual(['application/problem+json']);
     }
     for (const { chemin, methode, op } of operations) {
@@ -131,6 +131,8 @@ describe('lien avec le cycle de vie (étape 4)', () => {
   const INTERNES = new Set([
     'constructor', 'maintenant', 'trouverOuCreerClient', 'prochainNumero', 'signalerPlafond', 'surTicket',
     'transition', 'noterPremiereReponse', 'commentaire', 'joindre', 'evenement', 'auditer', 'envois',
+    // Attribution par le système (étape 16), au dépôt et par le worker : pas d'opération d'API
+    'attribuer',
   ]);
   const actionsDuService = Object.getOwnPropertyNames(CycleDeVie.prototype).filter((n) => !INTERNES.has(n));
   const parAction = new Map(operations.filter((o) => o.op['x-action']).map((o) => [o.op['x-action'] as string, o]));

@@ -71,6 +71,12 @@ tags:
     description: Journal d'audit chaîné
   - name: Plateforme
     description: Banques, plans, statistiques et audit de toutes les banques (Super Admin)
+  - name: Satisfaction
+    description: Enquête de satisfaction après la clôture, ouverte par le lien de suivi (phase 2, étape 15)
+  - name: Attribution
+    description: Groupes d'agents, absences, attribution automatique ou suggérée, escalade à l'Admin Entreprise (phase 2, étape 16)
+  - name: Conversations
+    description: Chat web du portail et boîte de réception des agents (phase 2, étape 17)
 
 paths:
   # ===========================================================================
@@ -260,6 +266,55 @@ paths:
         '422': { $ref: '#/components/responses/RegleMetier' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
+  /public/suivi/{jetonSuivi}/avis:
+    get:
+      tags: [Satisfaction]
+      operationId: lireAvis
+      summary: Enquête de satisfaction d'une réclamation clôturée
+      description: |
+        Ouverte par le lien du message de clôture ou par le bouton de la page de suivi (étape 15).
+        404 si la réclamation n'a pas d'enquête : banque sans enquêtes, réclamation pas encore
+        clôturée, ou clôture forcée.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/JetonSuivi'
+      responses:
+        '200':
+          description: Enquête et, si elle est donnée, la réponse du client
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Avis' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+    post:
+      tags: [Satisfaction]
+      operationId: donnerAvis
+      summary: Réponse du client à l'enquête de satisfaction
+      description: |
+        Une seule réponse, dans les 7 jours qui suivent la clôture ; elle ne se modifie plus
+        (409 AVIS_DEJA_DONNE). Après 7 jours : 422 ENQUETE_TERMINEE.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/JetonSuivi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReponseAvis' }
+      responses:
+        '200':
+          description: Réponse enregistrée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Avis' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   /public/logos/{fichier}:
     get:
       tags: [Dépôt et suivi]
@@ -336,7 +391,11 @@ paths:
       tags: [Espace client]
       operationId: envoyerMessageClient
       summary: Écrire à la banque (avec pièces jointes)
-      description: Si la banque attendait une réponse, le ticket repasse « En cours » et le chrono SLA reprend.
+      description: |
+        Si la banque attendait une réponse, le ticket repasse « En cours » et le chrono SLA reprend.
+        Chat web ouvert (étape 17) : le message entre dans la conversation de la réclamation ; l'agent
+        n'est alerté qu'au premier message non lu d'une rafale. 30 messages au plus par réclamation
+        et par 10 minutes.
       x-roles: [CLIENT]
       x-action: messageDuClient
       security:
@@ -361,6 +420,54 @@ paths:
         '413': { $ref: '#/components/responses/FichierTropVolumineux' }
         '415': { $ref: '#/components/responses/TypeNonSupporte' }
         '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /client/reclamations/{id}/conversation:
+    get:
+      tags: [Conversations]
+      operationId: lireConversationClient
+      summary: Chat de la réclamation — nouveaux messages et état, relu toutes les 5 secondes
+      description: |
+        Messages publics de la réclamation écrits à partir de `apres` (tous sans `apres`), disponibilité
+        de la banque et sa dernière lecture. Réservé aux banques dont Makor a ouvert le chat web
+        (décision I2) : sinon 403 FONCTION_NON_OUVERTE. Le client ne voit jamais le nom de l'agent.
+      x-roles: [CLIENT]
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/Apres'
+      responses:
+        '200':
+          description: Nouveaux messages et état du chat
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationClient' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /client/reclamations/{id}/conversation/lecture:
+    post:
+      tags: [Conversations]
+      operationId: marquerConversationLueClient
+      summary: Le chat est à l'écran — messages lus, client en ligne
+      description: |
+        À appeler à l'ouverture du chat, à l'arrivée d'une réponse de la banque et chaque minute tant que
+        le chat reste à l'écran. Le premier appel ouvre la conversation. Une réponse lue dans les
+        2 minutes ne donne lieu à aucun e-mail ni SMS.
+      x-roles: [CLIENT]
+      security:
+        - jetonClient: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Lecture enregistrée
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
 
   /client/reclamations/{id}/confirmation:
     post:
@@ -753,6 +860,8 @@ paths:
       description: |
         Depuis « Ouverte », le ticket est d'abord pris en charge. Avec `attendreReponse`, il passe
         « En attente client » et le chrono SLA s'arrête jusqu'à la réponse du client.
+        Chat web (étape 17) : si le client a ouvert le chat, l'e-mail ou le SMS ne part que si la
+        réponse reste non lue 2 minutes ; plusieurs réponses rapprochées donnent un seul avis.
       x-roles: [AGENT, SUPERVISEUR]
       x-action: repondreAuClient
       security:
@@ -1424,8 +1533,261 @@ paths:
         '404': { $ref: '#/components/responses/Introuvable' }
 
   # ===========================================================================
+  #  Banque : attribution et escalade automatiques (phase 2, étape 16)
+  # ===========================================================================
+  /banque/parametres/traitement:
+    get:
+      tags: [Attribution]
+      operationId: lireReglesTraitement
+      summary: Mode d'attribution, groupe de chaque catégorie et agence, seuils d'escalade
+      description: Fonction ouverte par Makor banque par banque (code FONCTION_NON_OUVERTE sinon).
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200': { $ref: '#/components/responses/Regles' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    patch:
+      tags: [Attribution]
+      operationId: modifierReglesTraitement
+      summary: Régler l'attribution et l'escalade
+      description: |
+        Les catégories et agences citées sont réécrites ; les autres ne changent pas. Une catégorie
+        sans seuil prend celui de la banque ; sans seuil nulle part, pas d'escalade à l'Admin Entreprise.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationReglesTraitement' }
+      responses:
+        '200': { $ref: '#/components/responses/Regles' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/groupes:
+    get:
+      tags: [Attribution]
+      operationId: listerGroupes
+      summary: Groupes d'agents, avec la charge et la disponibilité du jour de chaque membre
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Groupes, par nom
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupeAgents' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Attribution]
+      operationId: creerGroupe
+      summary: Créer un groupe d'agents
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcritureGroupe' }
+      responses:
+        '201':
+          description: Groupe créé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupeAgents' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/groupes/{id}:
+    patch:
+      tags: [Attribution]
+      operationId: modifierGroupe
+      summary: Renommer un groupe ou changer ses membres
+      description: Les réclamations déjà assignées ne bougent pas.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationGroupe' }
+      responses:
+        '200':
+          description: Groupe modifié
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupeAgents' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+    delete:
+      tags: [Attribution]
+      operationId: supprimerGroupe
+      summary: Supprimer un groupe
+      description: Ses catégories et agences n'ont plus de groupe ; leurs nouvelles réclamations restent dans la file du superviseur.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Supprimé
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/absences:
+    get:
+      tags: [Attribution]
+      operationId: listerAbsences
+      summary: Absences en cours et à venir des agents
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Absences, de la plus proche à la plus lointaine
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Absence' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Attribution]
+      operationId: ajouterAbsence
+      summary: Déclarer une absence (congé, formation, maladie) ; l'agent ne reçoit rien ces jours-là
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NouvelleAbsence' }
+      responses:
+        '201':
+          description: Absence déclarée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Absence' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/absences/{id}:
+    delete:
+      tags: [Attribution]
+      operationId: supprimerAbsence
+      summary: Retirer une absence
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Retirée
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  # ===========================================================================
   #  Banque : personnel
   # ===========================================================================
+  /banque/conversations:
+    get:
+      tags: [Conversations]
+      operationId: listerConversations
+      summary: Boîte de réception — conversations des réclamations visibles
+      description: |
+        L'agent voit les conversations de ses réclamations ; le superviseur et l'Admin Entreprise, toutes.
+        Seules figurent les conversations où le client a écrit. « À répondre » : le client a écrit en
+        dernier, la plus longue attente d'abord ; « Non lues » et « Toutes » : l'activité la plus
+        récente d'abord. Chat web fermé : 403 FONCTION_NON_OUVERTE.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/FiltreConversations'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ParPage'
+      responses:
+        '200':
+          description: Conversations et compteurs
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PageConversations' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/conversations/{id}:
+    get:
+      tags: [Conversations]
+      operationId: lireConversation
+      summary: Une conversation — réclamation, messages échangés, présence du client
+      description: Jamais les notes internes, qui restent sur la fiche de la réclamation.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationDetail' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/conversations/{id}/lecture:
+    post:
+      tags: [Conversations]
+      operationId: marquerConversationLue
+      summary: Marquer la conversation lue
+      description: |
+        Compte pour l'agent assigné, ou pour un superviseur si la réclamation n'est pas assignée. Sans
+        effet pour un autre lecteur : un superviseur qui regarde la conversation d'un agent ne la
+        marque pas lue à sa place. Répondre au client la marque lue aussi.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Lecture enregistrée (ou sans effet pour ce lecteur)
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
   /banque/utilisateurs:
     get:
       tags: [Personnel]
@@ -2120,6 +2482,16 @@ components:
       name: nonLues
       in: query
       schema: { type: boolean, default: false }
+    Apres:
+      name: apres
+      in: query
+      description: Seulement les messages écrits à partir de cet instant (le `curseur` de la réponse précédente) ; un message déjà reçu peut revenir, à dédoublonner par `id`
+      schema: { type: string, format: date-time }
+    FiltreConversations:
+      name: filtre
+      in: query
+      description: "a-repondre : le client a écrit en dernier ; non-lues : un message du client attend la lecture de la banque"
+      schema: { type: string, enum: [a-repondre, non-lues, toutes], default: a-repondre }
 
   # ---------------------------------------------------------------------------
   responses:
@@ -2134,7 +2506,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
     Interdit:
-      description: Rôle insuffisant, ou banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque)
+      description: Rôle insuffisant, banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque), ou fonction de la phase 2 que Makor n'a pas ouverte à la banque (code FONCTION_NON_OUVERTE)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
@@ -2208,6 +2580,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ParametresBanque' }
+    Regles:
+      description: Règles d'attribution et d'escalade
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReglesTraitement' }
     Horaires:
       description: Horaires ouvrés
       content:
@@ -2254,8 +2631,8 @@ components:
     TypeEvenement:
       type: string
       enum: [CREATION, PRISE_EN_CHARGE, QUESTION_AU_CLIENT, REPONSE_DU_CLIENT, RESOLUTION, CONFIRMATION, CONTESTATION,
-        CLOTURE_AUTOMATIQUE, CLOTURE_FORCEE, ASSIGNATION, CHANGEMENT_PRIORITE, ESCALADE, ALERTE_SLA_PREVENTIVE,
-        DEPASSEMENT_SLA, MESSAGE, PIECE_JOINTE]
+        CLOTURE_AUTOMATIQUE, CLOTURE_FORCEE, ASSIGNATION, CHANGEMENT_PRIORITE, ESCALADE, ESCALADE_ADMIN,
+        ALERTE_SLA_PREVENTIVE, DEPASSEMENT_SLA, MESSAGE, PIECE_JOINTE]
     ModeCloture:
       type: string
       enum: [CONFIRMATION_CLIENT, AUTOMATIQUE, FORCEE]
@@ -2342,6 +2719,13 @@ components:
         - JOUR_FERIE_EXISTANT
         # Reporting (étape 9)
         - EXPORT_TROP_VOLUMINEUX
+        # Enquêtes de satisfaction (étape 15)
+        - AVIS_DEJA_DONNE
+        - ENQUETE_TERMINEE
+        # Attribution et escalade (étape 16)
+        - FONCTION_NON_OUVERTE
+        - GROUPE_INVALIDE
+        - ABSENCE_INVALIDE
         # Serveur
         - ERREUR_INTERNE
 
@@ -2536,8 +2920,13 @@ components:
     SuiviPublic:
       type: object
       description: Chronologie seule — ni description, ni messages, ni coordonnées
-      required: [numero, statut, categorie, creeLe, banque, etapes]
+      required: [numero, statut, categorie, creeLe, banque, etapes, avis]
       properties:
+        avis:
+          description: Enquête de satisfaction de la réclamation clôturée (étape 15) ; vide s'il n'y en a pas
+          oneOf:
+            - $ref: '#/components/schemas/AvisResume'
+            - type: 'null'
         numero: { type: string, examples: ['ALP-2026-000042'] }
         statut: { $ref: '#/components/schemas/StatutReclamation' }
         categorie: { type: string, examples: ['Carte bancaire'] }
@@ -2546,6 +2935,46 @@ components:
         etapes:
           type: array
           items: { $ref: '#/components/schemas/EtapeSuivi' }
+    EtatAvis:
+      type: string
+      description: "A_DONNER : enquête ouverte ; DONNE : réponse reçue ; TERMINE : 7 jours passés sans réponse"
+      enum: [A_DONNER, DONNE, TERMINE]
+    AvisResume:
+      type: object
+      required: [etat, expireLe]
+      properties:
+        etat: { $ref: '#/components/schemas/EtatAvis' }
+        expireLe: { $ref: '#/components/schemas/Horodatage' }
+    ReponseAvis:
+      type: object
+      description: Réponse du client à l'enquête (étape 15)
+      required: [note, recommandation]
+      properties:
+        note: { type: integer, minimum: 1, maximum: 5, description: "Satisfaction sur le traitement de la réclamation (CSAT), de 1 à 5" }
+        recommandation: { type: integer, minimum: 0, maximum: 10, description: "Recommandation de la banque à un proche (NPS), de 0 à 10" }
+        commentaire: { type: string, maxLength: 1000, description: "Facultatif" }
+    Avis:
+      type: object
+      description: Enquête de satisfaction telle que la voit le client (étape 15)
+      required: [numero, categorie, banque, etat, expireLe, reponse]
+      properties:
+        numero: { type: string, examples: ['ALP-2026-000042'] }
+        categorie: { type: string, examples: ['Carte bancaire'] }
+        banque: { $ref: '#/components/schemas/BanquePublique' }
+        etat: { $ref: '#/components/schemas/EtatAvis' }
+        expireLe: { $ref: '#/components/schemas/Horodatage' }
+        reponse:
+          oneOf:
+            - $ref: '#/components/schemas/AvisDonne'
+            - type: 'null'
+    AvisDonne:
+      type: object
+      required: [note, recommandation, commentaire, reponduLe]
+      properties:
+        note: { type: integer, minimum: 1, maximum: 5 }
+        recommandation: { type: integer, minimum: 0, maximum: 10 }
+        commentaire: { type: [string, 'null'] }
+        reponduLe: { $ref: '#/components/schemas/Horodatage' }
     DemandeOtp:
       type: object
       required: [jetonAntiRobot]
@@ -2599,8 +3028,18 @@ components:
     ReclamationClient:
       type: object
       required: [id, numero, statut, categorie, description, creeLe, clotureAutoPrevueLe, messages, piecesJointes, etapes, actionsPossibles,
-        operationsPossibles]
+        operationsPossibles, avis, chat]
       properties:
+        chat:
+          description: Chat web (étape 17) ; vide si Makor ne l'a pas ouvert à la banque (fil de messages simple)
+          oneOf:
+            - $ref: '#/components/schemas/EtatChat'
+            - type: 'null'
+        avis:
+          description: Enquête de satisfaction (étape 15) et adresse de sa page ; vide s'il n'y en a pas
+          oneOf:
+            - $ref: '#/components/schemas/AvisClient'
+            - type: 'null'
         id: { type: string, format: uuid }
         numero: { type: string }
         statut: { $ref: '#/components/schemas/StatutReclamation' }
@@ -2628,6 +3067,13 @@ components:
           type: array
           description: "Opérations permises au client : CONSULTER, et MESSAGE_DU_CLIENT tant que la réclamation n'est pas résolue"
           items: { $ref: '#/components/schemas/OperationTicket' }
+    AvisClient:
+      type: object
+      required: [etat, expireLe, chemin]
+      properties:
+        etat: { $ref: '#/components/schemas/EtatAvis' }
+        expireLe: { $ref: '#/components/schemas/Horodatage' }
+        chemin: { type: string, description: "Page de l'enquête sur le portail, ex. /suivi/<jeton>/avis", examples: ['/suivi/Zq3h0Zk8b2mN4pLsQ1w2e3r4t5y6u7i8/avis'] }
     NouveauMessage:
       type: object
       required: [contenu]
@@ -2639,6 +3085,39 @@ components:
       required: [motif]
       properties:
         motif: { type: string, minLength: 1, maxLength: 5000 }
+
+    # ---- Conversations et chat web (étape 17) -----------------------------------------
+    CanalConversation:
+      type: string
+      description: "Canal d'une conversation : WEB (chat du portail) ; WHATSAPP et SMS entrant à l'étape 19"
+      enum: [WEB, WHATSAPP, SMS]
+    EtatChat:
+      type: object
+      description: Le chat vu du client
+      required: [ouvert, repriseLe, luParLaBanqueLe]
+      properties:
+        ouvert: { type: boolean, description: "La banque est dans ses heures d'ouverture" }
+        repriseLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Prochaine ouverture, quand la banque est fermée
+        luParLaBanqueLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Dernière lecture de la conversation par la banque (« Lu » sous les messages du client)
+    ConversationClient:
+      type: object
+      required: [statut, messages, curseur, chat]
+      properties:
+        statut:
+          $ref: '#/components/schemas/StatutReclamation'
+          description: Un statut différent de celui affiché appelle une relecture de la réclamation (boutons, historique)
+        messages:
+          type: array
+          description: Messages écrits à partir de `apres`, du plus ancien au plus récent
+          items: { $ref: '#/components/schemas/MessageVisible' }
+        curseur:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Heure du dernier message de la réclamation, à repasser dans `apres`
+        chat: { $ref: '#/components/schemas/EtatChat' }
 
     # ---- Authentification -----------------------------------------------------------
     MotDePasse:
@@ -2716,7 +3195,7 @@ components:
     # ---- Banque : réclamations --------------------------------------------------------
     ReclamationResume:
       type: object
-      required: [id, numero, statut, priorite, canal, categorie, agence, agent, client, creeLe, echeanceSlaLe, enRetard, escaladee, sla]
+      required: [id, numero, statut, priorite, canal, categorie, agence, agent, agentSuggere, client, creeLe, echeanceSlaLe, enRetard, escaladee, sla]
       properties:
         id: { type: string, format: uuid }
         numero: { type: string, examples: ['ALP-2026-000042'] }
@@ -2729,6 +3208,11 @@ components:
             - $ref: '#/components/schemas/ReferenceNommee'
             - type: 'null'
         agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        agentSuggere:
+          description: "Mode suggestion (étape 16) : l'agent proposé pour une réclamation non assignée, pour le superviseur ; vide sinon"
           oneOf:
             - $ref: '#/components/schemas/ReferenceNommee'
             - type: 'null'
@@ -2788,7 +3272,7 @@ components:
         respecte: { type: [boolean, 'null'], description: "Verdict à la résolution" }
     Jalons:
       type: object
-      required: [prisEnChargeLe, premiereReponseLe, resolueLe, clotureLe, clotureAutoPrevueLe, escaladeeLe]
+      required: [prisEnChargeLe, premiereReponseLe, resolueLe, clotureLe, clotureAutoPrevueLe, escaladeeLe, escaladeeAdminLe]
       properties:
         prisEnChargeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         premiereReponseLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
@@ -2796,6 +3280,9 @@ components:
         clotureLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         clotureAutoPrevueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         escaladeeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        escaladeeAdminLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Escalade automatique à l'Admin Entreprise, seuil de dépassement franchi (étape 16)
     InfosCloture:
       type: object
       required: [mode, motif, precision, par]
@@ -2847,8 +3334,24 @@ components:
     ReclamationDetail:
       type: object
       required: [id, numero, statut, priorite, canal, description, categorie, agence, pointDepot, agent, escaladeeVers, client,
-        creeLe, sla, jalons, cloture, nbReouvertures, messages, piecesJointes, chronologie, actionsPossibles, operationsPossibles]
+        creeLe, sla, jalons, cloture, nbReouvertures, messages, piecesJointes, chronologie, actionsPossibles, operationsPossibles, avis,
+        attributionSuggeree, conversation]
       properties:
+        conversation:
+          description: Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque
+          oneOf:
+            - $ref: '#/components/schemas/ConversationTicket'
+            - type: 'null'
+        attributionSuggeree:
+          description: "Mode suggestion (étape 16) : l'agent proposé, pour le superviseur, tant que la réclamation n'est pas assignée"
+          oneOf:
+            - $ref: '#/components/schemas/AttributionSuggeree'
+            - type: 'null'
+        avis:
+          description: Enquête de satisfaction ouverte à la clôture (étape 15) ; vide s'il n'y en a pas
+          oneOf:
+            - $ref: '#/components/schemas/AvisReclamation'
+            - type: 'null'
         id: { type: string, format: uuid }
         numero: { type: string }
         statut: { $ref: '#/components/schemas/StatutReclamation' }
@@ -2909,6 +3412,17 @@ components:
           type: array
           description: Opérations permises à l'utilisateur connecté
           items: { $ref: '#/components/schemas/OperationTicket' }
+    AvisReclamation:
+      type: object
+      required: [etat, ouverteLe, expireLe, reponse]
+      properties:
+        etat: { $ref: '#/components/schemas/EtatAvis' }
+        ouverteLe: { $ref: '#/components/schemas/Horodatage' }
+        expireLe: { $ref: '#/components/schemas/Horodatage' }
+        reponse:
+          oneOf:
+            - $ref: '#/components/schemas/AvisDonne'
+            - type: 'null'
     ReponseAuClient:
       type: object
       required: [contenu]
@@ -2919,6 +3433,100 @@ components:
           default: false
           description: Passe le ticket « En attente client » (question) et suspend le chrono SLA
         fichiers: { $ref: '#/components/schemas/Fichiers' }
+    ReclamationEnConversation:
+      type: object
+      required: [id, numero, statut, priorite, categorie]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        priorite: { $ref: '#/components/schemas/Priorite' }
+        categorie: { type: string }
+    ConversationResume:
+      type: object
+      required: [id, canal, reclamation, client, agent, dernierMessage, aRepondre, nonLue, clientEnLigne]
+      properties:
+        id: { type: string, format: uuid }
+        canal: { $ref: '#/components/schemas/CanalConversation' }
+        reclamation: { $ref: '#/components/schemas/ReclamationEnConversation' }
+        client:
+          type: object
+          required: [nom]
+          properties:
+            nom: { type: string }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        dernierMessage:
+          type: object
+          required: [extrait, auteur, date]
+          properties:
+            extrait: { type: string, maxLength: 140, description: "Sur une ligne, coupé au mot" }
+            auteur: { type: string, enum: [BANQUE, CLIENT] }
+            date: { $ref: '#/components/schemas/Horodatage' }
+        aRepondre: { type: boolean, description: "Le client a écrit en dernier" }
+        nonLue: { type: boolean, description: "Un message du client attend la lecture de la banque" }
+        clientEnLigne: { type: boolean, description: "Le client avait le chat à l'écran il y a moins de 2 minutes" }
+    PageConversations:
+      type: object
+      required: [donnees, pagination, compteurs]
+      properties:
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationResume' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        compteurs:
+          type: object
+          description: Toutes pages confondues, dans le périmètre de l'appelant (pastille du menu)
+          required: [aRepondre, nonLues]
+          properties:
+            aRepondre: { type: integer, minimum: 0 }
+            nonLues: { type: integer, minimum: 0 }
+    ConversationDetail:
+      type: object
+      required: [id, canal, reclamation, client, agent, description, deposeeLe, messages, aRepondre, nonLue, clientEnLigne,
+        luParLeClientLe, operationsPossibles]
+      properties:
+        id: { type: string, format: uuid }
+        canal: { $ref: '#/components/schemas/CanalConversation' }
+        reclamation: { $ref: '#/components/schemas/ReclamationEnConversation' }
+        client:
+          type: object
+          required: [nom]
+          properties:
+            nom: { type: string }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        description: { type: string, description: "Texte du dépôt, en tête du fil" }
+        deposeeLe: { $ref: '#/components/schemas/Horodatage' }
+        messages:
+          type: array
+          description: Réponses de la banque et messages du client, du plus ancien au plus récent (jamais une note interne)
+          items: { $ref: '#/components/schemas/Message' }
+        aRepondre: { type: boolean }
+        nonLue: { type: boolean }
+        clientEnLigne: { type: boolean }
+        luParLeClientLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: Dernière lecture par le client (« Lu » sous les réponses de la banque)
+        operationsPossibles:
+          type: array
+          description: REPONDRE_AU_CLIENT si l'appelant peut répondre d'ici
+          items: { $ref: '#/components/schemas/OperationTicket' }
+    ConversationTicket:
+      type: object
+      description: Conversation de la réclamation, sur sa fiche
+      required: [id, canal, aRepondre, nonLue, clientEnLigne, luParLeClientLe]
+      properties:
+        id: { type: string, format: uuid }
+        canal: { $ref: '#/components/schemas/CanalConversation' }
+        aRepondre: { type: boolean }
+        nonLue: { type: boolean }
+        clientEnLigne: { type: boolean }
+        luParLeClientLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
 
     # ---- Tableau de bord ----------------------------------------------------------------
     Volume:
@@ -2932,7 +3540,7 @@ components:
       type: object
       description: Définitions du §6.6 ; délais en minutes ouvrées
       required: [du, au, total, parStatut, parCategorie, parCanal, parAgence, delaiPremiereReponseMoyenMinutes,
-        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact, charge, evolution]
+        delaiResolutionMoyenMinutes, tauxRespectSla, tauxResolutionPremierContact, charge, evolution, satisfaction]
       properties:
         du: { $ref: '#/components/schemas/Horodatage' }
         au: { $ref: '#/components/schemas/Horodatage' }
@@ -2955,6 +3563,54 @@ components:
         tauxResolutionPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1, description: "Sans attente client, sans escalade, sans réouverture" }
         charge: { $ref: '#/components/schemas/Charge' }
         evolution: { $ref: '#/components/schemas/Evolution' }
+        satisfaction:
+          description: Enquêtes de satisfaction (étape 15) ; vide si la banque ne les a pas activées et n'en a aucune sur la période
+          oneOf:
+            - $ref: '#/components/schemas/Satisfaction'
+            - type: 'null'
+    Satisfaction:
+      type: object
+      description: |
+        Enquêtes ouvertes pendant la période (date de clôture), avec les mêmes filtres que les autres
+        indicateurs. Satisfaits : notes 4 et 5 (CSAT). NPS : part des notes 9 et 10 moins part des notes
+        0 à 6, de -100 à 100. Un agent ne voit que ses réclamations.
+      required: [enquetes, reponses, tauxReponse, tauxSatisfaits, noteMoyenne, nps, promoteurs, passifs, detracteurs, parAgent, commentaires]
+      properties:
+        enquetes: { type: integer, minimum: 0, description: "Enquêtes ouvertes (réclamations clôturées par confirmation ou automatiquement)" }
+        reponses: { type: integer, minimum: 0 }
+        tauxReponse: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1, description: "CSAT : part des notes 4 et 5" }
+        noteMoyenne: { type: [number, 'null'], minimum: 1, maximum: 5 }
+        nps: { type: [integer, 'null'], minimum: -100, maximum: 100 }
+        promoteurs: { type: integer, minimum: 0, description: "Recommandation 9 ou 10" }
+        passifs: { type: integer, minimum: 0, description: "Recommandation 7 ou 8" }
+        detracteurs: { type: integer, minimum: 0, description: "Recommandation de 0 à 6" }
+        parAgent:
+          type: array
+          description: Agents qui ont traité des réclamations ayant reçu une réponse, du plus grand nombre de réponses au plus petit
+          items:
+            type: object
+            required: [cle, libelle, reponses, tauxSatisfaits, nps]
+            properties:
+              cle: { type: string }
+              libelle: { type: string }
+              reponses: { type: integer, minimum: 1 }
+              tauxSatisfaits: { type: number, minimum: 0, maximum: 1 }
+              nps: { type: integer, minimum: -100, maximum: 100 }
+        commentaires:
+          type: array
+          maxItems: 10
+          description: Les 10 derniers commentaires laissés par les clients
+          items:
+            type: object
+            required: [reclamationId, numero, note, recommandation, commentaire, reponduLe]
+            properties:
+              reclamationId: { type: string, format: uuid }
+              numero: { type: string }
+              note: { type: integer, minimum: 1, maximum: 5 }
+              recommandation: { type: integer, minimum: 0, maximum: 10 }
+              commentaire: { type: string }
+              reponduLe: { $ref: '#/components/schemas/Horodatage' }
     Charge:
       type: object
       description: |
@@ -3014,7 +3670,8 @@ components:
     ParametresBanque:
       type: object
       required: [nom, slug, prefixeTickets, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, couleurPrimaire, couleurSecondaire,
+        logoUrl, emailContact, plan, consommation]
       properties:
         nom: { type: string }
         slug: { type: string }
@@ -3023,6 +3680,10 @@ components:
         seuilAlerteSlaPourcent: { type: integer, minimum: 1, maximum: 99 }
         delaiClotureAutoJours: { type: integer, minimum: 1, maximum: 60 }
         smsChaqueChangementStatut: { type: boolean }
+        enqueteSatisfaction: { type: boolean, description: "Enquête de satisfaction à la clôture (étape 15), activée par Makor" }
+        attributionAutomatique: { type: boolean, description: "Attribution et escalade automatiques (étape 16), ouvertes par Makor" }
+        modeAttribution: { $ref: '#/components/schemas/ModeAttribution' }
+        chatWeb: { type: boolean, description: "Chat web du portail et boîte de réception (étape 17), ouverts par Makor" }
         couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
         couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
         logoUrl: { type: [string, 'null'], format: uri-reference }
@@ -3162,6 +3823,154 @@ components:
         libelle: { type: string, minLength: 2, maxLength: 120 }
         recurrent: { type: boolean, default: false }
 
+    # ---- Attribution et escalade automatiques (étape 16) ---------------------------------------
+    ModeAttribution:
+      type: string
+      description: |
+        MANUELLE : le superviseur assigne, comme en phase 1. SUGGESTION : l'API propose l'agent, le
+        superviseur valide. AUTOMATIQUE : la réclamation part au dépôt vers l'agent proposé.
+      enum: [MANUELLE, SUGGESTION, AUTOMATIQUE]
+    SeuilEscalade:
+      type: [integer, 'null']
+      minimum: 101
+      maximum: 1000
+      description: "Pourcentage du délai cible (150 = la moitié du délai après l'échéance) ; vide = pas de seuil ici"
+    ReglesTraitement:
+      type: object
+      required: [mode, seuilEscaladeAdminPourcent, seuilEscaladeAdminUrgentPourcent, categories, agences]
+      properties:
+        mode: { $ref: '#/components/schemas/ModeAttribution' }
+        seuilEscaladeAdminPourcent:
+          $ref: '#/components/schemas/SeuilEscalade'
+          description: Seuil d'escalade à l'Admin Entreprise de la banque, réclamations normales
+        seuilEscaladeAdminUrgentPourcent:
+          $ref: '#/components/schemas/SeuilEscalade'
+          description: Seuil pour les réclamations urgentes ; vide = celui des normales
+        categories:
+          type: array
+          description: Toutes les catégories, actives ou non, dans l'ordre d'affichage
+          items:
+            type: object
+            required: [categorie, active, groupe, seuilEscaladeAdminPourcent, seuilEscaladeAdminUrgentPourcent]
+            properties:
+              categorie: { $ref: '#/components/schemas/ReferenceNommee' }
+              active: { type: boolean }
+              groupe:
+                oneOf:
+                  - $ref: '#/components/schemas/ReferenceNommee'
+                  - type: 'null'
+              seuilEscaladeAdminPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+              seuilEscaladeAdminUrgentPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+        agences:
+          type: array
+          description: Toutes les agences, par code
+          items:
+            type: object
+            required: [agence, active, groupe]
+            properties:
+              agence: { $ref: '#/components/schemas/ReferenceNommee' }
+              active: { type: boolean }
+              groupe:
+                oneOf:
+                  - $ref: '#/components/schemas/ReferenceNommee'
+                  - type: 'null'
+    ModificationReglesTraitement:
+      type: object
+      minProperties: 1
+      properties:
+        mode: { $ref: '#/components/schemas/ModeAttribution' }
+        seuilEscaladeAdminPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+        seuilEscaladeAdminUrgentPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+        categories:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [id, groupeId, seuilEscaladeAdminPourcent, seuilEscaladeAdminUrgentPourcent]
+            properties:
+              id: { type: string, format: uuid }
+              groupeId: { type: [string, 'null'], format: uuid }
+              seuilEscaladeAdminPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+              seuilEscaladeAdminUrgentPourcent: { $ref: '#/components/schemas/SeuilEscalade' }
+        agences:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [id, groupeId]
+            properties:
+              id: { type: string, format: uuid }
+              groupeId: { type: [string, 'null'], format: uuid }
+    MembreGroupe:
+      type: object
+      required: [id, nom, statut, absent, aTraiter]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string, examples: ['Awa Koné'] }
+        statut: { $ref: '#/components/schemas/StatutUtilisateur' }
+        absent: { type: boolean, description: "Absence déclarée pour aujourd'hui" }
+        aTraiter: { type: integer, minimum: 0, description: "Réclamations ouvertes ou en cours qui lui sont assignées (sa charge)" }
+    GroupeAgents:
+      type: object
+      required: [id, nom, membres, categories, agences]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string, examples: ['Monétique'] }
+        membres:
+          type: array
+          description: Agents du groupe, par nom
+          items: { $ref: '#/components/schemas/MembreGroupe' }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/ReferenceNommee' }
+        agences:
+          type: array
+          items: { $ref: '#/components/schemas/ReferenceNommee' }
+    EcritureGroupe:
+      type: object
+      required: [nom, membres]
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        membres:
+          type: array
+          description: Agents de la banque (rôle Agent, compte non désactivé)
+          maxItems: 200
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ModificationGroupe:
+      type: object
+      minProperties: 1
+      properties:
+        nom: { type: string, minLength: 2, maxLength: 120 }
+        membres:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    Absence:
+      type: object
+      required: [id, agent, du, au, creeLe]
+      properties:
+        id: { type: string, format: uuid }
+        agent: { $ref: '#/components/schemas/ReferenceNommee' }
+        du: { type: string, format: date, description: "Premier jour d'absence" }
+        au: { type: string, format: date, description: "Dernier jour d'absence (inclus)" }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+    NouvelleAbsence:
+      type: object
+      required: [agentId, du, au]
+      properties:
+        agentId: { type: string, format: uuid }
+        du: { type: string, format: date }
+        au: { type: string, format: date, description: "Au plus 366 jours après le premier jour, pas avant aujourd'hui" }
+    AttributionSuggeree:
+      type: object
+      description: Agent qui recevrait la réclamation maintenant (mode suggestion)
+      required: [agent, groupe]
+      properties:
+        agent: { $ref: '#/components/schemas/ReferenceNommee' }
+        groupe: { $ref: '#/components/schemas/ReferenceNommee' }
+
     # ---- Personnel -------------------------------------------------------------------------
     Utilisateur:
       type: object
@@ -3287,7 +4096,7 @@ components:
     BanquePlateforme:
       type: object
       required: [id, nom, slug, prefixeTickets, plan, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, suspendueLe, motifSuspension, creeLe, consommation]
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, suspendueLe, motifSuspension, creeLe, consommation]
       properties:
         id: { type: string, format: uuid }
         nom: { type: string }
@@ -3298,6 +4107,9 @@ components:
         seuilAlerteSlaPourcent: { type: integer }
         delaiClotureAutoJours: { type: integer }
         smsChaqueChangementStatut: { type: boolean }
+        enqueteSatisfaction: { type: boolean }
+        attributionAutomatique: { type: boolean }
+        chatWeb: { type: boolean }
         suspendueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         motifSuspension: { type: [string, 'null'] }
         creeLe: { $ref: '#/components/schemas/Horodatage' }
@@ -3335,6 +4147,13 @@ components:
         seuilAlerteSlaPourcent: { type: integer, minimum: 1, maximum: 99 }
         delaiClotureAutoJours: { type: integer, minimum: 1, maximum: 60 }
         smsChaqueChangementStatut: { type: boolean }
+        enqueteSatisfaction: { type: boolean, description: "Enquête de satisfaction à la clôture (étape 15)" }
+        attributionAutomatique:
+          type: boolean
+          description: "Attribution et escalade automatiques (étape 16) ; fermer la fonction remet la banque en attribution manuelle"
+        chatWeb:
+          type: boolean
+          description: "Chat web du portail et boîte de réception (étape 17) ; fermé, l'espace client garde son fil de messages simple"
     IndicateursPlateforme:
       type: object
       required: [du, au, banques]
@@ -3345,8 +4164,19 @@ components:
           type: array
           items:
             type: object
-            required: [banque, total, parStatut, urgentes, tauxRespectSla, tauxResolutionPremierContact]
+            required: [banque, total, parStatut, urgentes, tauxRespectSla, tauxResolutionPremierContact, satisfaction]
             properties:
+              satisfaction:
+                description: Totaux des enquêtes de la période (étape 15), jamais les commentaires ; vide sans enquête
+                oneOf:
+                  - type: object
+                    required: [enquetes, reponses, tauxSatisfaits, nps]
+                    properties:
+                      enquetes: { type: integer, minimum: 0 }
+                      reponses: { type: integer, minimum: 0 }
+                      tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1 }
+                      nps: { type: [integer, 'null'], minimum: -100, maximum: 100 }
+                  - type: 'null'
               banque: { $ref: '#/components/schemas/ReferenceNommee' }
               total: { type: integer }
               parStatut:

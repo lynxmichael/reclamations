@@ -3,7 +3,7 @@
  *
  * | Travail     | Fréquence        | Rôle                                                        |
  * |-------------|------------------|-------------------------------------------------------------|
- * | taches-sla  | chaque minute    | alerte préventive, dépassement + escalade, clôture auto     |
+ * | taches-sla  | chaque minute    | alerte, dépassement + escalade (superviseur puis Admin Ent.), clôture auto, attribution en attente, avis du chat |
  * | envois      | toutes les 5 s   | notifications nouvelles (e-mail, SMS, in-app)               |
  * | relances    | toutes les 5 min | notifications en échec temporaire (5 tentatives au plus)    |
  * | purge       | chaque nuit      | codes OTP, sessions et liens expirés                        |

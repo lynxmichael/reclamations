@@ -1,0 +1,93 @@
+/**
+ * Attribution automatique (étape 16, décision I10 de l'étape 14) : règles pures, partagées par
+ * l'API, le worker et la démo cliquable.
+ *
+ * - L'Admin Entreprise confie chaque catégorie et chaque agence à un groupe d'agents (facultatif).
+ * - Agents candidats, dans cet ordre : ceux du groupe de la catégorie qui sont aussi dans le groupe
+ *   de l'agence ; à défaut, le groupe de la catégorie (la spécialité d'abord) ; à défaut, le groupe
+ *   de l'agence. Sans groupe, ou sans agent disponible, la réclamation reste dans la file
+ *   « Reçues » du superviseur, comme aujourd'hui.
+ * - Disponible : agent actif, pas absent le jour où la réclamation sera traitée (aujourd'hui pendant
+ *   les heures ouvrées, sinon le prochain jour ouvré).
+ * - Le moins chargé : le moins de réclamations « à traiter » (ouvertes ou en cours) ; à égalité,
+ *   celui qui en a reçu une le moins récemment ; puis l'ordre alphabétique.
+ */
+
+export const MODES_ATTRIBUTION = ['MANUELLE', 'SUGGESTION', 'AUTOMATIQUE'] as const;
+export type ModeAttribution = (typeof MODES_ATTRIBUTION)[number];
+
+export interface AgentDisponible {
+  readonly id: string;
+  /** Prénom et nom, pour départager deux agents à égalité */
+  readonly nom: string;
+  /** Réclamations ouvertes ou en cours qui lui sont assignées */
+  readonly aTraiter: number;
+  readonly derniereAttributionLe: Date | null;
+}
+
+export interface Groupe {
+  readonly id: string;
+  readonly nom: string;
+  readonly membres: readonly string[];
+}
+
+export interface Candidats {
+  readonly groupe: Groupe;
+  readonly agents: readonly string[];
+}
+
+/**
+ * Ensembles d'agents à essayer, dans l'ordre : intersection des deux groupes, groupe de la
+ * catégorie, groupe de l'agence. Vide quand ni la catégorie ni l'agence n'ont de groupe.
+ */
+export function ensemblesCandidats(groupeCategorie: Groupe | null, groupeAgence: Groupe | null): Candidats[] {
+  const ensembles: Candidats[] = [];
+  if (groupeCategorie && groupeAgence && groupeCategorie.id !== groupeAgence.id) {
+    const deLAgence = new Set(groupeAgence.membres);
+    const communs = groupeCategorie.membres.filter((id) => deLAgence.has(id));
+    if (communs.length) ensembles.push({ groupe: groupeCategorie, agents: communs });
+  }
+  if (groupeCategorie) ensembles.push({ groupe: groupeCategorie, agents: groupeCategorie.membres });
+  if (groupeAgence && groupeAgence.id !== groupeCategorie?.id) ensembles.push({ groupe: groupeAgence, agents: groupeAgence.membres });
+  return ensembles;
+}
+
+/** Le moins chargé ; à égalité, celui qui attend une réclamation depuis le plus longtemps. */
+export function plusDisponible(agents: readonly AgentDisponible[]): AgentDisponible | null {
+  let meilleur: AgentDisponible | null = null;
+  for (const a of agents) {
+    if (!meilleur || comparer(a, meilleur) < 0) meilleur = a;
+  }
+  return meilleur;
+}
+
+function comparer(a: AgentDisponible, b: AgentDisponible): number {
+  if (a.aTraiter !== b.aTraiter) return a.aTraiter - b.aTraiter;
+  const da = a.derniereAttributionLe?.getTime() ?? -Infinity;
+  const db = b.derniereAttributionLe?.getTime() ?? -Infinity;
+  if (da !== db) return da < db ? -1 : 1;
+  return a.nom.localeCompare(b.nom, 'fr') || a.id.localeCompare(b.id);
+}
+
+export interface Choix {
+  readonly agent: AgentDisponible;
+  readonly groupe: Groupe;
+}
+
+/** L'agent à qui confier la réclamation, ou null : elle reste dans la file du superviseur. */
+export function choisirAgent(
+  groupeCategorie: Groupe | null,
+  groupeAgence: Groupe | null,
+  disponibles: ReadonlyMap<string, AgentDisponible>,
+): Choix | null {
+  for (const { groupe, agents } of ensemblesCandidats(groupeCategorie, groupeAgence)) {
+    const agent = plusDisponible(agents.flatMap((id) => disponibles.get(id) ?? []));
+    if (agent) return { agent, groupe };
+  }
+  return null;
+}
+
+/** Absent ce jour-là (dates AAAA-MM-JJ, fin incluse). */
+export function estAbsent(absences: readonly { du: string; au: string }[], jour: string): boolean {
+  return absences.some((a) => a.du <= jour && jour <= a.au);
+}

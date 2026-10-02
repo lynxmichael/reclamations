@@ -7,7 +7,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { CLIENT_DEMO, creerDemo, debutDemo } from '../src/demo/historique';
 import { ErreurDemo, PERSONNES, type Moteur } from '../src/demo/moteur';
 import { versBanque } from '../src/demo/prospect';
-import { CATEGORIES } from '../src/maquettes/donnees/parametrage';
+import { CATEGORIES, PERSONNEL } from '../src/maquettes/donnees/parametrage';
 import { ecarts } from './contrat';
 
 const BANQUE = { nom: 'Banque Alpha', slug: 'alpha', prefixe: 'ALP', couleur: '#0b6e5f', logoUrl: null };
@@ -100,7 +100,18 @@ describe('ouverture de la démo', () => {
     verifier('Indicateurs', m.indicateurs(), 'indicateurs');
     verifier('Indicateurs', m.indicateurs(30, AGENT), 'indicateurs de l\'agent');
     verifier('PageAudit', m.journalAudit(), 'journal');
+    verifier('ReglesTraitement', m.regles(), 'règles d\'attribution');
+    for (const g of m.groupes()) verifier('GroupeAgents', g, `groupe ${g.nom}`);
+    for (const a of m.absencesAVenir()) verifier('Absence', a, `absence ${a.agent.nom}`);
     verifier('VerificationChaine', m.verificationJournal(), 'vérification');
+    // Chat web (étape 17) : boîte de réception et conversations
+    for (const u of [SUP, AGENT, ADMIN]) {
+      for (const filtre of ['a-repondre', 'non-lues', 'toutes'] as const) {
+        const page = m.conversations(u, filtre);
+        verifier('PageConversations', page, `conversations ${u} ${filtre}`);
+        for (const c of page.donnees) verifier('ConversationDetail', m.conversation(u, c.id), `conversation ${c.reclamation.numero}`);
+      }
+    }
     const t = m.toutesLesReclamations().find((x) => x.statut === 'RESOLUE')!;
     verifier('SuiviPublic', m.suivi(t.jetonSuivi), 'suivi');
     verifier('OtpEnvoye', m.demanderCode(t.jetonSuivi), 'otp');
@@ -110,6 +121,27 @@ describe('ouverture de la démo', () => {
       verifier('ReclamationClient', m.maReclamation(s, r.id), `ma réclamation ${r.numero}`);
     }
     expect(erreurs).toEqual([]);
+  });
+
+  it('enquêtes de satisfaction (étape 15) : un client sur deux répond, chiffres et réponses conformes', () => {
+    const s = m.indicateurs().satisfaction!;
+    expect(s.enquetes).toBeGreaterThan(50);
+    expect(s.tauxReponse!).toBeGreaterThan(0.3);
+    expect(s.tauxReponse!).toBeLessThan(0.7);
+    expect(s.promoteurs + s.passifs + s.detracteurs).toBe(s.reponses);
+    expect(s.parAgent.reduce((n, a) => n + a.reponses, 0)).toBe(s.reponses);
+    expect(s.commentaires.length).toBeGreaterThan(0);
+    const agent = m.indicateurs(30, AGENT).satisfaction!;
+    expect(agent.reponses).toBeLessThan(s.reponses);
+    expect(agent.parAgent.map((a) => a.cle)).toEqual([AGENT]);
+    const erreurs: string[] = [];
+    const avecEnquete = m.toutesLesReclamations().filter((t) => t.enquete).slice(0, 25);
+    for (const t of avecEnquete) {
+      erreurs.push(...ecarts('Avis', m.lireAvis(t.jetonSuivi)), ...ecarts('ReclamationDetail', m.fiche(SUP, t.id)), ...ecarts('SuiviPublic', m.suivi(t.jetonSuivi)));
+    }
+    expect(erreurs).toEqual([]);
+    expect(m.toutesLesReclamations().some((t) => t.cloture?.mode === 'FORCEE' && t.enquete)).toBe(false);
+    expect(m.journalAudit(5000).donnees.some((l) => l.action === 'client.avis_donne')).toBe(true);
   });
 });
 
@@ -161,11 +193,60 @@ describe('le parcours de la visite guidée', () => {
     expect(vue.messages.some((x) => x.contenu.includes('journal'))).toBe(true);
     m.confirmer(session, id);
     expect(m.maReclamation(session, id).statut).toBe('CLOTUREE');
-    const actions = m.journalAudit().donnees.filter((l) => l.entiteId === id).map((l) => l.action).reverse();
+    const actions = m.journalAudit(1000).donnees.filter((l) => l.entiteId === id).map((l) => l.action).reverse();
     expect(actions).toEqual([
       'reclamation.depot', 'reclamation.assignation', 'reclamation.prise_en_charge', 'reclamation.reponse_client',
       'sla.alerte_preventive', 'reclamation.resolution', 'reclamation.confirmation',
     ]);
+  });
+
+  it('enquête de satisfaction : lien dans le SMS de clôture, une seule réponse, visible sur la fiche', () => {
+    const m = nouvelle();
+    const accuse = deposerDepuisLeTelephone(m);
+    const id = m.ticket(accuse.numero).id;
+    m.assigner(SUP, id, AGENT);
+    m.prendreEnCharge(AGENT, id);
+    m.resoudre(AGENT, id, 'Recrédité.');
+    const session = sessionClient(m, accuse.jetonSuivi);
+    expect(refus(() => m.lireAvis(accuse.jetonSuivi)).status).toBe(404);
+    m.confirmer(session, id);
+
+    const client = m.clientParTelephone(CLIENT_DEMO.telephoneE164)!;
+    const sms = m.envoisDe(client.id).filter((e) => e.canal === 'SMS').at(-1)!;
+    expect(sms.texte).toBe(`Banque Alpha : réclamation ${accuse.numero} close. Votre avis : alpha.reclamations.example/suivi/${accuse.jetonSuivi}/avis`);
+    expect(sms.lien).toEqual({ jeton: accuse.jetonSuivi, avis: true });
+    expect(m.suivi(accuse.jetonSuivi).avis?.etat).toBe('A_DONNER');
+    expect(m.maReclamation(session, id).avis?.chemin).toBe(`/suivi/${accuse.jetonSuivi}/avis`);
+
+    expect(refus(() => m.donnerAvis(accuse.jetonSuivi, { note: 6, recommandation: 9 })).status).toBe(400);
+    const avis = m.donnerAvis(accuse.jetonSuivi, { note: 4, recommandation: 9, commentaire: '  Merci  ' });
+    expect(ecarts('Avis', avis)).toEqual([]);
+    expect(avis.reponse).toMatchObject({ note: 4, recommandation: 9, commentaire: 'Merci' });
+    expect(refus(() => m.donnerAvis(accuse.jetonSuivi, { note: 1, recommandation: 0 })).code).toBe('AVIS_DEJA_DONNE');
+    expect(m.fiche(AGENT, id).avis?.reponse?.note).toBe(4);
+    expect(m.journalAudit().donnees[0]).toMatchObject({ action: 'client.avis_donne', entiteId: id, donnees: null });
+    expect(m.indicateurs(1, AGENT).satisfaction!.commentaires[0]).toMatchObject({ numero: accuse.numero, note: 4, recommandation: 9, commentaire: 'Merci' });
+  });
+
+  it('enquête : ouverte à la clôture automatique, terminée après 7 jours ; aucune à une clôture forcée', () => {
+    const m = nouvelle();
+    const accuse = deposerDepuisLeTelephone(m);
+    const id = m.ticket(accuse.numero).id;
+    m.assigner(SUP, id, AGENT);
+    m.prendreEnCharge(AGENT, id);
+    m.resoudre(AGENT, id, 'Recrédité.');
+    m.avancer(5 * 24 * 60 + 1);
+    expect(m.fiche(SUP, id).cloture?.mode).toBe('AUTOMATIQUE');
+    expect(m.lireAvis(accuse.jetonSuivi).etat).toBe('A_DONNER');
+    m.avancer(7 * 24 * 60 + 1);
+    expect(m.lireAvis(accuse.jetonSuivi).etat).toBe('TERMINE');
+    expect(refus(() => m.donnerAvis(accuse.jetonSuivi, { note: 5, recommandation: 10 })).code).toBe('ENQUETE_TERMINEE');
+
+    const autre = deposerDepuisLeTelephone(m);
+    const id2 = m.ticket(autre.numero).id;
+    m.cloturerDeForce(SUP, id2, 'DOUBLON', 'Même demande que la précédente.');
+    expect(m.fiche(SUP, id2).avis).toBeNull();
+    expect(refus(() => m.lireAvis(autre.jetonSuivi)).status).toBe(404);
   });
 
   it('sans réponse, l\'échéance passe : dépassement signalé et escalade au superviseur', () => {
@@ -229,6 +310,153 @@ describe('le parcours de la visite guidée', () => {
     expect(p.code).toBe('VALIDATION');
     expect(p.erreurs!.map((e) => e.champ).sort()).toEqual(['consentement', 'description', 'nom', 'telephone']);
     expect(refus(() => m.verifierCode(accuse.jetonSuivi, '000000')).code).toBe('CODE_OTP_INVALIDE');
+  });
+});
+
+describe('attribution et escalade (étape 16)', () => {
+  const ADJOUA = PERSONNEL.find((u) => u.prenom === 'Adjoua')!.id;
+  const MAMADOU = PERSONNEL.find((u) => u.prenom === 'Mamadou')!.id;
+
+  it('mode suggestion : le superviseur voit l\'agent proposé, jamais un absent ; il valide en assignant', () => {
+    const m = nouvelle();
+    const id = m.ticket(deposerDepuisLeTelephone(m).numero).id;
+    // Carte bancaire : groupe Monétique (Aya, Mamadou, et Adjoua, absente)
+    const ligne = m.files(SUP).donnees.find((r) => r.id === id)!;
+    expect(ligne.agent).toBeNull();
+    expect([AGENT, MAMADOU]).toContain(ligne.agentSuggere?.id);
+    expect(m.fiche(SUP, id).attributionSuggeree).toMatchObject({ agent: ligne.agentSuggere, groupe: { nom: 'Monétique' } });
+    expect(m.files(ADMIN).donnees.find((r) => r.id === id)!.agentSuggere).toBeNull();
+    expect(m.fiche(ADMIN, id).attributionSuggeree).toBeNull();
+    expect(m.groupes().find((g) => g.nom === 'Monétique')!.membres.find((x) => x.id === ADJOUA)!.absent).toBe(true);
+
+    // L'agent proposé s'absente : l'autre est proposé
+    const propose = ligne.agentSuggere!.id;
+    m.ajouterAbsence(SUP, { agentId: propose, du: m.aujourdhui(), au: m.aujourdhui() });
+    const autre = m.fiche(SUP, id).attributionSuggeree!.agent.id;
+    expect(autre).not.toBe(propose);
+    m.assigner(SUP, id, autre);
+    expect(m.fiche(SUP, id).attributionSuggeree).toBeNull();
+    const absence = m.absencesAVenir().find((a) => a.agent.id === propose)!;
+    m.supprimerAbsence(SUP, absence.id);
+    expect(m.absencesAVenir().some((a) => a.agent.id === propose)).toBe(false);
+    expect(refus(() => m.ajouterAbsence(SUP, { agentId: SUP, du: m.aujourdhui(), au: m.aujourdhui() })).code).toBe('AGENT_INVALIDE');
+  });
+
+  it('mode automatique : au dépôt pendant les heures d\'ouverture, par le système ; rien la nuit', () => {
+    const m = nouvelle();
+    m.changerModeAttribution('AUTOMATIQUE');
+    const id = m.ticket(deposerDepuisLeTelephone(m).numero).id;
+    const f = m.fiche(SUP, id);
+    expect([AGENT, MAMADOU]).toContain(f.agent?.id);
+    expect(f.chronologie.map((e) => [e.type, e.acteur.type])).toContainEqual(['ASSIGNATION', 'SYSTEME']);
+    expect(m.notificationsDe(f.agent!.id).donnees[0]).toMatchObject({ modele: 'agent.assignation', reclamationId: id });
+    expect(m.journalAudit().donnees.some((l) => l.action === 'reclamation.attribution_automatique' && l.entiteId === id)).toBe(true);
+
+    m.avancerJusqua(new Date('2026-09-28T20:00:00Z'));
+    const nuit = m.ticket(deposerDepuisLeTelephone(m).numero).id;
+    expect(m.fiche(SUP, nuit).agent).toBeNull();
+  });
+
+  it('second niveau : l\'Admin Entreprise est prévenu à 150 % du délai, une seule fois', () => {
+    const m = nouvelle();
+    const id = m.ticket(deposerDepuisLeTelephone(m).numero).id;
+    m.assigner(SUP, id, AGENT);
+    m.avancerJusqua(m.jalonsDe(id).echeance!);
+    expect(m.fiche(SUP, id).jalons.escaladeeAdminLe).toBeNull();
+    // 960 minutes ouvrées : l'Admin Entreprise est prévenu 480 minutes ouvrées après l'échéance
+    for (let i = 0; i < 40 && !m.fiche(SUP, id).jalons.escaladeeAdminLe; i++) m.avancer(60);
+    const f = m.fiche(SUP, id);
+    expect(f.jalons.escaladeeAdminLe).not.toBeNull();
+    expect(f.chronologie.filter((e) => e.type === 'ESCALADE_ADMIN')).toHaveLength(1);
+    expect(m.notificationsDe(ADMIN).donnees.filter((n) => n.modele === 'admin.escalade' && n.reclamationId === id)).toHaveLength(1);
+    m.avancer(600);
+    expect(m.fiche(SUP, id).chronologie.filter((e) => e.type === 'ESCALADE_ADMIN')).toHaveLength(1);
+  });
+});
+
+describe('chat web (étape 17)', () => {
+  /** Dépôt, assignation à l'agent de la démo, session du client ouverte. */
+  function ouvrir() {
+    const m = nouvelle();
+    const accuse = deposerDepuisLeTelephone(m);
+    const id = m.ticket(accuse.numero).id;
+    m.assigner(SUP, id, AGENT);
+    const session = sessionClient(m, accuse.jetonSuivi);
+    const client = m.clientParTelephone(CLIENT_DEMO.telephoneE164)!;
+    const sms = () => m.envoisDe(client.id).filter((e) => e.canal === 'SMS' && e.texte.includes('réponse'));
+    return { m, id, session, sms };
+  }
+
+  it('à l\'ouverture, des clients attendent une réponse dans la boîte de réception', () => {
+    const m = nouvelle();
+    const page = m.conversations(SUP);
+    expect(page.compteurs.aRepondre).toBe(2);
+    expect(page.donnees.every((c) => c.aRepondre && c.dernierMessage.auteur === 'CLIENT')).toBe(true);
+    // La plus longue attente d'abord
+    const dates = page.donnees.map((c) => c.dernierMessage.date);
+    expect([...dates].sort()).toEqual(dates);
+    expect(m.notificationsDe(page.donnees[0]!.agent!.id).donnees.some((n) => n.modele === 'agent.message_client')).toBe(true);
+  });
+
+  it('le client ouvre le chat et écrit trois fois : l\'agent n\'est alerté qu\'une fois', () => {
+    const { m, id, session } = ouvrir();
+    expect(m.maReclamation(session, id).chat).toMatchObject({ ouvert: true, repriseLe: null, luParLaBanqueLe: null });
+    m.lireChat(session, id);
+    for (const texte of ['Bonjour', 'Ma carte est restée dans le distributeur', 'Pouvez-vous m\'aider ?']) {
+      m.avancer(1);
+      m.messageClient(session, id, texte);
+    }
+    expect(m.notificationsDe(AGENT).donnees.filter((n) => n.modele === 'agent.message_client' && n.reclamationId === id)).toHaveLength(1);
+    const ligne = m.conversations(AGENT).donnees.find((c) => c.reclamation.id === id)!;
+    expect(ligne).toMatchObject({ aRepondre: true, nonLue: true, clientEnLigne: true, dernierMessage: { extrait: 'Pouvez-vous m\'aider ?' } });
+    // Le superviseur regarde : toujours non lue pour l'agent ; l'agent ouvre : lue
+    m.marquerConversationLue(SUP, ligne.id);
+    expect(m.conversation(AGENT, ligne.id).nonLue).toBe(true);
+    m.marquerConversationLue(AGENT, ligne.id);
+    expect(m.conversation(AGENT, ligne.id)).toMatchObject({ nonLue: false, aRepondre: true });
+    expect(m.maReclamation(session, id).chat!.luParLaBanqueLe).not.toBeNull();
+    expect(m.fiche(AGENT, id).conversation).toMatchObject({ aRepondre: true, nonLue: false, clientEnLigne: true });
+  });
+
+  it('réponse lue dans le chat : pas de SMS ; non lue 2 minutes après : un SMS, un seul', () => {
+    const { m, id, session, sms } = ouvrir();
+    m.lireChat(session, id);
+    m.messageClient(session, id, 'Bonjour, des nouvelles ?');
+    const avant = sms().length;
+    m.repondre(AGENT, id, 'Bonjour, nous vérifions le distributeur.');
+    m.lireChat(session, id); // le téléphone affiche le chat
+    m.avancer(10);
+    expect(sms().length).toBe(avant);
+    // Le client a quitté le chat : deux réponses, un seul SMS, 2 minutes après la dernière
+    m.repondre(AGENT, id, 'La carte est au coffre de l\'agence.');
+    m.avancer(1);
+    m.repondre(AGENT, id, 'Vous pourrez la retirer demain.');
+    m.avancer(1.5);
+    expect(sms().length).toBe(avant);
+    m.avancer(1);
+    expect(sms().length).toBe(avant + 1);
+    expect(sms().at(-1)!.texte).not.toContain('coffre');
+    m.avancer(30);
+    expect(sms().length).toBe(avant + 1);
+  });
+
+  it('client qui n\'a jamais ouvert le chat : le SMS part tout de suite, comme avant', () => {
+    const { m, id, sms } = ouvrir();
+    const avant = sms().length;
+    m.repondre(AGENT, id, 'Bonjour, nous vérifions.');
+    expect(sms().length).toBe(avant + 1);
+    expect(m.conversations(SUP, 'toutes').donnees.some((c) => c.reclamation.id === id)).toBe(false);
+  });
+
+  it('un autre agent ne voit pas la conversation ; l\'Admin Entreprise la lit sans pouvoir répondre', () => {
+    const { m, id, session } = ouvrir();
+    m.lireChat(session, id);
+    m.messageClient(session, id, 'Bonjour');
+    const c = m.conversations(SUP).donnees.find((x) => x.reclamation.id === id)!;
+    const mamadou = PERSONNEL.find((u) => u.prenom === 'Mamadou')!.id;
+    expect(refus(() => m.conversation(mamadou, c.id)).status).toBe(404);
+    expect(m.conversation(ADMIN, c.id).operationsPossibles).not.toContain('REPONDRE_AU_CLIENT');
+    expect(m.conversation(AGENT, c.id).operationsPossibles).toContain('REPONDRE_AU_CLIENT');
   });
 });
 

@@ -211,6 +211,26 @@ const CRITERES = [
   ]],
 ];
 
+// Phase 2 (étape 14) : un critère par fonction livrée, numérotés à la suite de la section 10
+const CRITERES_PHASE_2 = [
+  ['Étape 15 — Enquêtes de satisfaction : à la clôture confirmée ou automatique, le message de clôture porte le lien d\'une enquête (satisfaction de 1 à 5, recommandation de 0 à 10, commentaire facultatif), à laquelle le client répond une seule fois dans les 7 jours ; le tableau de bord donne le taux de réponse, les satisfaits, la note moyenne et le NPS, avec les filtres et par agent ; l\'agent ne voit que les siens ; le Super Admin ne voit que des totaux par banque, jamais les commentaires.', [
+    [e2e('satisfaction'), /./],
+    [nav('8-satisfaction'), /./],
+    ['verifications'],
+  ]],
+  ['Étape 16 — Attribution et escalade automatiques : ouvertes banque par banque par le Super Admin ; l\'Admin Entreprise confie chaque catégorie et chaque agence à un groupe d\'agents ; une nouvelle réclamation va à l\'agent disponible le moins chargé (mode automatique, pendant les heures d\'ouverture) ou lui est proposée (mode suggestion, le superviseur valide) ; un agent absent ne reçoit rien ; sans agent disponible, elle reste dans la file du superviseur ; au-delà du seuil de la catégorie ou de la banque, l\'Admin Entreprise est prévenu, après les alertes à 75 % et au dépassement.', [
+    [e2e('attribution'), /./],
+    [nav('9-attribution'), /./],
+    ['verifications'],
+  ]],
+  ['Étape 17 — Conversations et chat web : ouverts banque par banque par le Super Admin ; le client identifié par le lien de suivi et le code écrit à la banque dans un chat intégré au portail (même domaine, sans script tiers) et voit les réponses arriver ; une conversation par réclamation, isolée par banque, jamais lue par le Super Admin ; les agents répondent depuis une boîte de réception (à répondre, non lues), l\'agent ne voyant que ses réclamations ; une rafale de messages n\'alerte l\'agent qu\'une fois ; une réponse lue dans le chat n\'envoie ni e-mail ni SMS, une réponse non lue 2 minutes après en envoie un seul.', [
+    [e2e('conversations'), /./],
+    [nav('10-conversations'), /./],
+    ['backend/src/domaine/conversation', /./],
+    ['verifications'],
+  ]],
+];
+
 // ---- Exécution ------------------------------------------------------------------------------------------------
 const debut = new Date();
 console.log(`Recette automatique — ${debut.toISOString()}\n`);
@@ -235,12 +255,14 @@ function evaluerPreuve([cible, titre]) {
   const tests = tousLesTests.filter((t) => t.fichier.startsWith(cible) && titre.test(t.titre) && !t.saute);
   return { cible, trouves: tests.length, reussis: tests.filter((t) => t.ok).length };
 }
-const criteres = CRITERES.map(([libelle, preuves], i) => {
+const evaluer = (liste, premier) => liste.map(([libelle, preuves], i) => {
   const p = preuves.map(evaluerPreuve);
   const navigateurSaute = suite('navigateur').statut === 'saute';
   const utiles = p.filter((x) => !(navigateurSaute && x.cible.startsWith('frontend/tests/navigateur')));
-  return { n: i + 1, libelle, preuves: p, ok: utiles.length > 0 && utiles.every((x) => x.trouves > 0 && x.reussis === x.trouves) };
+  return { n: premier + i, libelle, preuves: p, ok: utiles.length > 0 && utiles.every((x) => x.trouves > 0 && x.reussis === x.trouves) };
 });
+const criteres = evaluer(CRITERES, 1);
+const criteresPhase2 = evaluer(CRITERES_PHASE_2, CRITERES.length + 1);
 
 // Mesures du critère 10, audit des dépendances, taille des écrans
 const mesures = existsSync(MESURES) ? readFileSync(MESURES, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
@@ -281,16 +303,20 @@ const suitesKo = resultats.filter((r) => r.statut === 'echec');
 const L = [];
 L.push('# Rapport de recette automatique', '');
 L.push(`Généré par \`recette/recette.mjs\` le ${debut.toLocaleString('fr-FR', { timeZone: 'Africa/Abidjan', dateStyle: 'long', timeStyle: 'short' })} (heure d'Abidjan), version ${version}, Node.js ${process.versions.node}, en ${Math.round((Date.now() - debut.getTime()) / 60000)} minutes.`, '');
-L.push(`**${valides} critère(s) sur ${criteres.length} vérifié(s) automatiquement** ; ${tousLesTests.filter((t) => t.ok).length} tests réussis sur ${tousLesTests.filter((t) => !t.saute).length}${suitesKo.length ? ` ; suite(s) en échec : ${suitesKo.map((s) => s.libelle).join(', ')}` : ' ; toutes les suites passent'}.`, '');
+const valides2 = criteresPhase2.filter((c) => c.ok).length;
+L.push(`**${valides} critère(s) sur ${criteres.length} vérifié(s) automatiquement**, et ${valides2} sur ${criteresPhase2.length} de la phase 2 ; ${tousLesTests.filter((t) => t.ok).length} tests réussis sur ${tousLesTests.filter((t) => !t.saute).length}${suitesKo.length ? ` ; suite(s) en échec : ${suitesKo.map((s) => s.libelle).join(', ')}` : ' ; toutes les suites passent'}.`, '');
 L.push('Ce rapport est la partie automatique de la recette. Le MVP est accepté quand chaque critère est vérifié sur l\'environnement de démonstration, avec deux banques de test (section 10 du cahier des charges) : [cahier de recette](cahier-de-recette.md).', '');
 
+const tableauCriteres = (liste) => {
+  L.push('| | Critère | Preuves (tests réussis / tests trouvés) |', '|---|---|---|');
+  for (const c of liste) {
+    const preuves = c.preuves.map((p) => `${p.reussis}/${p.trouves} \`${p.cible.replace('backend/test/e2e/', '').replace('frontend/tests/navigateur/', 'navigateur/')}\``).join('<br>');
+    L.push(`| ${coche(c.ok)} ${c.n} | ${c.libelle} | ${preuves} |`);
+  }
+  L.push('');
+};
 L.push('## Critères de la section 10', '');
-L.push('| | Critère | Preuves (tests réussis / tests trouvés) |', '|---|---|---|');
-for (const c of criteres) {
-  const preuves = c.preuves.map((p) => `${p.reussis}/${p.trouves} \`${p.cible.replace('backend/test/e2e/', '').replace('frontend/tests/navigateur/', 'navigateur/')}\``).join('<br>');
-  L.push(`| ${coche(c.ok)} ${c.n} | ${c.libelle} | ${preuves} |`);
-}
-L.push('');
+tableauCriteres(criteres);
 if (mesures.length) {
   L.push('### Critère 10 : mesures', '', 'Banque de 1 000 réclamations, 20 appels par opération à travers toute la pile (HTTP, contrat, RLS, Prisma) ; seuil : p95 sous 1 000 ms.', '');
   L.push('| Opération | p95 | max |', '|---|---:|---:|');
@@ -298,6 +324,9 @@ if (mesures.length) {
   L.push('');
 }
 
+L.push('## Critères de la phase 2', '');
+L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14).`, '');
+tableauCriteres(criteresPhase2);
 L.push('## Suites', '');
 L.push('| Suite | Résultat | Tests | Durée |', '|---|---|---:|---:|');
 for (const r of resultats) {
@@ -333,6 +362,6 @@ L.push(`Journaux complets de cette exécution : \`recette/.resultats/\` (${readd
 
 mkdirSync(resolve(sortie, '..'), { recursive: true });
 writeFileSync(sortie, `${L.join('\n')}\n`);
-console.log(`\n${valides}/${criteres.length} critères vérifiés, ${suitesKo.length} suite(s) en échec — rapport : ${relative(RACINE, sortie)}`);
-process.exit(valides === criteres.length && suitesKo.length === 0 ? 0 : 1);
+console.log(`\n${valides}/${criteres.length} critères vérifiés (phase 2 : ${valides2}/${criteresPhase2.length}), ${suitesKo.length} suite(s) en échec — rapport : ${relative(RACINE, sortie)}`);
+process.exit(valides === criteres.length && valides2 === criteresPhase2.length && suitesKo.length === 0 ? 0 : 1);
 

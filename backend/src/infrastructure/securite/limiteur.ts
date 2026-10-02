@@ -1,6 +1,7 @@
 /**
  * Limites de débit (Redis, fenêtre fixe) : dépôt 5/h par adresse IP et 3/h par téléphone,
- * code OTP 3/h par réclamation, 10 échecs de connexion par quart d'heure et par adresse IP, pages publiques.
+ * code OTP 3/h par réclamation, 10 échecs de connexion par quart d'heure et par adresse IP, pages publiques,
+ * 30 messages du client par réclamation et par 10 minutes (chat, étape 17).
  * Si Redis ne répond pas, la requête passe (le service reste disponible) et l'incident est journalisé.
  */
 import { createHash } from 'node:crypto';
@@ -22,6 +23,7 @@ export const LIMITES = {
   echecsConnexionParIp: { nom: 'connexion-ip', max: 10, fenetreSecondes: 900 },
   motDePasseOublieParIp: { nom: 'oubli-ip', max: 5, fenetreSecondes: 3600 },
   publicParIp: { nom: 'public-ip', max: 120, fenetreSecondes: 60 },
+  messagesClient: { nom: 'message-client', max: 30, fenetreSecondes: 600 },
 } as const satisfies Record<string, Limite>;
 
 export class Limiteur {

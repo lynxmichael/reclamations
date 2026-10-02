@@ -32,7 +32,7 @@ beforeAll(async () => {
     ids.push(r.id);
   }
   superviseur = (await connecter(client, j.horizon.comptes.didier.email)).jeton;
-}, 300_000);
+}, 1_200_000);
 
 afterAll(async () => {
   await bd.fermer();

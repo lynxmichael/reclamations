@@ -1,5 +1,7 @@
 /**
- * Tâches planifiées du SLA (§6.4) : alerte préventive, dépassement + escalade, clôture automatique.
+ * Tâches planifiées du SLA (§6.4) : alerte préventive, dépassement + escalade, clôture automatique ;
+ * depuis l'étape 16, attribution des réclamations en attente et escalade à l'Admin Entreprise ;
+ * depuis l'étape 17, avis au client d'une réponse restée non lue dans le chat.
  *
  * Le worker les lance chaque minute (branchement BullMQ à l'étape 7). Chaque passage :
  *   1. repère les tickets échus, toutes banques confondues (contexte système, lecture seule) ;
@@ -7,35 +9,140 @@
  *      et revérifie la condition sous verrou.
  * Relancer une tâche, ou en lancer deux en parallèle, ne produit jamais une alerte en double.
  */
-import { contexte, clientEn, type ClientBase } from '../../infrastructure/base-de-donnees/index.js';
+import { contexte, clientEn, transactionEn, type ClientBase } from '../../infrastructure/base-de-donnees/index.js';
 import { minutesAvantAlerte } from '../../domaine/reclamation/sla.js';
+import { instantEscaladeAdmin, seuilEscaladeAdmin } from '../../domaine/reclamation/escalade.js';
+import { avisClientDu, limiteAvisClient } from '../../domaine/conversation.js';
 import type { Acteur } from '../../domaine/reclamation/machine.js';
-import { agent, superviseurs } from './notifications.js';
+import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
+import { adminsEntreprise, agent, superviseurs } from './notifications.js';
 import type { CycleDeVie } from './cycle-de-vie.js';
+import { chargerParametres } from './parametres.js';
+import { ouvrirEnquete } from './satisfaction.js';
 
 const SYSTEME: Acteur = { type: 'SYSTEME' };
 const ACTIFS = ['OUVERTE', 'EN_COURS'] as const;
+const ENCORE_OUVERTES = ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT'] as const;
 const LOT = 200;
+/** Une réponse plus ancienne n'appelle plus d'avis différé (worker arrêté plus longtemps) */
+const FENETRE_AVIS_MS = 7 * 86_400_000;
 
 export interface BilanTaches {
+  attributions: number;
   alertesPreventives: number;
   depassements: number;
+  escaladesAdmin: number;
   cloturesAutomatiques: number;
+  avisConversations: number;
 }
 
 export class TachesSla {
   private readonly systeme;
 
-  constructor(base: ClientBase, private readonly cycle: CycleDeVie) {
+  constructor(private readonly base: ClientBase, private readonly cycle: CycleDeVie) {
     this.systeme = clientEn(base, contexte.systeme());
   }
 
   async toutes(maintenant: Date): Promise<BilanTaches> {
     return {
+      attributions: await this.attributionsEnAttente(maintenant),
       alertesPreventives: await this.alertesPreventives(maintenant),
       depassements: await this.depassements(maintenant),
+      escaladesAdmin: await this.escaladesAdmin(maintenant),
       cloturesAutomatiques: await this.cloturesAutomatiques(maintenant),
+      avisConversations: await this.avisConversations(maintenant),
     };
+  }
+
+  /**
+   * Mode automatique (étape 16) : les réclamations restées sans agent (banque fermée au dépôt, aucun
+   * agent disponible) partent dès qu'un agent du groupe est disponible, pendant les heures ouvrées,
+   * les plus anciennes d'abord.
+   */
+  async attributionsEnAttente(maintenant: Date): Promise<number> {
+    const banques = await this.systeme.banque.findMany({
+      where: { attributionAutomatique: true, modeAttribution: 'AUTOMATIQUE', suspendueLe: null }, select: { id: true },
+    });
+    let traites = 0;
+    for (const b of banques) {
+      const candidats = await this.systeme.reclamation.findMany({
+        where: {
+          tenantId: b.id, statut: 'OUVERTE', agentId: null,
+          OR: [{ categorie: { groupeId: { not: null } } }, { agence: { groupeId: { not: null } } }],
+        },
+        select: { id: true, categorieId: true, agenceId: true }, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], take: LOT,
+      });
+      // Une catégorie et une agence sans agent disponible : inutile de réessayer dans ce passage
+      const sansAgent = new Set<string>();
+      for (const c of candidats) {
+        const cle = `${c.categorieId}:${c.agenceId}`;
+        if (sansAgent.has(cle)) continue;
+        const issue = await this.cycle.surTicket(b.id, c.id, async (tx, t, p) => {
+          if (t.statut !== 'OUVERTE' || t.agentId || p.banque.modeAttribution !== 'AUTOMATIQUE') return 'ignoree';
+          if (!banqueOuverte(maintenant, p.sla.calendrier)) return 'fermee';
+          const choix = choisir(await chargerContexte(tx, p, maintenant), t.categorieId, t.agenceId);
+          if (!choix) return 'personne';
+          await this.cycle.attribuer(tx, t, p, maintenant, choix);
+          return 'attribuee';
+        }, { sautSiVerrouille: true });
+        if (issue === 'fermee') break;
+        if (issue === 'personne') sansAgent.add(cle);
+        if (issue === 'attribuee') traites++;
+      }
+    }
+    return traites;
+  }
+
+  /**
+   * Second niveau d'escalade (étape 16) : une réclamation encore en retard au-delà du seuil de sa
+   * catégorie ou de la banque est signalée une fois aux Admin Entreprise.
+   */
+  async escaladesAdmin(maintenant: Date): Promise<number> {
+    const banques = await this.systeme.banque.findMany({ where: { attributionAutomatique: true }, select: { id: true } });
+    let traites = 0;
+    for (const b of banques) {
+      // Échéances calculées dans le calendrier de la banque (minutes ouvrées)
+      const echues = await transactionEn(this.base, contexte.banque(b.id), async (tx) => {
+        const p = await chargerParametres(tx, b.id);
+        const seuilsBanque = p.banque.escaladeAdmin;
+        if (!seuilsBanque) return [];
+        const tickets = await tx.reclamation.findMany({
+          where: { statut: { in: [...ACTIFS] }, depassementSlaSignaleLe: { not: null }, escaladeeAdminLe: null, echeanceSlaLe: { not: null } },
+          select: {
+            id: true, priorite: true, echeanceSlaLe: true, delaiCibleMinutes: true,
+            categorie: { select: { seuilEscaladeAdminPourcent: true, seuilEscaladeAdminUrgentPourcent: true } },
+          },
+          orderBy: { echeanceSlaLe: 'asc' },
+        });
+        return tickets.filter((t) => {
+          const seuil = seuilEscaladeAdmin(t.priorite, {
+            pourcent: t.categorie.seuilEscaladeAdminPourcent, urgentPourcent: t.categorie.seuilEscaladeAdminUrgentPourcent,
+          }, seuilsBanque);
+          return seuil !== null && instantEscaladeAdmin(t.echeanceSlaLe!, t.delaiCibleMinutes, seuil, p.sla.calendrier) <= maintenant;
+        }).slice(0, LOT).map((t) => t.id);
+      });
+      for (const id of echues) {
+        const fait = await this.cycle.surTicket(b.id, id, async (tx, t, p) => {
+          if (!ACTIFS.includes(t.statut as never) || t.escaladeeAdminLe || !t.depassementSlaSignaleLe || !t.echeanceSlaLe || !p.banque.escaladeAdmin) return false;
+          const categorie = await tx.categorie.findUniqueOrThrow({
+            where: { id: t.categorieId }, select: { seuilEscaladeAdminPourcent: true, seuilEscaladeAdminUrgentPourcent: true },
+          });
+          const seuil = seuilEscaladeAdmin(t.priorite, {
+            pourcent: categorie.seuilEscaladeAdminPourcent, urgentPourcent: categorie.seuilEscaladeAdminUrgentPourcent,
+          }, p.banque.escaladeAdmin);
+          if (seuil === null || instantEscaladeAdmin(t.echeanceSlaLe, t.delaiCibleMinutes, seuil, p.sla.calendrier) > maintenant) return false;
+          const apres = await tx.reclamation.update({
+            where: { id: t.id }, data: { escaladeeAdminLe: maintenant }, include: { categorie: { select: { nom: true } } },
+          });
+          await this.cycle.evenement(tx, t, 'ESCALADE_ADMIN', SYSTEME, maintenant, { donnees: { seuil, echeance: t.echeanceSlaLe } });
+          await this.cycle.envois(tx, apres, p, maintenant).personnel('admin.escalade', await adminsEntreprise(tx), true, `${seuil} %`);
+          await this.cycle.auditer(tx, t, SYSTEME, 'sla.escalade_admin', { seuil });
+          return true;
+        }, { sautSiVerrouille: true });
+        if (fait) traites++;
+      }
+    }
+    return traites;
   }
 
   /** 75 % du délai consommé : l'agent (ou, sans agent, les superviseurs) est prévenu une fois. */
@@ -108,8 +215,39 @@ export class TachesSla {
         const apres = await this.cycle.transition(tx, t, 'CLOTURER_AUTOMATIQUEMENT', SYSTEME, maintenant, {
           clotureLe: maintenant, modeCloture: 'AUTOMATIQUE', clotureAutoPrevueLe: null,
         });
-        await this.cycle.envois(tx, apres, p, maintenant).client('client.cloture');
+        const avis = await ouvrirEnquete(tx, apres, p, 'AUTOMATIQUE', maintenant);
+        await this.cycle.envois(tx, apres, p, maintenant).client('client.cloture', { avis });
         await this.cycle.auditer(tx, t, SYSTEME, 'reclamation.cloture_automatique', {});
+        return true;
+      }, { sautSiVerrouille: true });
+      if (fait) traites++;
+    }
+    return traites;
+  }
+
+  /**
+   * Chat web (étape 17) : une réponse de la banque que le client n'a pas lue dans le chat 2 minutes
+   * après lui est signalée par e-mail ou SMS, une fois pour une série de réponses rapprochées. Sur une
+   * réclamation résolue ou clôturée entre-temps, la notification de l'action a déjà prévenu le client.
+   */
+  async avisConversations(maintenant: Date): Promise<number> {
+    // SQL brut (deux colonnes comparées entre elles) : transaction explicite en contexte système
+    const candidats = await transactionEn(this.base, contexte.systeme(), (tx) => tx.$queryRaw<{ tenant_id: string; reclamation_id: string }[]>`
+      SELECT tenant_id, reclamation_id FROM conversation
+      WHERE dernier_message_banque_le <= ${limiteAvisClient(maintenant)}
+        AND dernier_message_banque_le > ${new Date(maintenant.getTime() - FENETRE_AVIS_MS)}
+        AND (lu_client_le IS NULL OR lu_client_le < dernier_message_banque_le)
+        AND (avis_client_le IS NULL OR avis_client_le < dernier_message_banque_le)
+      ORDER BY dernier_message_banque_le
+      LIMIT ${LOT}`);
+    let traites = 0;
+    for (const c of candidats) {
+      const fait = await this.cycle.surTicket(c.tenant_id, c.reclamation_id, async (tx, t, p) => {
+        const conversation = await tx.conversation.findUnique({ where: { tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id } } });
+        if (!conversation || !avisClientDu(conversation, maintenant)) return false;
+        await tx.conversation.update({ where: { id: conversation.id }, data: { avisClientLe: maintenant } });
+        if (!ENCORE_OUVERTES.includes(t.statut as never)) return false;
+        await this.cycle.envois(tx, t, p, maintenant).client(t.statut === 'EN_ATTENTE_CLIENT' ? 'client.question' : 'client.reponse');
         return true;
       }, { sautSiVerrouille: true });
       if (fait) traites++;

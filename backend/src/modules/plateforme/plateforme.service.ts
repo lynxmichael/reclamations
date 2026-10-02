@@ -26,7 +26,8 @@ const HORAIRES_PAR_DEFAUT = [1, 2, 3, 4, 5].map((jourSemaine) => ({ jourSemaine,
 
 const SELECTION_BANQUE = {
   id: true, nom: true, slug: true, prefixeTickets: true, fuseauHoraire: true, seuilAlerteSlaPourcent: true, delaiClotureAutoJours: true,
-  smsChaqueChangementStatut: true, suspendueLe: true, motifSuspension: true, creeLe: true, plan: { select: { id: true, nom: true } },
+  smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, suspendueLe: true, motifSuspension: true, creeLe: true,
+  plan: { select: { id: true, nom: true } },
 } as const satisfies Prisma.BanqueSelect;
 
 type BanqueLue = Prisma.BanqueGetPayload<{ select: typeof SELECTION_BANQUE }>;
@@ -56,7 +57,10 @@ export class ServicePlateforme {
     return {
       id: b.id, nom: b.nom, slug: b.slug, prefixeTickets: b.prefixeTickets, plan: { id: b.plan.id, nom: b.plan.nom },
       fuseauHoraire: b.fuseauHoraire, seuilAlerteSlaPourcent: b.seuilAlerteSlaPourcent, delaiClotureAutoJours: b.delaiClotureAutoJours,
-      smsChaqueChangementStatut: b.smsChaqueChangementStatut, suspendueLe: b.suspendueLe?.toISOString() ?? null,
+      smsChaqueChangementStatut: b.smsChaqueChangementStatut, enqueteSatisfaction: b.enqueteSatisfaction,
+      attributionAutomatique: b.attributionAutomatique,
+      chatWeb: b.chatWeb,
+      suspendueLe: b.suspendueLe?.toISOString() ?? null,
       motifSuspension: b.motifSuspension, creeLe: b.creeLe.toISOString(), consommation: { agents, ticketsCeMois },
     };
   }
@@ -113,13 +117,20 @@ export class ServicePlateforme {
     });
   }
 
-  modifierBanque(appel: Appel, id: string, m: { nom?: string; planId?: string; fuseauHoraire?: string; seuilAlerteSlaPourcent?: number; delaiClotureAutoJours?: number; smsChaqueChangementStatut?: boolean }) {
+  modifierBanque(appel: Appel, id: string, m: {
+    nom?: string; planId?: string; fuseauHoraire?: string; seuilAlerteSlaPourcent?: number; delaiClotureAutoJours?: number;
+    smsChaqueChangementStatut?: boolean; enqueteSatisfaction?: boolean; attributionAutomatique?: boolean; chatWeb?: boolean;
+  }) {
     if (m.fuseauHoraire && !fuseauValide(m.fuseauHoraire)) throw invalideChamp('fuseauHoraire', 'Fuseau horaire inconnu (ex. Africa/Abidjan)');
     return this.bd.enPlateforme(async (tx) => {
       const avant = await tx.banque.findUnique({ where: { id }, select: SELECTION_BANQUE });
       if (!avant) throw introuvable('Banque introuvable');
       if (m.planId && !(await tx.plan.findFirst({ where: { id: m.planId, actif: true }, select: { id: true } }))) throw invalideChamp('planId', 'Plan inconnu ou retiré');
-      await tx.banque.update({ where: { id }, data: { ...m, ...(m.nom ? { nom: m.nom.trim() } : {}) } });
+      // Fermer l'attribution automatique (étape 16) remet la banque en attribution manuelle ; ses groupes restent
+      await tx.banque.update({
+        where: { id },
+        data: { ...m, ...(m.nom ? { nom: m.nom.trim() } : {}), ...(m.attributionAutomatique === false ? { modeAttribution: 'MANUELLE' } : {}) },
+      });
       await this.audit(tx, appel, 'plateforme.banque_modifiee', 'banque', id, {
         champs: Object.keys(m), ...(m.planId && m.planId !== avant.plan.id ? { planAvant: avant.plan.id, planApres: m.planId } : {}),
       });

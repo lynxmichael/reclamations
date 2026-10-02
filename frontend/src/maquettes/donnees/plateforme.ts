@@ -10,13 +10,16 @@ export const PLANS: S<'Plan'>[] = [
 
 const plan = (n: number) => ({ id: PLANS[n - 1]!.id, nom: PLANS[n - 1]!.nom });
 
-function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'suspendueLe' | 'motifSuspension'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
+function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'enqueteSatisfaction' | 'attributionAutomatique' | 'chatWeb' | 'suspendueLe' | 'motifSuspension'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
   return {
     id: id('banque', n),
     fuseauHoraire: FUSEAU,
     seuilAlerteSlaPourcent: 75,
     delaiClotureAutoJours: 5,
     smsChaqueChangementStatut: true,
+    enqueteSatisfaction: false,
+    attributionAutomatique: false,
+    chatWeb: false,
     suspendueLe: null,
     motifSuspension: null,
     ...b,
@@ -24,7 +27,7 @@ function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire'
 }
 
 export const BANQUES: S<'BanquePlateforme'>[] = [
-  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', consommation: { agents: 7, ticketsCeMois: 312 } }),
+  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, consommation: { agents: 7, ticketsCeMois: 312 } }),
   banque(2, { nom: 'Banque Horizon', slug: 'horizon', prefixeTickets: 'HZN', plan: plan(3), creeLe: '2026-04-14T10:30:00Z', seuilAlerteSlaPourcent: 80, consommation: { agents: 23, ticketsCeMois: 1184 } }),
   banque(3, { nom: 'Caisse Lagune', slug: 'lagune', prefixeTickets: 'LAG', plan: plan(1), creeLe: '2026-06-01T08:00:00Z', smsChaqueChangementStatut: false, consommation: { agents: 9, ticketsCeMois: 517 } }),
   banque(4, { nom: 'Banque Savane', slug: 'savane', prefixeTickets: 'SAV', plan: plan(1), creeLe: '2026-07-20T11:15:00Z', delaiClotureAutoJours: 7, suspendueLe: t('18/09 17:00'), motifSuspension: 'Contrat en cours de renouvellement', consommation: { agents: 4, ticketsCeMois: 61 } }),
@@ -48,10 +51,10 @@ export const INDICATEURS_PLATEFORME: S<'IndicateursPlateforme'> = {
   du: '2026-09-01T00:00:00Z',
   au: '2026-09-25T23:59:59Z',
   banques: [
-    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, total: 312, parStatut: statuts(9, 21, 6, 14, 262), urgentes: 11, tauxRespectSla: 0.87, tauxResolutionPremierContact: 0.43 },
-    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, total: 1184, parStatut: statuts(41, 96, 22, 58, 967), urgentes: 37, tauxRespectSla: 0.91, tauxResolutionPremierContact: 0.52 },
-    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, total: 517, parStatut: statuts(38, 44, 12, 19, 404), urgentes: 6, tauxRespectSla: 0.68, tauxResolutionPremierContact: 0.31 },
-    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, total: 61, parStatut: statuts(0, 0, 0, 0, 61), urgentes: 1, tauxRespectSla: 0.79, tauxResolutionPremierContact: 0.38 },
+    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, total: 312, parStatut: statuts(9, 21, 6, 14, 262), urgentes: 11, tauxRespectSla: 0.87, tauxResolutionPremierContact: 0.43, satisfaction: { enquetes: 241, reponses: 103, tauxSatisfaits: 0.7864, nps: 28 } },
+    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, total: 1184, parStatut: statuts(41, 96, 22, 58, 967), urgentes: 37, tauxRespectSla: 0.91, tauxResolutionPremierContact: 0.52, satisfaction: null },
+    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, total: 517, parStatut: statuts(38, 44, 12, 19, 404), urgentes: 6, tauxRespectSla: 0.68, tauxResolutionPremierContact: 0.31, satisfaction: null },
+    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, total: 61, parStatut: statuts(0, 0, 0, 0, 61), urgentes: 1, tauxRespectSla: 0.79, tauxResolutionPremierContact: 0.38, satisfaction: null },
   ],
 };
 

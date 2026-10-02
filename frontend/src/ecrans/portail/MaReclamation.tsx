@@ -2,6 +2,7 @@
  * Détail d'une réclamation dans l'espace client (lireMaReclamation). Les boutons viennent de
  * actionsPossibles (CONFIRMER, CONTESTER) et la zone de réponse de operationsPossibles
  * (MESSAGE_DU_CLIENT) : l'écran n'applique aucune règle métier lui-même.
+ * Étape 17 : quand la banque a le chat web (`chat`), les échanges deviennent une discussion.
  */
 import { useContext, useState } from 'react';
 import { ChevronLeft, Download, FileText, Image, SendHorizontal } from 'lucide-react';
@@ -10,7 +11,9 @@ import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { BadgeStatut, Bouton, LogoBanque, Texte, cx } from '../../ui/composants';
 import { TelechargerPiece } from '../../ui/contextes';
 import { date, dateCourte, dateLongue, octets } from '../../ui/format';
+import { InvitationAvis } from './Avis';
 import { CadrePortail } from './CadrePortail';
+import { Chat } from './Chat';
 import { Etapes } from './Etapes';
 import { Deconnexion } from './MesReclamations';
 
@@ -48,6 +51,7 @@ export function MaReclamation({
   surConfirmer,
   surContester,
   surEnvoyer,
+  surAvis,
   occupe,
 }: {
   banque: S<'BanquePublique'>;
@@ -58,6 +62,8 @@ export function MaReclamation({
   surContester?: (motif: string) => void;
   /** Renvoie false (ou une promesse de false) si l'envoi a échoué : le texte est alors conservé */
   surEnvoyer?: (texte: string, fichiers: File[]) => void | boolean | Promise<boolean>;
+  /** Ouvre l'enquête de satisfaction (avis.chemin), étape 15 */
+  surAvis?: (chemin: string) => void;
   /** Une action est en cours d'envoi : les boutons attendent */
   occupe?: boolean;
 }) {
@@ -90,6 +96,8 @@ export function MaReclamation({
           <BadgeStatut statut={r.statut} pourClient grand />
           <span className="text-[15px] text-encre-2">{r.categorie}</span>
         </div>
+
+        {r.avis && <InvitationAvis avis={r.avis} surAvis={() => surAvis?.(r.avis!.chemin)} />}
 
         {(peutConfirmer || peutContester) && (
           <section className="mt-6 rounded-2xl border-2 border-resolue/35 bg-resolue-doux/60 p-5">
@@ -148,58 +156,64 @@ export function MaReclamation({
           )}
         </section>
 
-        <section className="mt-8">
-          <h2 className="text-lg font-bold">Échanges</h2>
-          {r.messages.length === 0 ? (
-            <p className="mt-2 text-[15px] text-encre-3">Aucun message pour l'instant. La réponse de la banque apparaîtra ici.</p>
-          ) : (
-            <ol className="mt-4 flex flex-col gap-4">
-              {r.messages.map((m) => {
-                const banqueParle = m.auteur === 'BANQUE';
-                return (
-                  <li key={m.id} className={cx('flex flex-col gap-1.5', banqueParle ? 'items-start pr-6' : 'items-end pl-6')}>
-                    <div className="flex items-center gap-2 text-sm text-encre-3">
-                      {banqueParle && <LogoBanque nom={banque.nom} logoUrl={banque.logoUrl} taille={20} />}
-                      <span className="font-semibold text-encre-2">{banqueParle ? banque.nom : 'Vous'}</span>
-                      <span className="chiffres">{dateCourte(m.creeLe)}</span>
-                    </div>
-                    <div className={cx('flex flex-col gap-2 rounded-2xl px-4 py-3 text-[15px] leading-relaxed', banqueParle ? 'rounded-tl-md bg-marque-doux' : 'rounded-tr-md bg-fond')}>
-                      <p>{m.contenu}</p>
-                      {m.piecesJointes.map((p) => <PieceJointe key={p.id} piece={p} surFond />)}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-        </section>
+        {r.chat ? (
+          <Chat banque={banque} messages={r.messages} chat={r.chat} peutEcrire={peutEcrire} statut={r.statut} surEnvoyer={surEnvoyer} occupe={occupe} />
+        ) : (
+          <>
+            <section className="mt-8">
+              <h2 className="text-lg font-bold">Échanges</h2>
+              {r.messages.length === 0 ? (
+                <p className="mt-2 text-[15px] text-encre-3">Aucun message pour l'instant. La réponse de la banque apparaîtra ici.</p>
+              ) : (
+                <ol className="mt-4 flex flex-col gap-4">
+                  {r.messages.map((m) => {
+                    const banqueParle = m.auteur === 'BANQUE';
+                    return (
+                      <li key={m.id} className={cx('flex flex-col gap-1.5', banqueParle ? 'items-start pr-6' : 'items-end pl-6')}>
+                        <div className="flex items-center gap-2 text-sm text-encre-3">
+                          {banqueParle && <LogoBanque nom={banque.nom} logoUrl={banque.logoUrl} taille={20} />}
+                          <span className="font-semibold text-encre-2">{banqueParle ? banque.nom : 'Vous'}</span>
+                          <span className="chiffres">{dateCourte(m.creeLe)}</span>
+                        </div>
+                        <div className={cx('flex flex-col gap-2 rounded-2xl px-4 py-3 text-[15px] leading-relaxed', banqueParle ? 'rounded-tl-md bg-marque-doux' : 'rounded-tr-md bg-fond')}>
+                          <p>{m.contenu}</p>
+                          {m.piecesJointes.map((p) => <PieceJointe key={p.id} piece={p} surFond />)}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </section>
 
-        {peutEcrire && (
-          <form
-            className="mt-6 rounded-2xl border border-trait p-4"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!texte.trim()) return;
-              const envoye = await surEnvoyer?.(texte, fichiers);
-              if (envoye !== false) {
-                setTexte('');
-                setFichiers([]);
-              }
-            }}
-          >
-            <label htmlFor="message" className="text-[15px] font-semibold">
-              Écrire à la banque
-            </label>
-            <Texte id="message" className="mt-2" rows={3} placeholder="Votre message" value={texte} onChange={(e) => setTexte(e.target.value)} />
-            <div className="mt-3 flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <ChoixFichiers fichiers={fichiers} surChangement={setFichiers} libelle="Joindre" compact />
-              </div>
-              <Bouton type="submit" variante="principal" icone={<SendHorizontal aria-hidden size={17} />} disabled={!texte.trim() || occupe}>
-                {occupe ? 'Envoi…' : 'Envoyer'}
-              </Bouton>
-            </div>
-          </form>
+            {peutEcrire && (
+              <form
+                className="mt-6 rounded-2xl border border-trait p-4"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!texte.trim()) return;
+                  const envoye = await surEnvoyer?.(texte, fichiers);
+                  if (envoye !== false) {
+                    setTexte('');
+                    setFichiers([]);
+                  }
+                }}
+              >
+                <label htmlFor="message" className="text-[15px] font-semibold">
+                  Écrire à la banque
+                </label>
+                <Texte id="message" className="mt-2" rows={3} placeholder="Votre message" value={texte} onChange={(e) => setTexte(e.target.value)} />
+                <div className="mt-3 flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <ChoixFichiers fichiers={fichiers} surChangement={setFichiers} libelle="Joindre" compact />
+                  </div>
+                  <Bouton type="submit" variante="principal" icone={<SendHorizontal aria-hidden size={17} />} disabled={!texte.trim() || occupe}>
+                    {occupe ? 'Envoi…' : 'Envoyer'}
+                  </Bouton>
+                </div>
+              </form>
+            )}
+          </>
         )}
 
         <section className="mt-9">

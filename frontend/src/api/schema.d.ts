@@ -158,6 +158,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/suivi/{jetonSuivi}/avis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Enquête de satisfaction d'une réclamation clôturée
+         * @description Ouverte par le lien du message de clôture ou par le bouton de la page de suivi (étape 15).
+         *     404 si la réclamation n'a pas d'enquête : banque sans enquêtes, réclamation pas encore
+         *     clôturée, ou clôture forcée.
+         */
+        get: operations["lireAvis"];
+        put?: never;
+        /**
+         * Réponse du client à l'enquête de satisfaction
+         * @description Une seule réponse, dans les 7 jours qui suivent la clôture ; elle ne se modifie plus
+         *     (409 AVIS_DEJA_DONNE). Après 7 jours : 422 ENQUETE_TERMINEE.
+         */
+        post: operations["donnerAvis"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/logos/{fichier}": {
         parameters: {
             query?: never;
@@ -227,8 +254,55 @@ export interface paths {
         /**
          * Écrire à la banque (avec pièces jointes)
          * @description Si la banque attendait une réponse, le ticket repasse « En cours » et le chrono SLA reprend.
+         *     Chat web ouvert (étape 17) : le message entre dans la conversation de la réclamation ; l'agent
+         *     n'est alerté qu'au premier message non lu d'une rafale. 30 messages au plus par réclamation
+         *     et par 10 minutes.
          */
         post: operations["envoyerMessageClient"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/client/reclamations/{id}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat de la réclamation — nouveaux messages et état, relu toutes les 5 secondes
+         * @description Messages publics de la réclamation écrits à partir de `apres` (tous sans `apres`), disponibilité
+         *     de la banque et sa dernière lecture. Réservé aux banques dont Makor a ouvert le chat web
+         *     (décision I2) : sinon 403 FONCTION_NON_OUVERTE. Le client ne voit jamais le nom de l'agent.
+         */
+        get: operations["lireConversationClient"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/client/reclamations/{id}/conversation/lecture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Le chat est à l'écran — messages lus, client en ligne
+         * @description À appeler à l'ouverture du chat, à l'arrivée d'une réponse de la banque et chaque minute tant que
+         *     le chat reste à l'écran. Le premier appel ouvre la conversation. Une réponse lue dans les
+         *     2 minutes ne donne lieu à aucun e-mail ni SMS.
+         */
+        post: operations["marquerConversationLueClient"];
         delete?: never;
         options?: never;
         head?: never;
@@ -567,6 +641,8 @@ export interface paths {
          * Répondre au client (avec pièces jointes)
          * @description Depuis « Ouverte », le ticket est d'abord pris en charge. Avec `attendreReponse`, il passe
          *     « En attente client » et le chrono SLA s'arrête jusqu'à la réponse du client.
+         *     Chat web (étape 17) : si le client a ouvert le chat, l'e-mail ou le SMS ne part que si la
+         *     réponse reste non lue 2 minutes ; plusieurs réponses rapprochées donnent un seul avis.
          */
         post: operations["repondreAuClient"];
         delete?: never;
@@ -984,6 +1060,173 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/banque/parametres/traitement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mode d'attribution, groupe de chaque catégorie et agence, seuils d'escalade
+         * @description Fonction ouverte par Makor banque par banque (code FONCTION_NON_OUVERTE sinon).
+         */
+        get: operations["lireReglesTraitement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Régler l'attribution et l'escalade
+         * @description Les catégories et agences citées sont réécrites ; les autres ne changent pas. Une catégorie
+         *     sans seuil prend celui de la banque ; sans seuil nulle part, pas d'escalade à l'Admin Entreprise.
+         */
+        patch: operations["modifierReglesTraitement"];
+        trace?: never;
+    };
+    "/banque/groupes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Groupes d'agents, avec la charge et la disponibilité du jour de chaque membre */
+        get: operations["listerGroupes"];
+        put?: never;
+        /** Créer un groupe d'agents */
+        post: operations["creerGroupe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/groupes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Supprimer un groupe
+         * @description Ses catégories et agences n'ont plus de groupe ; leurs nouvelles réclamations restent dans la file du superviseur.
+         */
+        delete: operations["supprimerGroupe"];
+        options?: never;
+        head?: never;
+        /**
+         * Renommer un groupe ou changer ses membres
+         * @description Les réclamations déjà assignées ne bougent pas.
+         */
+        patch: operations["modifierGroupe"];
+        trace?: never;
+    };
+    "/banque/absences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Absences en cours et à venir des agents */
+        get: operations["listerAbsences"];
+        put?: never;
+        /** Déclarer une absence (congé, formation, maladie) ; l'agent ne reçoit rien ces jours-là */
+        post: operations["ajouterAbsence"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/absences/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Retirer une absence */
+        delete: operations["supprimerAbsence"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Boîte de réception — conversations des réclamations visibles
+         * @description L'agent voit les conversations de ses réclamations ; le superviseur et l'Admin Entreprise, toutes.
+         *     Seules figurent les conversations où le client a écrit. « À répondre » : le client a écrit en
+         *     dernier, la plus longue attente d'abord ; « Non lues » et « Toutes » : l'activité la plus
+         *     récente d'abord. Chat web fermé : 403 FONCTION_NON_OUVERTE.
+         */
+        get: operations["listerConversations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Une conversation — réclamation, messages échangés, présence du client
+         * @description Jamais les notes internes, qui restent sur la fiche de la réclamation.
+         */
+        get: operations["lireConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/conversations/{id}/lecture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Marquer la conversation lue
+         * @description Compte pour l'agent assigné, ou pour un superviseur si la réclamation n'est pas assignée. Sans
+         *     effet pour un autre lecteur : un superviseur qui regarde la conversation d'un agent ne la
+         *     marque pas lue à sa place. Répondre au client la marque lue aussi.
+         */
+        post: operations["marquerConversationLue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/banque/utilisateurs": {
         parameters: {
             query?: never;
@@ -1390,7 +1633,7 @@ export interface components {
         /** @enum {string} */
         StatutUtilisateur: "INVITE" | "ACTIF" | "DESACTIVE";
         /** @enum {string} */
-        TypeEvenement: "CREATION" | "PRISE_EN_CHARGE" | "QUESTION_AU_CLIENT" | "REPONSE_DU_CLIENT" | "RESOLUTION" | "CONFIRMATION" | "CONTESTATION" | "CLOTURE_AUTOMATIQUE" | "CLOTURE_FORCEE" | "ASSIGNATION" | "CHANGEMENT_PRIORITE" | "ESCALADE" | "ALERTE_SLA_PREVENTIVE" | "DEPASSEMENT_SLA" | "MESSAGE" | "PIECE_JOINTE";
+        TypeEvenement: "CREATION" | "PRISE_EN_CHARGE" | "QUESTION_AU_CLIENT" | "REPONSE_DU_CLIENT" | "RESOLUTION" | "CONFIRMATION" | "CONTESTATION" | "CLOTURE_AUTOMATIQUE" | "CLOTURE_FORCEE" | "ASSIGNATION" | "CHANGEMENT_PRIORITE" | "ESCALADE" | "ESCALADE_ADMIN" | "ALERTE_SLA_PREVENTIVE" | "DEPASSEMENT_SLA" | "MESSAGE" | "PIECE_JOINTE";
         /** @enum {string} */
         ModeCloture: "CONFIRMATION_CLIENT" | "AUTOMATIQUE" | "FORCEE";
         /** @enum {string} */
@@ -1422,7 +1665,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "ERREUR_INTERNE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -1627,6 +1870,8 @@ export interface components {
         };
         /** @description Chronologie seule — ni description, ni messages, ni coordonnées */
         SuiviPublic: {
+            /** @description Enquête de satisfaction de la réclamation clôturée (étape 15) ; vide s'il n'y en a pas */
+            avis: components["schemas"]["AvisResume"] | null;
             /** @example ALP-2026-000042 */
             numero: string;
             statut: components["schemas"]["StatutReclamation"];
@@ -1635,6 +1880,41 @@ export interface components {
             creeLe: components["schemas"]["Horodatage"];
             banque: components["schemas"]["BanquePublique"];
             etapes: components["schemas"]["EtapeSuivi"][];
+        };
+        /**
+         * @description A_DONNER : enquête ouverte ; DONNE : réponse reçue ; TERMINE : 7 jours passés sans réponse
+         * @enum {string}
+         */
+        EtatAvis: "A_DONNER" | "DONNE" | "TERMINE";
+        AvisResume: {
+            etat: components["schemas"]["EtatAvis"];
+            expireLe: components["schemas"]["Horodatage"];
+        };
+        /** @description Réponse du client à l'enquête (étape 15) */
+        ReponseAvis: {
+            /** @description Satisfaction sur le traitement de la réclamation (CSAT), de 1 à 5 */
+            note: number;
+            /** @description Recommandation de la banque à un proche (NPS), de 0 à 10 */
+            recommandation: number;
+            /** @description Facultatif */
+            commentaire?: string;
+        };
+        /** @description Enquête de satisfaction telle que la voit le client (étape 15) */
+        Avis: {
+            /** @example ALP-2026-000042 */
+            numero: string;
+            /** @example Carte bancaire */
+            categorie: string;
+            banque: components["schemas"]["BanquePublique"];
+            etat: components["schemas"]["EtatAvis"];
+            expireLe: components["schemas"]["Horodatage"];
+            reponse: components["schemas"]["AvisDonne"] | null;
+        };
+        AvisDonne: {
+            note: number;
+            recommandation: number;
+            commentaire: string | null;
+            reponduLe: components["schemas"]["Horodatage"];
         };
         DemandeOtp: {
             jetonAntiRobot: components["schemas"]["JetonAntiRobot"];
@@ -1683,6 +1963,10 @@ export interface components {
             piecesJointes: components["schemas"]["PieceJointe"][];
         };
         ReclamationClient: {
+            /** @description Chat web (étape 17) ; vide si Makor ne l'a pas ouvert à la banque (fil de messages simple) */
+            chat: components["schemas"]["EtatChat"] | null;
+            /** @description Enquête de satisfaction (étape 15) et adresse de sa page ; vide s'il n'y en a pas */
+            avis: components["schemas"]["AvisClient"] | null;
             /** Format: uuid */
             id: string;
             numero: string;
@@ -1701,12 +1985,44 @@ export interface components {
             /** @description Opérations permises au client : CONSULTER, et MESSAGE_DU_CLIENT tant que la réclamation n'est pas résolue */
             operationsPossibles: components["schemas"]["OperationTicket"][];
         };
+        AvisClient: {
+            etat: components["schemas"]["EtatAvis"];
+            expireLe: components["schemas"]["Horodatage"];
+            /**
+             * @description Page de l'enquête sur le portail, ex. /suivi/<jeton>/avis
+             * @example /suivi/Zq3h0Zk8b2mN4pLsQ1w2e3r4t5y6u7i8/avis
+             */
+            chemin: string;
+        };
         NouveauMessage: {
             contenu: string;
             fichiers?: components["schemas"]["Fichiers"];
         };
         Contestation: {
             motif: string;
+        };
+        /**
+         * @description Canal d'une conversation : WEB (chat du portail) ; WHATSAPP et SMS entrant à l'étape 19
+         * @enum {string}
+         */
+        CanalConversation: "WEB" | "WHATSAPP" | "SMS";
+        /** @description Le chat vu du client */
+        EtatChat: {
+            /** @description La banque est dans ses heures d'ouverture */
+            ouvert: boolean;
+            /** @description Prochaine ouverture, quand la banque est fermée */
+            repriseLe: components["schemas"]["HorodatageFacultatif"];
+            /** @description Dernière lecture de la conversation par la banque (« Lu » sous les messages du client) */
+            luParLaBanqueLe: components["schemas"]["HorodatageFacultatif"];
+        };
+        ConversationClient: {
+            /** @description Un statut différent de celui affiché appelle une relecture de la réclamation (boutons, historique) */
+            statut: components["schemas"]["StatutReclamation"];
+            /** @description Messages écrits à partir de `apres`, du plus ancien au plus récent */
+            messages: components["schemas"]["MessageVisible"][];
+            /** @description Heure du dernier message de la réclamation, à repasser dans `apres` */
+            curseur: components["schemas"]["HorodatageFacultatif"];
+            chat: components["schemas"]["EtatChat"];
         };
         /** @description 12 caractères au moins ; refusé s'il figure dans une liste de mots de passe courants */
         MotDePasse: string;
@@ -1781,6 +2097,8 @@ export interface components {
             categorie: components["schemas"]["ReferenceNommee"];
             agence: components["schemas"]["ReferenceNommee"] | null;
             agent: components["schemas"]["ReferenceNommee"] | null;
+            /** @description Mode suggestion (étape 16) : l'agent proposé pour une réclamation non assignée, pour le superviseur ; vide sinon */
+            agentSuggere: components["schemas"]["ReferenceNommee"] | null;
             client: {
                 nom: string;
             };
@@ -1833,6 +2151,8 @@ export interface components {
             clotureLe: components["schemas"]["HorodatageFacultatif"];
             clotureAutoPrevueLe: components["schemas"]["HorodatageFacultatif"];
             escaladeeLe: components["schemas"]["HorodatageFacultatif"];
+            /** @description Escalade automatique à l'Admin Entreprise, seuil de dépassement franchi (étape 16) */
+            escaladeeAdminLe: components["schemas"]["HorodatageFacultatif"];
         };
         InfosCloture: {
             mode: components["schemas"]["ModeCloture"];
@@ -1863,6 +2183,12 @@ export interface components {
             date: components["schemas"]["Horodatage"];
         };
         ReclamationDetail: {
+            /** @description Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque */
+            conversation: components["schemas"]["ConversationTicket"] | null;
+            /** @description Mode suggestion (étape 16) : l'agent proposé, pour le superviseur, tant que la réclamation n'est pas assignée */
+            attributionSuggeree: components["schemas"]["AttributionSuggeree"] | null;
+            /** @description Enquête de satisfaction ouverte à la clôture (étape 15) ; vide s'il n'y en a pas */
+            avis: components["schemas"]["AvisReclamation"] | null;
             /** Format: uuid */
             id: string;
             numero: string;
@@ -1901,6 +2227,12 @@ export interface components {
             /** @description Opérations permises à l'utilisateur connecté */
             operationsPossibles: components["schemas"]["OperationTicket"][];
         };
+        AvisReclamation: {
+            etat: components["schemas"]["EtatAvis"];
+            ouverteLe: components["schemas"]["Horodatage"];
+            expireLe: components["schemas"]["Horodatage"];
+            reponse: components["schemas"]["AvisDonne"] | null;
+        };
         ReponseAuClient: {
             contenu: string;
             /**
@@ -1909,6 +2241,78 @@ export interface components {
              */
             attendreReponse: boolean;
             fichiers?: components["schemas"]["Fichiers"];
+        };
+        ReclamationEnConversation: {
+            /** Format: uuid */
+            id: string;
+            numero: string;
+            statut: components["schemas"]["StatutReclamation"];
+            priorite: components["schemas"]["Priorite"];
+            categorie: string;
+        };
+        ConversationResume: {
+            /** Format: uuid */
+            id: string;
+            canal: components["schemas"]["CanalConversation"];
+            reclamation: components["schemas"]["ReclamationEnConversation"];
+            client: {
+                nom: string;
+            };
+            agent: components["schemas"]["ReferenceNommee"] | null;
+            dernierMessage: {
+                /** @description Sur une ligne, coupé au mot */
+                extrait: string;
+                /** @enum {string} */
+                auteur: "BANQUE" | "CLIENT";
+                date: components["schemas"]["Horodatage"];
+            };
+            /** @description Le client a écrit en dernier */
+            aRepondre: boolean;
+            /** @description Un message du client attend la lecture de la banque */
+            nonLue: boolean;
+            /** @description Le client avait le chat à l'écran il y a moins de 2 minutes */
+            clientEnLigne: boolean;
+        };
+        PageConversations: {
+            donnees: components["schemas"]["ConversationResume"][];
+            pagination: components["schemas"]["Pagination"];
+            /** @description Toutes pages confondues, dans le périmètre de l'appelant (pastille du menu) */
+            compteurs: {
+                aRepondre: number;
+                nonLues: number;
+            };
+        };
+        ConversationDetail: {
+            /** Format: uuid */
+            id: string;
+            canal: components["schemas"]["CanalConversation"];
+            reclamation: components["schemas"]["ReclamationEnConversation"];
+            client: {
+                nom: string;
+            };
+            agent: components["schemas"]["ReferenceNommee"] | null;
+            /** @description Texte du dépôt, en tête du fil */
+            description: string;
+            deposeeLe: components["schemas"]["Horodatage"];
+            /** @description Réponses de la banque et messages du client, du plus ancien au plus récent (jamais une note interne) */
+            messages: components["schemas"]["Message"][];
+            aRepondre: boolean;
+            nonLue: boolean;
+            clientEnLigne: boolean;
+            /** @description Dernière lecture par le client (« Lu » sous les réponses de la banque) */
+            luParLeClientLe: components["schemas"]["HorodatageFacultatif"];
+            /** @description REPONDRE_AU_CLIENT si l'appelant peut répondre d'ici */
+            operationsPossibles: components["schemas"]["OperationTicket"][];
+        };
+        /** @description Conversation de la réclamation, sur sa fiche */
+        ConversationTicket: {
+            /** Format: uuid */
+            id: string;
+            canal: components["schemas"]["CanalConversation"];
+            aRepondre: boolean;
+            nonLue: boolean;
+            clientEnLigne: boolean;
+            luParLeClientLe: components["schemas"]["HorodatageFacultatif"];
         };
         Volume: {
             cle: string;
@@ -1932,6 +2336,47 @@ export interface components {
             tauxResolutionPremierContact: number | null;
             charge: components["schemas"]["Charge"];
             evolution: components["schemas"]["Evolution"];
+            /** @description Enquêtes de satisfaction (étape 15) ; vide si la banque ne les a pas activées et n'en a aucune sur la période */
+            satisfaction: components["schemas"]["Satisfaction"] | null;
+        };
+        /**
+         * @description Enquêtes ouvertes pendant la période (date de clôture), avec les mêmes filtres que les autres
+         *     indicateurs. Satisfaits : notes 4 et 5 (CSAT). NPS : part des notes 9 et 10 moins part des notes
+         *     0 à 6, de -100 à 100. Un agent ne voit que ses réclamations.
+         */
+        Satisfaction: {
+            /** @description Enquêtes ouvertes (réclamations clôturées par confirmation ou automatiquement) */
+            enquetes: number;
+            reponses: number;
+            tauxReponse: number | null;
+            /** @description CSAT : part des notes 4 et 5 */
+            tauxSatisfaits: number | null;
+            noteMoyenne: number | null;
+            nps: number | null;
+            /** @description Recommandation 9 ou 10 */
+            promoteurs: number;
+            /** @description Recommandation 7 ou 8 */
+            passifs: number;
+            /** @description Recommandation de 0 à 6 */
+            detracteurs: number;
+            /** @description Agents qui ont traité des réclamations ayant reçu une réponse, du plus grand nombre de réponses au plus petit */
+            parAgent: {
+                cle: string;
+                libelle: string;
+                reponses: number;
+                tauxSatisfaits: number;
+                nps: number;
+            }[];
+            /** @description Les 10 derniers commentaires laissés par les clients */
+            commentaires: {
+                /** Format: uuid */
+                reclamationId: string;
+                numero: string;
+                note: number;
+                recommandation: number;
+                commentaire: string;
+                reponduLe: components["schemas"]["Horodatage"];
+            }[];
         };
         /**
          * @description Réclamations non clôturées à cet instant, quelle que soit la période (étape 11) ; les autres
@@ -1986,6 +2431,13 @@ export interface components {
             seuilAlerteSlaPourcent: number;
             delaiClotureAutoJours: number;
             smsChaqueChangementStatut: boolean;
+            /** @description Enquête de satisfaction à la clôture (étape 15), activée par Makor */
+            enqueteSatisfaction: boolean;
+            /** @description Attribution et escalade automatiques (étape 16), ouvertes par Makor */
+            attributionAutomatique: boolean;
+            modeAttribution: components["schemas"]["ModeAttribution"];
+            /** @description Chat web du portail et boîte de réception (étape 17), ouverts par Makor */
+            chatWeb: boolean;
             couleurPrimaire: components["schemas"]["Couleur"];
             couleurSecondaire: components["schemas"]["Couleur"];
             /** Format: uri-reference */
@@ -2124,6 +2576,116 @@ export interface components {
             /** @default false */
             recurrent: boolean;
         };
+        /**
+         * @description MANUELLE : le superviseur assigne, comme en phase 1. SUGGESTION : l'API propose l'agent, le
+         *     superviseur valide. AUTOMATIQUE : la réclamation part au dépôt vers l'agent proposé.
+         * @enum {string}
+         */
+        ModeAttribution: "MANUELLE" | "SUGGESTION" | "AUTOMATIQUE";
+        /** @description Pourcentage du délai cible (150 = la moitié du délai après l'échéance) ; vide = pas de seuil ici */
+        SeuilEscalade: number | null;
+        ReglesTraitement: {
+            mode: components["schemas"]["ModeAttribution"];
+            /** @description Seuil d'escalade à l'Admin Entreprise de la banque, réclamations normales */
+            seuilEscaladeAdminPourcent: components["schemas"]["SeuilEscalade"];
+            /** @description Seuil pour les réclamations urgentes ; vide = celui des normales */
+            seuilEscaladeAdminUrgentPourcent: components["schemas"]["SeuilEscalade"];
+            /** @description Toutes les catégories, actives ou non, dans l'ordre d'affichage */
+            categories: {
+                categorie: components["schemas"]["ReferenceNommee"];
+                active: boolean;
+                groupe: components["schemas"]["ReferenceNommee"] | null;
+                seuilEscaladeAdminPourcent: components["schemas"]["SeuilEscalade"];
+                seuilEscaladeAdminUrgentPourcent: components["schemas"]["SeuilEscalade"];
+            }[];
+            /** @description Toutes les agences, par code */
+            agences: {
+                agence: components["schemas"]["ReferenceNommee"];
+                active: boolean;
+                groupe: components["schemas"]["ReferenceNommee"] | null;
+            }[];
+        };
+        ModificationReglesTraitement: {
+            mode?: components["schemas"]["ModeAttribution"];
+            seuilEscaladeAdminPourcent?: components["schemas"]["SeuilEscalade"];
+            seuilEscaladeAdminUrgentPourcent?: components["schemas"]["SeuilEscalade"];
+            categories?: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                groupeId: string | null;
+                seuilEscaladeAdminPourcent: components["schemas"]["SeuilEscalade"];
+                seuilEscaladeAdminUrgentPourcent: components["schemas"]["SeuilEscalade"];
+            }[];
+            agences?: {
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                groupeId: string | null;
+            }[];
+        };
+        MembreGroupe: {
+            /** Format: uuid */
+            id: string;
+            /** @example Awa Koné */
+            nom: string;
+            statut: components["schemas"]["StatutUtilisateur"];
+            /** @description Absence déclarée pour aujourd'hui */
+            absent: boolean;
+            /** @description Réclamations ouvertes ou en cours qui lui sont assignées (sa charge) */
+            aTraiter: number;
+        };
+        GroupeAgents: {
+            /** Format: uuid */
+            id: string;
+            /** @example Monétique */
+            nom: string;
+            /** @description Agents du groupe, par nom */
+            membres: components["schemas"]["MembreGroupe"][];
+            categories: components["schemas"]["ReferenceNommee"][];
+            agences: components["schemas"]["ReferenceNommee"][];
+        };
+        EcritureGroupe: {
+            nom: string;
+            /** @description Agents de la banque (rôle Agent, compte non désactivé) */
+            membres: string[];
+        };
+        ModificationGroupe: {
+            nom?: string;
+            membres?: string[];
+        };
+        Absence: {
+            /** Format: uuid */
+            id: string;
+            agent: components["schemas"]["ReferenceNommee"];
+            /**
+             * Format: date
+             * @description Premier jour d'absence
+             */
+            du: string;
+            /**
+             * Format: date
+             * @description Dernier jour d'absence (inclus)
+             */
+            au: string;
+            creeLe: components["schemas"]["Horodatage"];
+        };
+        NouvelleAbsence: {
+            /** Format: uuid */
+            agentId: string;
+            /** Format: date */
+            du: string;
+            /**
+             * Format: date
+             * @description Au plus 366 jours après le premier jour, pas avant aujourd'hui
+             */
+            au: string;
+        };
+        /** @description Agent qui recevrait la réclamation maintenant (mode suggestion) */
+        AttributionSuggeree: {
+            agent: components["schemas"]["ReferenceNommee"];
+            groupe: components["schemas"]["ReferenceNommee"];
+        };
         Utilisateur: {
             /** Format: uuid */
             id: string;
@@ -2243,6 +2805,9 @@ export interface components {
             seuilAlerteSlaPourcent: number;
             delaiClotureAutoJours: number;
             smsChaqueChangementStatut: boolean;
+            enqueteSatisfaction: boolean;
+            attributionAutomatique: boolean;
+            chatWeb: boolean;
             suspendueLe: components["schemas"]["HorodatageFacultatif"];
             motifSuspension: string | null;
             creeLe: components["schemas"]["Horodatage"];
@@ -2274,11 +2839,24 @@ export interface components {
             seuilAlerteSlaPourcent?: number;
             delaiClotureAutoJours?: number;
             smsChaqueChangementStatut?: boolean;
+            /** @description Enquête de satisfaction à la clôture (étape 15) */
+            enqueteSatisfaction?: boolean;
+            /** @description Attribution et escalade automatiques (étape 16) ; fermer la fonction remet la banque en attribution manuelle */
+            attributionAutomatique?: boolean;
+            /** @description Chat web du portail et boîte de réception (étape 17) ; fermé, l'espace client garde son fil de messages simple */
+            chatWeb?: boolean;
         };
         IndicateursPlateforme: {
             du: components["schemas"]["Horodatage"];
             au: components["schemas"]["Horodatage"];
             banques: {
+                /** @description Totaux des enquêtes de la période (étape 15), jamais les commentaires ; vide sans enquête */
+                satisfaction: {
+                    enquetes: number;
+                    reponses: number;
+                    tauxSatisfaits: number | null;
+                    nps: number | null;
+                } | null;
                 banque: components["schemas"]["ReferenceNommee"];
                 total: number;
                 parStatut: components["schemas"]["Volume"][];
@@ -2319,7 +2897,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Probleme"];
             };
         };
-        /** @description Rôle insuffisant, ou banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque) */
+        /** @description Rôle insuffisant, banque suspendue (code BANQUE_SUSPENDUE, pour toute opération du personnel de cette banque), ou fonction de la phase 2 que Makor n'a pas ouverte à la banque (code FONCTION_NON_OUVERTE) */
         Interdit: {
             headers: {
                 [name: string]: unknown;
@@ -2434,6 +3012,15 @@ export interface components {
                 "application/json": components["schemas"]["ParametresBanque"];
             };
         };
+        /** @description Règles d'attribution et d'escalade */
+        Regles: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ReglesTraitement"];
+            };
+        };
         /** @description Horaires ouvrés */
         Horaires: {
             headers: {
@@ -2500,6 +3087,10 @@ export interface components {
         FiltreAction: string;
         TriReclamations: "-creeLe" | "creeLe" | "echeanceSlaLe" | "-echeanceSlaLe" | "-priorite";
         NonLues: boolean;
+        /** @description Seulement les messages écrits à partir de cet instant (le `curseur` de la réponse précédente) ; un message déjà reçu peut revenir, à dédoublonner par `id` */
+        Apres: string;
+        /** @description a-repondre : le client a écrit en dernier ; non-lues : un message du client attend la lecture de la banque */
+        FiltreConversations: "a-repondre" | "non-lues" | "toutes";
     };
     requestBodies: never;
     headers: never;
@@ -2709,6 +3300,63 @@ export interface operations {
             429: components["responses"]["TropDeRequetes"];
         };
     };
+    lireAvis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Jeton du lien de suivi reçu au dépôt */
+                jetonSuivi: components["parameters"]["JetonSuivi"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enquête et, si elle est donnée, la réponse du client */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Avis"];
+                };
+            };
+            404: components["responses"]["Introuvable"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    donnerAvis: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Jeton du lien de suivi reçu au dépôt */
+                jetonSuivi: components["parameters"]["JetonSuivi"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReponseAvis"];
+            };
+        };
+        responses: {
+            /** @description Réponse enregistrée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Avis"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     lireLogo: {
         parameters: {
             query?: never;
@@ -2813,6 +3461,59 @@ export interface operations {
             413: components["responses"]["FichierTropVolumineux"];
             415: components["responses"]["TypeNonSupporte"];
             422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    lireConversationClient: {
+        parameters: {
+            query?: {
+                /** @description Seulement les messages écrits à partir de cet instant (le `curseur` de la réponse précédente) ; un message déjà reçu peut revenir, à dédoublonner par `id` */
+                apres?: components["parameters"]["Apres"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Nouveaux messages et état du chat */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationClient"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    marquerConversationLueClient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lecture enregistrée */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
         };
     };
     confirmerResolution: {
@@ -3939,6 +4640,296 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Retiré */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    lireReglesTraitement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Regles"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    modifierReglesTraitement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModificationReglesTraitement"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Regles"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    listerGroupes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Groupes, par nom */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupeAgents"][];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    creerGroupe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EcritureGroupe"];
+            };
+        };
+        responses: {
+            /** @description Groupe créé */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupeAgents"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    supprimerGroupe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Supprimé */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    modifierGroupe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModificationGroupe"];
+            };
+        };
+        responses: {
+            /** @description Groupe modifié */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupeAgents"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    listerAbsences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Absences, de la plus proche à la plus lointaine */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Absence"][];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    ajouterAbsence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NouvelleAbsence"];
+            };
+        };
+        responses: {
+            /** @description Absence déclarée */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Absence"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    supprimerAbsence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retirée */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    listerConversations: {
+        parameters: {
+            query?: {
+                /** @description a-repondre : le client a écrit en dernier ; non-lues : un message du client attend la lecture de la banque */
+                filtre?: components["parameters"]["FiltreConversations"];
+                page?: components["parameters"]["Page"];
+                parPage?: components["parameters"]["ParPage"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversations et compteurs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PageConversations"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    lireConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetail"];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    marquerConversationLue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lecture enregistrée (ou sans effet pour ce lecteur) */
             204: {
                 headers: {
                     [name: string]: unknown;

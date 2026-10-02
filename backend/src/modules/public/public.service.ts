@@ -10,7 +10,7 @@ import { CONFIGURATION, urlPortail, type Configuration } from '../../configurati
 import { normaliserEmail, normaliserTelephone } from '../../domaine/contact.js';
 import { journaliser } from '../../infrastructure/audit/journal.js';
 import { BaseDonnees } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
-import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
+import { enSerie, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
 import { traceDe, type Appel, type FichierRecu } from '../../infrastructure/contrat/appel.js';
 import { introuvable, invalide, Probleme, type ErreurChamp } from '../../infrastructure/contrat/probleme.js';
 import { MAX_FICHIERS, MAX_OCTETS, TYPES_PIECES } from '../../infrastructure/fichiers/fichiers.js';
@@ -22,6 +22,7 @@ import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { avecFichiers, banquePublique, stockerPiecesJointes, type S } from '../commun.js';
 import { etapesSuivi } from '../reclamations/lecture.js';
+import { etatAvis, normaliserReponse } from '../../domaine/satisfaction.js';
 
 /** Version de la politique de données affichée au dépôt (conformité ARTCI) */
 export const VERSION_POLITIQUE = '2026-09';
@@ -151,6 +152,7 @@ export class ServicePublic {
         select: {
           numero: true, statut: true, creeLe: true, categorie: { select: { nom: true } }, banque: { select: CHAMPS_BANQUE },
           evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], select: { type: true, statutApres: true, visibleClient: true, creeLe: true } },
+          enquete: { select: { reponduLe: true, expireLe: true } },
         },
       });
       return {
@@ -160,7 +162,58 @@ export class ServicePublic {
         creeLe: t.creeLe.toISOString(),
         banque: banquePublique(t.banque),
         etapes: etapesSuivi(t.evenements),
+        avis: t.enquete ? { etat: etatAvis(t.enquete, this.horloge()), expireLe: t.enquete.expireLe.toISOString() } : null,
       };
+    });
+  }
+
+  // ---- Enquête de satisfaction (étape 15) -----------------------------------------
+
+  /** Enquête d'une réclamation clôturée, par son lien de suivi ; 404 s'il n'y en a pas. */
+  async avis(jetonSuivi: string): Promise<S<'Avis'>> {
+    const ref = await this.ticketParJeton(jetonSuivi);
+    return this.bd.enBanque(ref.tenantId, (tx) => this.lireAvis(tx, ref.id));
+  }
+
+  private async lireAvis(tx: ClientTransaction, reclamationId: string): Promise<S<'Avis'>> {
+    const t = await tx.reclamation.findUniqueOrThrow({
+      where: { id: reclamationId },
+      select: { numero: true, categorie: { select: { nom: true } }, banque: { select: CHAMPS_BANQUE }, enquete: true },
+    });
+    if (!t.enquete) throw introuvable('Pas d\'enquête de satisfaction pour cette réclamation');
+    const e = t.enquete;
+    return {
+      numero: t.numero,
+      categorie: t.categorie.nom,
+      banque: banquePublique(t.banque),
+      etat: etatAvis(e, this.horloge()),
+      expireLe: e.expireLe.toISOString(),
+      reponse: e.reponduLe
+        ? { note: e.note!, recommandation: e.recommandation!, commentaire: e.commentaire, reponduLe: e.reponduLe.toISOString() }
+        : null,
+    };
+  }
+
+  /** Réponse du client : une seule, dans les 7 jours ; elle ne se modifie plus. */
+  async donnerAvis(jetonSuivi: string, corps: { note: number; recommandation: number; commentaire?: string }, appel: Appel): Promise<S<'Avis'>> {
+    const reponse = normaliserReponse(corps);
+    if (typeof reponse === 'string') throw invalide([{ champ: 'note', message: reponse }]);
+    const ref = await this.ticketParJeton(jetonSuivi);
+    const maintenant = this.horloge();
+    return this.bd.enBanque(ref.tenantId, async (tx) => {
+      const e = await tx.enqueteSatisfaction.findFirst({ where: { reclamationId: ref.id } });
+      if (!e) throw introuvable('Pas d\'enquête de satisfaction pour cette réclamation');
+      if (e.reponduLe) throw new Probleme(409, 'AVIS_DEJA_DONNE', 'Vous avez déjà donné votre avis sur cette réclamation : merci');
+      if (etatAvis(e, maintenant) === 'TERMINE') throw new Probleme(422, 'ENQUETE_TERMINEE', 'Cette enquête est terminée : elle restait ouverte 7 jours après la clôture');
+      // Deux envois simultanés : un seul passe (la réponse ne se modifie plus, trigger en base)
+      const { count } = await tx.enqueteSatisfaction.updateMany({
+        where: { id: e.id, reponduLe: null },
+        data: { reponduLe: maintenant, note: reponse.note, recommandation: reponse.recommandation, commentaire: reponse.commentaire },
+      });
+      if (count === 0) throw new Probleme(409, 'AVIS_DEJA_DONNE', 'Vous avez déjà donné votre avis sur cette réclamation : merci');
+      // Journal : identifiants seulement, ni les notes ni le commentaire (arbitrage 7)
+      await journaliser(tx, { tenantId: ref.tenantId, acteur: { clientId: ref.clientId }, action: 'client.avis_donne', entite: 'reclamation', entiteId: ref.id, trace: traceDe(appel) });
+      return this.lireAvis(tx, ref.id);
     });
   }
 

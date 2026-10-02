@@ -11,12 +11,13 @@
 import { DateTime } from 'luxon';
 import type { CanalNotification } from '../../generated/prisma/enums.js';
 import { basculer, contexte, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import { finEnquete } from '../../domaine/satisfaction.js';
 import type { ParametresBanque } from './parametres.js';
 
 export type ModeleClient = 'client.depot' | 'client.statut' | 'client.reponse' | 'client.question' | 'client.resolution' | 'client.cloture';
 export type ModelePersonnel =
   | 'agent.assignation' | 'agent.message_client' | 'agent.contestation'
-  | 'sla.alerte_preventive' | 'sla.depassement' | 'reclamation.urgente' | 'superviseur.escalade';
+  | 'sla.alerte_preventive' | 'sla.depassement' | 'reclamation.urgente' | 'superviseur.escalade' | 'admin.escalade';
 export type ModelePlateforme = 'plateforme.urgente' | 'plateforme.plafond';
 
 /**
@@ -63,9 +64,10 @@ export class Envois {
 
   // ---- Client final --------------------------------------------------------
 
-  async client(modele: ModeleClient): Promise<void> {
+  /** `avis` : une enquête de satisfaction vient d'être ouverte, son lien part avec la clôture (étape 15). */
+  async client(modele: ModeleClient, options: { avis?: boolean } = {}): Promise<void> {
     const client = await this.tx.clientFinal.findUniqueOrThrow({ where: { id: this.ticket.clientId } });
-    const texte = this.texteClient(modele, client.nom);
+    const texte = this.texteClient(modele, client.nom, options.avis ?? false);
     const lignes: { canal: CanalNotification; destination: string; sujet: string | null; contenu: string }[] = [];
     if (client.email) lignes.push({ canal: 'EMAIL', destination: client.email, sujet: texte.sujet, contenu: texte.corps });
     if (client.telephone && (SMS_TOUJOURS.includes(modele) || this.p.banque.smsChaqueChangementStatut)) {
@@ -79,7 +81,7 @@ export class Envois {
     });
   }
 
-  private texteClient(modele: ModeleClient, nom: string): Texte {
+  private texteClient(modele: ModeleClient, nom: string, avis: boolean): Texte {
     const { numero } = this.ticket;
     const banque = this.p.banque.nom;
     const lien = this.lienSuivi;
@@ -118,11 +120,20 @@ export class Envois {
           sms: `${banque} : réclamation ${numero} résolue. Confirmez ou contestez sous ${this.p.sla.delaiClotureAutoJours} jours : ${lien}`,
         };
       case 'client.cloture':
-        return {
-          sujet: `Réclamation ${numero} clôturée`,
-          corps: `${bonjour}Votre réclamation ${numero} est clôturée.\nHistorique : ${lien}${signature}`,
-          sms: `${banque} : votre réclamation ${numero} est clôturée.`,
-        };
+        // Avec l'enquête (étape 15), le SMS dit « close » : le « ô » de « clôturée », hors de l'alphabet GSM, doublerait son coût
+        return avis
+          ? {
+            sujet: `Réclamation ${numero} clôturée : votre avis`,
+            corps: `${bonjour}Votre réclamation ${numero} est clôturée.\n`
+              + `Votre avis nous aide à mieux vous servir : deux questions, moins d'une minute, jusqu'au ${this.date(finEnquete(this.maintenant))} :\n`
+              + `${lien}/avis\nHistorique : ${lien}${signature}`,
+            sms: `${banque} : réclamation ${numero} close. Votre avis : ${lien}/avis`,
+          }
+          : {
+            sujet: `Réclamation ${numero} clôturée`,
+            corps: `${bonjour}Votre réclamation ${numero} est clôturée.\nHistorique : ${lien}${signature}`,
+            sms: `${banque} : votre réclamation ${numero} est clôturée.`,
+          };
     }
   }
 
@@ -169,6 +180,11 @@ export class Envois {
         return { sujet: `Réclamation urgente ${numero}`, corps: `Réclamation urgente ${numero} (${categorieNom}), ${this.date(this.maintenant)}.` };
       case 'superviseur.escalade':
         return { sujet: `${numero} escaladée`, corps: `La réclamation ${numero} (${categorieNom}) vous est escaladée${precision ? ` par ${precision}` : ''}.` };
+      case 'admin.escalade':
+        return {
+          sujet: `${numero} : retard important`,
+          corps: `Réclamation ${numero} (${categorieNom}) toujours en retard : ${precision ?? 'seuil'} du délai cible atteint (échéance ${echeance}). Escaladée à l'Admin Entreprise.`,
+        };
     }
   }
 

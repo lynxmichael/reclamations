@@ -11,12 +11,16 @@ type Resume = S<'ReclamationResume'>;
 
 function resume(
   n: number,
-  r: Omit<Resume, 'id' | 'numero' | 'enRetard' | 'escaladee' | 'echeanceSlaLe'> & { echeanceSlaLe?: string | null; escaladee?: boolean },
+  r: Omit<Resume, 'id' | 'numero' | 'enRetard' | 'escaladee' | 'echeanceSlaLe' | 'agentSuggere'> & {
+    echeanceSlaLe?: string | null; escaladee?: boolean; agentSuggere?: Resume['agentSuggere'];
+  },
 ): Resume {
   return {
     id: id('reclamation', n),
     numero: `ALP-2026-${String(n).padStart(6, '0')}`,
     ...r,
+    // Mode suggestion (étape 16) : l'agent proposé au superviseur pour une réclamation non assignée
+    agentSuggere: r.agentSuggere ?? null,
     echeanceSlaLe: r.echeanceSlaLe ?? null,
     enRetard: r.sla.etat === 'DEPASSE',
     escaladee: r.escaladee ?? false,
@@ -25,17 +29,17 @@ function resume(
 
 export const FILE: Resume[] = [
   resume(2452, {
-    statut: 'OUVERTE', priorite: 'URGENTE', canal: 'QR_CODE', categorie: categorie(5), agence: agence(1), agent: null,
+    statut: 'OUVERTE', priorite: 'URGENTE', canal: 'QR_CODE', categorie: categorie(5), agence: agence(1), agent: null, agentSuggere: ref(MAMADOU),
     client: { nom: 'Adama Sanogo' }, creeLe: t('25/09 14:32'), echeanceSlaLe: t('28/09 09:02'),
     sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 240, minutesRestantes: 202 },
   }),
   resume(2451, {
-    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(3), agence: null, agent: null,
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'LIEN_WEB', categorie: categorie(3), agence: null, agent: null, agentSuggere: ref(MAMADOU),
     client: { nom: 'Marie-Laure Yapi' }, creeLe: t('25/09 11:05'), echeanceSlaLe: t('28/09 11:35'),
     sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 480, minutesRestantes: 355 },
   }),
   resume(2450, {
-    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(2), agence: agence(2), agent: null,
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(2), agence: agence(2), agent: null, agentSuggere: ref(IBRAHIM),
     client: { nom: 'Seydou Koné' }, creeLe: t('24/09 16:40'), echeanceSlaLe: t('30/09 09:50'),
     sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 1440, minutesRestantes: 1080 },
   }),
@@ -137,6 +141,22 @@ export const DESCRIPTION_42 =
   "Mercredi soir vers 19 h, j'ai voulu retirer 50 000 FCFA au distributeur de l'agence du Plateau. " +
   "Le distributeur n'a pas donné les billets, mais mon compte a été débité. J'ai gardé le ticket.";
 
+/** Chat web (étape 17) : ce que le client et Aya se sont écrit cet après-midi, dans le chat du portail. */
+export const CHAT_42: S<'Message'>[] = [
+  {
+    id: id('message', 5), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('25/09 14:58'), piecesJointes: [],
+    contenu: 'Bonjour, avez-vous pu vérifier le distributeur ? Je dois payer mes fournisseurs lundi.',
+  },
+  {
+    id: id('message', 6), type: 'REPONSE_AU_CLIENT', auteur: aya, creeLe: t('25/09 15:04'), piecesJointes: [],
+    contenu: 'Bonjour M. Kouassi, oui : la monétique confirme l\'anomalie. Nous lançons le remboursement des 50 000 FCFA aujourd\'hui.',
+  },
+  {
+    id: id('message', 7), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('25/09 15:07'), piecesJointes: [],
+    contenu: 'Merci beaucoup ! Je le verrai quand sur mon compte ?',
+  },
+];
+
 const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPossibles'> = {
   id: id('reclamation', 2442),
   numero: 'ALP-2026-002442',
@@ -148,6 +168,10 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
   agence: agence(1),
   pointDepot: { id: id('point', 1), libelle: "Hall d'accueil" },
   agent: ref(AYA),
+  avis: null,
+  attributionSuggeree: null,
+  // Chat web (étape 17) : le client écrit depuis son espace ; il a le chat à l'écran
+  conversation: { id: id('conversation', 42), canal: 'WEB', aRepondre: true, nonLue: true, clientEnLigne: true, luParLeClientLe: t('25/09 15:09') },
   escaladeeVers: null,
   client: { id: id('client', 1), nom: 'Yao Kouassi', email: 'yao.kouassi@exemple.ci', telephone: '+2250708091011' },
   creeLe: t('24/09 09:12'),
@@ -168,6 +192,7 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
     clotureLe: null,
     clotureAutoPrevueLe: null,
     escaladeeLe: null,
+    escaladeeAdminLe: null,
   },
   cloture: null,
   nbReouvertures: 0,
@@ -189,6 +214,7 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
       id: id('message', 4), type: 'NOTE_INTERNE', auteur: serge, creeLe: t('25/09 11:40'), piecesJointes: [],
       contenu: 'La monétique confirme l\'anomalie. Tu peux lancer la régularisation et résoudre.',
     },
+    ...CHAT_42,
   ],
   piecesJointes: [],
   chronologie: [
@@ -222,6 +248,96 @@ export const FICHE_42: Record<'AGENT' | 'SUPERVISEUR' | 'ADMIN_ENTREPRISE', S<'R
   },
 };
 
+/**
+ * Fiche ALP-2026-002452, vue par le superviseur en mode suggestion (étape 16) : fraude suspectée,
+ * pas encore assignée. Mamadou Traoré est proposé : Adjoua est absente, Aya a plus de réclamations.
+ */
+export const FICHE_52: S<'ReclamationDetail'> = {
+  ...ficheBase,
+  id: id('reclamation', 2452),
+  numero: 'ALP-2026-002452',
+  statut: 'OUVERTE',
+  priorite: 'URGENTE',
+  description: 'Deux paiements en ligne de 85 000 et 120 000 FCFA que je n\'ai pas faits sont apparus ce matin sur mon compte.',
+  categorie: categorie(5),
+  agent: null,
+  client: { id: id('client', 7), nom: 'Adama Sanogo', email: null, telephone: '+2250545127788' },
+  creeLe: t('25/09 14:32'),
+  sla: {
+    etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 240, echeanceLe: t('28/09 09:02'), alertePreventiveLe: t('25/09 17:02'),
+    enPauseDepuis: null, minutesRestantes: 202, enRetard: false, respecte: null,
+  },
+  jalons: { prisEnChargeLe: null, premiereReponseLe: null, resolueLe: null, clotureLe: null, clotureAutoPrevueLe: null, escaladeeLe: null, escaladeeAdminLe: null },
+  messages: [],
+  chronologie: [{ type: 'CREATION', statutAvant: null, statutApres: 'OUVERTE', acteur: client, visibleClient: true, date: t('25/09 14:32') }],
+  attributionSuggeree: { agent: ref(MAMADOU), groupe: { id: id('groupe', 1), nom: 'Monétique' } },
+  conversation: null,
+  actionsPossibles: ['CLOTURER_DE_FORCE'],
+  operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE'],
+};
+
+/* ------------------------------------------------------------ Conversations (étape 17) */
+
+type ResumeConversation = S<'ConversationResume'>;
+const enConversation = (r: Resume): ResumeConversation['reclamation'] =>
+  ({ id: r.id, numero: r.numero, statut: r.statut, priorite: r.priorite, categorie: r.categorie.nom });
+const deLaFile = (n: number) => FILE.find((r) => r.numero.endsWith(String(n)))!;
+
+/** Boîte de réception au 25/09 15:10 : trois clients attendent une réponse, un autre a eu la sienne. */
+const CONVERSATIONS: ResumeConversation[] = [
+  {
+    id: id('conversation', 38), canal: 'WEB', reclamation: enConversation(deLaFile(2438)), client: { nom: 'Salimata Touré' }, agent: ref(AYA),
+    dernierMessage: { extrait: 'Toujours rien sur mon compte. C\'est la troisième fois que je relance, que se passe-t-il ?', auteur: 'CLIENT', date: t('25/09 09:46') },
+    aRepondre: true, nonLue: false, clientEnLigne: false,
+  },
+  {
+    id: id('conversation', 52), canal: 'WEB', reclamation: enConversation(deLaFile(2452)), client: { nom: 'Adama Sanogo' }, agent: null,
+    dernierMessage: { extrait: 'J\'ai fait opposition sur ma carte depuis l\'application. Que dois-je faire d\'autre ?', auteur: 'CLIENT', date: t('25/09 14:41') },
+    aRepondre: true, nonLue: true, clientEnLigne: false,
+  },
+  {
+    id: id('conversation', 42), canal: 'WEB', reclamation: enConversation(deLaFile(2442)), client: { nom: 'Yao Kouassi' }, agent: ref(AYA),
+    dernierMessage: { extrait: 'Merci beaucoup ! Je le verrai quand sur mon compte ?', auteur: 'CLIENT', date: t('25/09 15:07') },
+    aRepondre: true, nonLue: true, clientEnLigne: true,
+  },
+  {
+    id: id('conversation', 47), canal: 'WEB', reclamation: enConversation(deLaFile(2447)), client: { nom: 'Rokia Diallo' }, agent: ref(ADJOUA),
+    dernierMessage: { extrait: 'Pouvez-vous nous envoyer le relevé où apparaît le prélèvement ?', auteur: 'BANQUE', date: t('25/09 11:20') },
+    aRepondre: false, nonLue: false, clientEnLigne: false,
+  },
+];
+
+function pageConversations(lignes: ResumeConversation[], filtre: 'a-repondre' | 'toutes'): S<'PageConversations'> {
+  const donnees = filtre === 'a-repondre' ? lignes.filter((c) => c.aRepondre) : lignes;
+  return {
+    donnees,
+    pagination: { page: 1, parPage: 50, total: donnees.length },
+    compteurs: { aRepondre: lignes.filter((c) => c.aRepondre).length, nonLues: lignes.filter((c) => c.nonLue).length },
+  };
+}
+
+/** listerConversations : le superviseur voit toute la banque, l'agent ses réclamations. */
+export const CONVERSATIONS_SUPERVISEUR = pageConversations(CONVERSATIONS, 'a-repondre');
+export const CONVERSATIONS_SUPERVISEUR_TOUTES = pageConversations(CONVERSATIONS, 'toutes');
+export const CONVERSATIONS_AGENT = pageConversations(CONVERSATIONS.filter((c) => c.agent?.id === AYA.id), 'a-repondre');
+
+/** lireConversation : la conversation de Yao Kouassi, vue par Aya (elle peut répondre) ou l'Admin Entreprise (lecture). */
+export const CONVERSATION_42: Record<'AGENT' | 'SUPERVISEUR' | 'ADMIN_ENTREPRISE', S<'ConversationDetail'>> = (() => {
+  const base = {
+    ...CONVERSATIONS[2]!,
+    description: DESCRIPTION_42,
+    deposeeLe: t('24/09 09:12'),
+    messages: ficheBase.messages.filter((m) => m.type !== 'NOTE_INTERNE'),
+    luParLeClientLe: t('25/09 15:09'),
+  };
+  const { dernierMessage: _dernier, ...detail } = base;
+  return {
+    AGENT: { ...detail, operationsPossibles: FICHE_42.AGENT.operationsPossibles },
+    SUPERVISEUR: { ...detail, operationsPossibles: FICHE_42.SUPERVISEUR.operationsPossibles },
+    ADMIN_ENTREPRISE: { ...detail, operationsPossibles: FICHE_42.ADMIN_ENTREPRISE.operationsPossibles },
+  };
+})();
+
 /** Agents proposés à l'assignation (listerUtilisateurs, rôle AGENT, statut ACTIF). */
 export const AGENTS_ASSIGNABLES = [AYA, MAMADOU, ADJOUA, IBRAHIM].map(ref);
 
@@ -252,6 +368,31 @@ const EVOLUTION_SEPTEMBRE: S<'Evolution'> = (() => {
     points: deposees.map((n, i) => ({ debut: `2026-09-${String(i + 1).padStart(2, '0')}T00:00:00Z`, deposees: n, resolues: resolues[i]! })),
   };
 })();
+
+/** Enquêtes de satisfaction de septembre (étape 15) : 241 clôtures confirmées ou automatiques. */
+const SATISFACTION_SEPTEMBRE: S<'Satisfaction'> = {
+  enquetes: 241,
+  reponses: 103,
+  tauxReponse: 0.4274,
+  tauxSatisfaits: 0.7864,
+  noteMoyenne: 4.1,
+  nps: 28,
+  promoteurs: 52,
+  passifs: 28,
+  detracteurs: 23,
+  parAgent: [
+    { cle: AYA.id, libelle: 'Aya Konan', reponses: 34, tauxSatisfaits: 0.8235, nps: 35 },
+    { cle: IBRAHIM.id, libelle: 'Ibrahim Coulibaly', reponses: 29, tauxSatisfaits: 0.7931, nps: 31 },
+    { cle: MAMADOU.id, libelle: 'Mamadou Traoré', reponses: 24, tauxSatisfaits: 0.75, nps: 21 },
+    { cle: ADJOUA.id, libelle: "Adjoua N'Guessan", reponses: 16, tauxSatisfaits: 0.75, nps: 19 },
+  ],
+  commentaires: [
+    { reclamationId: id('reclamation', 2391), numero: 'ALP-2026-002391', note: 5, recommandation: 10, commentaire: 'Réponse rapide et montant recrédité le lendemain. Merci à la conseillère.', reponduLe: t('25/09 12:41') },
+    { reclamationId: id('reclamation', 2377), numero: 'ALP-2026-002377', note: 2, recommandation: 4, commentaire: "Il a fallu relancer deux fois avant d'avoir une vraie réponse.", reponduLe: t('25/09 09:03') },
+    { reclamationId: id('reclamation', 2366), numero: 'ALP-2026-002366', note: 4, recommandation: 8, commentaire: 'Problème réglé, mais le suivi par SMS pourrait être plus détaillé.', reponduLe: t('24/09 18:27') },
+    { reclamationId: id('reclamation', 2352), numero: 'ALP-2026-002352', note: 5, recommandation: 9, commentaire: "Très bon accueil à l'agence de Cocody.", reponduLe: t('23/09 16:10') },
+  ],
+};
 
 export const INDICATEURS: S<'Indicateurs'> = {
   du: '2026-09-01T00:00:00Z',
@@ -291,6 +432,7 @@ export const INDICATEURS: S<'Indicateurs'> = {
   tauxResolutionPremierContact: 0.43,
   charge: { aTraiter: 27, enAttenteClient: 6, enAlerte: 4, enRetard: 2 },
   evolution: EVOLUTION_SEPTEMBRE,
+  satisfaction: SATISFACTION_SEPTEMBRE,
 };
 
 /* ------------------------------------------------------------ Journal d'audit */

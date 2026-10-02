@@ -12,6 +12,7 @@ import { Reflector } from '@nestjs/core';
 import type { Response } from 'express';
 import type { Observable } from 'rxjs';
 import { CONFIGURATION, type Configuration } from '../../configuration/configuration.js';
+import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { BaseDonnees } from '../base-de-donnees/base-de-donnees.service.js';
 import { enSerie } from '../base-de-donnees/index.js';
 import { lireMultipart, MAX_OCTETS, MAX_OCTETS_LOGO } from '../fichiers/fichiers.js';
@@ -31,6 +32,7 @@ export class InterceptionContrat implements NestInterceptor {
     @Inject(BaseDonnees) private readonly bd: BaseDonnees,
     @Inject(Limiteur) private readonly limiteur: Limiteur,
     @Inject(CONFIGURATION) private readonly config: Configuration,
+    @Inject(HORLOGE) private readonly horloge: Horloge,
   ) {}
 
   async intercept(ctx: ExecutionContext, suite: CallHandler): Promise<Observable<unknown>> {
@@ -75,7 +77,8 @@ export class InterceptionContrat implements NestInterceptor {
 
     const a = await this.jetons.lireAcces(jeton);
     if (!a) throw jetonInvalide();
-    const maintenant = new Date();
+    // L'horloge de l'application, comme pour la signature du jeton (pilotée par les tests)
+    const maintenant = this.horloge();
     const [u, session] = await this.bd.enSysteme((tx) => enSerie([
       () => tx.utilisateur.findUnique({
         where: { id: a.utilisateurId },

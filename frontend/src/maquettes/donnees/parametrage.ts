@@ -67,6 +67,10 @@ export const PARAMETRES: S<'ParametresBanque'> = {
   seuilAlerteSlaPourcent: 75,
   delaiClotureAutoJours: 5,
   smsChaqueChangementStatut: true,
+  enqueteSatisfaction: true,
+  attributionAutomatique: true,
+  modeAttribution: 'SUGGESTION',
+  chatWeb: true,
   couleurPrimaire: ALPHA.couleurPrimaire,
   couleurSecondaire: ALPHA.couleurSecondaire,
   logoUrl: null,
@@ -135,3 +139,48 @@ const banqueDe = { id: id('banque', 1), nom: ALPHA.nom, slug: ALPHA.slug, fuseau
 export function moi(p: { id: string; prenom: string; nom: string }, role: S<'RoleUtilisateur'>): S<'Moi'> {
   return { id: p.id, email: email(p), prenom: p.prenom, nom: p.nom, role, banque: role === 'SUPER_ADMIN' ? null : banqueDe };
 }
+
+/* ------------------------------------------------------------------ Attribution (étape 16) */
+
+const membre = (p: { id: string; prenom: string; nom: string }, aTraiter: number, autres: Partial<S<'MembreGroupe'>> = {}): S<'MembreGroupe'> =>
+  ({ id: p.id, nom: `${p.prenom} ${p.nom}`, statut: 'ACTIF', absent: false, aTraiter, ...autres });
+const AYA_M = membre(AYA, 6);
+const MAMADOU_M = membre(MAMADOU, 4);
+const ADJOUA_M = membre(ADJOUA, 3, { absent: true });
+const IBRAHIM_M = membre(IBRAHIM, 3);
+const ESTELLE_M = membre(ESTELLE, 0, { statut: 'INVITE' });
+
+/** Groupes de la Banque Alpha : la carte et la fraude à la monétique, les comptes à un second groupe, Bouaké à son équipe. */
+export const GROUPES: S<'GroupeAgents'>[] = [
+  { id: id('groupe', 3), nom: 'Agence de Bouaké', membres: [ESTELLE_M, IBRAHIM_M], categories: [categorie(6)], agences: [agence(5)] },
+  { id: id('groupe', 2), nom: 'Comptes et crédits', membres: [IBRAHIM_M, MAMADOU_M], categories: [categorie(2), categorie(4), categorie(7)], agences: [] },
+  { id: id('groupe', 1), nom: 'Monétique', membres: [ADJOUA_M, AYA_M, MAMADOU_M], categories: [categorie(1), categorie(3), categorie(5)], agences: [] },
+];
+
+const groupeDe = (n: number) => ({ id: id('groupe', n), nom: GROUPES.find((g) => g.id === id('groupe', n))!.nom });
+const GROUPE_DE_CATEGORIE: Record<number, number | null> = { 1: 1, 2: 2, 3: 1, 4: 2, 5: 1, 6: 3, 7: 2, 8: null };
+
+export const REGLES: S<'ReglesTraitement'> = {
+  mode: 'SUGGESTION',
+  seuilEscaladeAdminPourcent: 150,
+  seuilEscaladeAdminUrgentPourcent: 125,
+  categories: CATEGORIES.map((c, i) => ({
+    categorie: { id: c.id, nom: c.nom },
+    active: c.active,
+    groupe: GROUPE_DE_CATEGORIE[i + 1] ? groupeDe(GROUPE_DE_CATEGORIE[i + 1]!) : null,
+    seuilEscaladeAdminPourcent: null,
+    // La fraude remonte plus vite à l'Admin Entreprise
+    seuilEscaladeAdminUrgentPourcent: i + 1 === 5 ? 110 : null,
+  })),
+  agences: AGENCES.map((a, i) => ({ agence: { id: a.id, nom: a.nom }, active: a.active, groupe: i + 1 === 5 ? groupeDe(3) : null })),
+};
+
+/** Agents qu'on peut mettre dans un groupe : rôle Agent, compte non désactivé. */
+export const AGENTS_DES_GROUPES = PERSONNEL.filter((u) => u.role === 'AGENT' && u.statut !== 'DESACTIVE')
+  .map((u) => ({ id: u.id, nom: `${u.prenom} ${u.nom}`, statut: u.statut }))
+  .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+
+export const ABSENCES: S<'Absence'>[] = [
+  { id: id('absence', 1), agent: ref(ADJOUA), du: '2026-09-24', au: '2026-09-28', creeLe: t('23/09 16:40') },
+  { id: id('absence', 2), agent: ref(IBRAHIM), du: '2026-10-12', au: '2026-10-23', creeLe: t('21/09 09:15') },
+];

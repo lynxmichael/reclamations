@@ -5,16 +5,20 @@
 import type { ReactNode } from 'react';
 import type { S } from '../api/types';
 import { Accuse } from '../ecrans/portail/Accuse';
+import { Avis } from '../ecrans/portail/Avis';
 import { CodeOtp } from '../ecrans/portail/CodeOtp';
 import { Depot, fichierExemple } from '../ecrans/portail/Depot';
 import { MaReclamation } from '../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../ecrans/portail/MesReclamations';
 import { Suivi } from '../ecrans/portail/Suivi';
 import { Activation, CodeTotp, Connexion } from '../ecrans/connexion/Connexion';
+import { Absences } from '../ecrans/back-office/Absences';
+import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
 import { CadreBackOffice, type PageBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
+import { Conversations } from '../ecrans/back-office/Conversations';
 import { Files } from '../ecrans/back-office/Files';
 import { Horaires } from '../ecrans/back-office/Horaires';
 import { Personnel } from '../ecrans/back-office/Personnel';
@@ -27,14 +31,15 @@ import { CadreConsole, type PageConsole } from '../ecrans/plateforme/Console';
 import { ALPHA, DOMAINE, MAINTENANT } from './donnees/commun';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './donnees/auth';
 import {
-  AGENCES, AYA, CATEGORIES, FATOU, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, SERGE, moi,
+  ABSENCES, AGENCES, AGENTS_DES_GROUPES, AYA, CATEGORIES, FATOU, GROUPES as GROUPES_AGENTS, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi,
 } from './donnees/parametrage';
 import { ALERTES, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './donnees/plateforme';
 import {
-  ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, formulaire, suivi,
+  ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos,
 } from './donnees/portail';
 import {
-  AGENTS_ASSIGNABLES, FICHE_42, INDICATEURS, JOURNAL, NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
+  AGENTS_ASSIGNABLES, CONVERSATION_42, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL,
+  NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
 } from './donnees/reclamations';
 
 export type Groupe = 'portail' | 'connexion' | 'back-office' | 'plateforme';
@@ -111,6 +116,7 @@ function backOffice(u: S<'Moi'>, page: PageBackOffice, contenu: ReactNode, notif
       moi={u}
       page={page}
       aTraiter={aTraiter(u)}
+      aRepondre={(u.role === 'AGENT' ? CONVERSATIONS_AGENT : CONVERSATIONS_SUPERVISEUR).compteurs.aRepondre}
       notifications={NOTIFICATIONS_AGENT}
       notificationsOuvertes={notificationsOuvertes}
       maintenant={MAINTENANT}
@@ -196,9 +202,11 @@ export const ECRANS: Ecran[] = [
       'Sans code, la page montre seulement le numéro, le statut, la catégorie et les étapes : ni description, ni messages, ni coordonnées.',
       'Les étapes restantes apparaissent en pointillé : le client voit ce qui l\'attend.',
       'Le code part par SMS si le client a donné un téléphone, sinon par e-mail (DemandeOtp).',
+      'Variante « Close » (étape 15) : la banque a activé l\'enquête de satisfaction ; la page invite le client à donner son avis, sans code.',
     ],
+    variantes: [{ cle: 'etat', libelle: 'Réclamation', options: [{ valeur: 'en-cours', libelle: 'En cours' }, { valeur: 'close', libelle: 'Close, avis à donner' }] }],
     marque: true,
-    rendu: ({ banque }) => <Suivi suivi={suivi(banque)} />,
+    rendu: ({ v, banque }) => <Suivi suivi={v.etat === 'close' ? suiviClos(banque) : suivi(banque)} />,
   },
   {
     id: 'code',
@@ -250,6 +258,50 @@ export const ECRANS: Ecran[] = [
     rendu: ({ v, banque }) => (
       <MaReclamation banque={banque} reclamation={pour(v.statut === 'en-cours' ? MA_RECLAMATION_EN_COURS : MA_RECLAMATION_RESOLUE, banque)} />
     ),
+  },
+
+  {
+    id: 'chat',
+    groupe: 'portail',
+    titre: 'Chat avec la banque',
+    format: 'mobile',
+    adresse: (b) => site(b, '/espace/reclamations/2442'),
+    operations: ['lireMaReclamation', 'lireConversationClient', 'marquerConversationLueClient', 'envoyerMessageClient'],
+    roles: 'Le client, après le code, quand Makor a ouvert le chat web à la banque (étape 17, phase 2).',
+    notes: [
+      'Intégré au portail de la banque : même adresse, même politique de sécurité du contenu, aucun script ni service tiers (décision I8).',
+      'Les nouveaux messages arrivent toutes les 5 secondes tant que la page est à l\'écran (lireConversationClient, à partir du dernier reçu).',
+      'Le client parle à la banque, jamais à un agent nommé. « Lu » sous son dernier message quand la banque l\'a lu.',
+      'En tête, la disponibilité : ouverte, ou fermée avec l\'heure de reprise (horaires et jours fériés de la banque).',
+      'Une réponse lue dans le chat n\'envoie ni SMS ni e-mail ; non lue 2 minutes après, le client est prévenu.',
+      'Entrée envoie, Maj + Entrée passe à la ligne ; le fil est un journal (role="log") lu par les lecteurs d\'écran.',
+    ],
+    variantes: [{ cle: 'etat', libelle: 'Banque', options: [{ valeur: 'ouverte', libelle: 'Ouverte' }, { valeur: 'fermee', libelle: 'Fermée (le soir)' }] }],
+    marque: true,
+    rendu: ({ v, banque }) => <MaReclamation key={v.etat} banque={banque} reclamation={pour(maReclamationChat(v.etat !== 'fermee'), banque)} />,
+  },
+
+  {
+    id: 'avis',
+    groupe: 'portail',
+    titre: 'Enquête de satisfaction',
+    format: 'mobile',
+    adresse: (b) => site(b, '/suivi/Qm9uam91ckJhbnF1…/avis'),
+    operations: ['lireAvis', 'donnerAvis'],
+    roles: 'Le client, depuis le lien du message de clôture ou le bouton du suivi (étape 15, phase 2).',
+    notes: [
+      'Ouverte à la clôture confirmée par le client ou automatique, jamais à une clôture forcée ; seulement si le Super Admin l\'a activée pour la banque (décision I2).',
+      'Deux questions : satisfaction sur le traitement, de 1 à 5 (CSAT), et recommandation de la banque, de 0 à 10 (NPS). Un commentaire facultatif, 1000 caractères au plus.',
+      'Une seule réponse, pendant 7 jours ; elle ne se modifie plus (409 AVIS_DEJA_DONNE, 422 ENQUETE_TERMINEE).',
+      'Les notes sont des boutons radio de 48 px : faciles à toucher, lus par les lecteurs d\'écran (« 4 sur 5, satisfait »).',
+    ],
+    variantes: [{
+      cle: 'etat',
+      libelle: 'Enquête',
+      options: [{ valeur: 'A_DONNER', libelle: 'À donner' }, { valeur: 'DONNE', libelle: 'Avis donné' }, { valeur: 'TERMINE', libelle: 'Terminée' }],
+    }],
+    marque: true,
+    rendu: ({ v, banque }) => <Avis key={v.etat} avis={avis(banque, v.etat as S<'EtatAvis'>)} />,
   },
 
   /* ------------------------------------------------------------------ Connexion */
@@ -312,6 +364,7 @@ export const ECRANS: Ecran[] = [
       'Tri par défaut : échéance la plus proche. Les réclamations en retard remontent en tête.',
       'Le superviseur assigne depuis la file « Reçues » ; l\'agent n\'a pas cette file.',
       'Variante « Notifications » : le panneau des notifications in-app, avec les alertes SLA.',
+      'Mode suggestion (étape 16) : pour une réclamation non assignée, le superviseur voit l\'agent proposé (agentSuggere) et valide d\'un clic.',
     ],
     variantes: [
       VU_PAR(['SUPERVISEUR', 'AGENT']),
@@ -343,6 +396,7 @@ export const ECRANS: Ecran[] = [
       'Réponse au client et note interne sont deux onglets distincts ; la note est sur fond ambre, marquée « invisible du client ».',
       '« Attendre la réponse du client » transforme la réponse en question : le chrono SLA se met en pause (étape 4).',
       'Résoudre exige une réponse finale ; la clôture forcée exige un motif et une précision.',
+      'Chat web (étape 17) : le panneau « Chat web » dit si le client est en ligne et s\'il attend une réponse ; « Ouvrir la conversation » mène à la boîte de réception.',
     ],
     variantes: [
       VU_PAR(['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE']),
@@ -373,6 +427,57 @@ export const ECRANS: Ecran[] = [
     },
   },
   {
+    id: 'ticket-suggestion',
+    groupe: 'back-office',
+    titre: 'Fiche à assigner, agent suggéré',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/reclamations/ALP-2026-002452'),
+    operations: ['lireReclamation', 'assignerReclamation'],
+    roles: 'Superviseur, quand la banque est en mode suggestion (étape 16).',
+    notes: [
+      'L\'API propose l\'agent disponible le moins chargé du groupe de la catégorie ou de l\'agence (attributionSuggeree) ; le superviseur valide ou choisit un autre agent.',
+      'Ici, Adjoua est absente et Aya a plus de réclamations à traiter : Mamadou est proposé.',
+      'En mode automatique, la réclamation part directement à cet agent au dépôt ; la chronologie montre « Attribution automatique », par le système.',
+    ],
+    rendu: () =>
+      backOffice(
+        SUPERVISEUR,
+        'reclamations',
+        <Ticket r={FICHE_52} agents={AGENTS_ASSIGNABLES} delaiClotureJours={PARAMETRES.delaiClotureAutoJours} seuil={PARAMETRES.seuilAlerteSlaPourcent} />,
+      ),
+  },
+  {
+    id: 'conversations',
+    groupe: 'back-office',
+    titre: 'Boîte de réception',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/conversations'),
+    operations: ['listerConversations', 'lireConversation', 'marquerConversationLue', 'repondreAuClient'],
+    roles: 'Agent (ses réclamations), superviseur et Admin Entreprise (toute la banque, l\'Admin en lecture) ; quand le chat web est ouvert (étape 17).',
+    notes: [
+      '« À répondre » : le client a écrit en dernier, la plus longue attente en tête. « Non lues » : un message attend la lecture de la banque.',
+      'Une conversation est lue quand l\'agent assigné l\'ouvre (un superviseur si la réclamation n\'est pas assignée) ; un superviseur qui la regarde ne la marque pas lue à sa place.',
+      'Le rond vert : le client a le chat à l\'écran. « Lu par le client » sous la dernière réponse.',
+      'La réponse part par repondreAuClient, comme depuis la fiche : chrono SLA, première réponse et « Attendre sa réponse » sont les mêmes. Les notes internes restent sur la fiche.',
+      'Une rafale de messages du client ne donne qu\'une alerte à l\'agent. La liste se relit toutes les 10 secondes, la conversation toutes les 5.',
+    ],
+    variantes: [
+      VU_PAR(['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE']),
+      { cle: 'filtre', libelle: 'Onglet', options: [{ valeur: 'a-repondre', libelle: 'À répondre' }, { valeur: 'toutes', libelle: 'Toutes' }] },
+    ],
+    rendu: ({ v }) => {
+      const role = v.role as keyof typeof PROFILS;
+      const agent = role === 'AGENT';
+      const page = agent ? CONVERSATIONS_AGENT : v.filtre === 'toutes' ? CONVERSATIONS_SUPERVISEUR_TOUTES : CONVERSATIONS_SUPERVISEUR;
+      const selection = role === 'ADMIN_ENTREPRISE' ? CONVERSATION_42.ADMIN_ENTREPRISE : role === 'SUPERVISEUR' ? CONVERSATION_42.SUPERVISEUR : CONVERSATION_42.AGENT;
+      return backOffice(
+        PROFILS[role],
+        'conversations',
+        <Conversations key={`${role}-${v.filtre}`} page={page} filtre={agent ? 'a-repondre' : (v.filtre as 'a-repondre' | 'toutes')} selection={selection} maintenant={MAINTENANT} />,
+      );
+    },
+  },
+  {
     id: 'tableau',
     groupe: 'back-office',
     titre: 'Tableau de bord',
@@ -384,7 +489,8 @@ export const ECRANS: Ecran[] = [
       'Les indicateurs du §6.6, calculés par l\'API sur la période et les filtres choisis.',
       'En ce moment : les réclamations non clôturées à traiter, en attente du client, en alerte et en retard, quelle que soit la période (étape 11).',
       'Les délais sont en temps ouvré. Le délai de résolution inclut l\'attente du client ; le taux SLA ne compte pas les clôtures forcées sans résolution (S5, S6).',
-      'Pas de courbe d\'évolution : le contrat ne fournit pas de série par jour ou par semaine (point à trancher, décision E7).',
+      'Courbe d\'évolution par jour ou par semaine (étape 9).',
+      'Satisfaction des clients (étape 15) : taux de réponse, satisfaits (notes 4 et 5), note moyenne, NPS, par agent et derniers commentaires ; seulement si la banque a des enquêtes.',
     ],
     rendu: () => backOffice(SUPERVISEUR, 'tableau', <TableauDeBord indicateurs={INDICATEURS} />),
   },
@@ -452,6 +558,26 @@ export const ECRANS: Ecran[] = [
     rendu: () => backOffice(ADMIN, 'banque', <Banque parametres={PARAMETRES} banque={ALPHA} />),
   },
   {
+    id: 'attribution',
+    groupe: 'back-office',
+    titre: 'Attribution et escalade',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/parametrage/attribution'),
+    operations: ['lireReglesTraitement', 'modifierReglesTraitement', 'listerGroupes', 'creerGroupe', 'modifierGroupe', 'supprimerGroupe'],
+    roles: 'Admin Entreprise (règle) ; superviseur (consulte). Seulement si Makor a ouvert la fonction à la banque (étape 16).',
+    notes: [
+      'Trois modes : manuel (comme en phase 1), suggestion (le superviseur valide), automatique (au dépôt, pendant les heures d\'ouverture).',
+      'Un groupe réunit des agents ; il reçoit des catégories et des agences. Chaque membre montre sa charge et son absence du jour.',
+      'Une réclamation va d\'abord à un agent des deux groupes (catégorie et agence), puis au groupe de la catégorie, puis à celui de l\'agence.',
+      'Escalade : 75 % alerte, 100 % superviseur (inchangés), puis l\'Admin Entreprise au seuil de la banque ou de la catégorie ; les urgentes ont leur seuil.',
+    ],
+    variantes: [VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR'])],
+    rendu: ({ v }) => {
+      const u = PROFILS[v.role as keyof typeof PROFILS];
+      return backOffice(u, 'attribution', <Attribution regles={REGLES} groupes={GROUPES_AGENTS} agents={AGENTS_DES_GROUPES} modifiable={u.role === 'ADMIN_ENTREPRISE'} />);
+    },
+  },
+  {
     id: 'personnel',
     groupe: 'back-office',
     titre: 'Personnel',
@@ -472,6 +598,20 @@ export const ECRANS: Ecran[] = [
         <Personnel page={PAGE_PERSONNEL} plan={PARAMETRES.plan} consommation={PARAMETRES.consommation} modifiable={u.role === 'ADMIN_ENTREPRISE'} maintenant={MAINTENANT} />,
       );
     },
+  },
+  {
+    id: 'absences',
+    groupe: 'back-office',
+    titre: 'Absences',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/absences'),
+    operations: ['listerAbsences', 'ajouterAbsence', 'supprimerAbsence'],
+    roles: 'Superviseur et Admin Entreprise, si l\'attribution automatique est ouverte (étape 16).',
+    notes: [
+      'Un agent absent ne reçoit aucune nouvelle réclamation ces jours-là, ni en suggestion ni en automatique.',
+      'Pas de motif : la cause d\'une absence ne regarde pas l\'outil. Une absence se retire et se redéclare, elle ne se modifie pas.',
+    ],
+    rendu: () => backOffice(SUPERVISEUR, 'absences', <Absences absences={ABSENCES} agents={AGENTS_DES_GROUPES.map((a) => ({ id: a.id, nom: a.nom }))} aujourdhui="2026-09-25" />),
   },
   {
     id: 'audit',
@@ -515,6 +655,7 @@ export const ECRANS: Ecran[] = [
     notes: [
       'Métadonnées seulement : volumes, taux, compteurs de SMS. Aucun texte ni client (arbitrage 4, droits par colonne de l\'étape 3).',
       'Les segments facturés servent à refacturer les SMS à chaque banque.',
+      'Satisfaction (étape 15) : totaux par banque (enquêtes, réponses, satisfaits, NPS), jamais les commentaires des clients.',
     ],
     rendu: () => consoleSA('activite', <Activite indicateurs={INDICATEURS_PLATEFORME} sms={FACTURATION_SMS} />),
   },

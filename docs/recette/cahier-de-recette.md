@@ -237,6 +237,62 @@ Preuve automatique : `reporting.e2e.test.ts` (3 tests), `navigateur/7-reporting.
 
 Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
+### Critère 12 (phase 2, étape 15) — Enquête de satisfaction
+
+*À la clôture confirmée ou automatique, le message de clôture porte le lien d'une enquête, à laquelle le client répond une seule fois dans les 7 jours ; la banque en suit les résultats ; le Super Admin ne voit que des totaux par banque.*
+
+Ce critère ne fait pas partie de la recette du MVP (section 10 du cahier des charges) : il se signe à part, à la livraison de la phase 2.
+
+1. Koffi, **Plateforme › Banques**, Banque Alpha : **Enquête de satisfaction à la clôture** cochée. Horizon : décochée. **Attendu :** Fatou voit « Enquête de satisfaction : Oui, à la clôture » dans **Banque et apparence**, sans pouvoir le changer.
+2. Aya résout une réclamation d'Alpha déposée avec un téléphone. Le client ouvre son lien, saisit son code et **confirme**. **Attendu :** le SMS de clôture dit « réclamation … close. Votre avis : … /avis », sans SMS de plus ; l'espace client affiche « Votre avis sur le traitement ».
+3. Le client ouvre le lien, choisit 4 sur 5 et 9 sur 10, écrit un commentaire, envoie. **Attendu :** « Merci pour votre avis » ; au rechargement, la même réponse, sans formulaire.
+4. Serge, fiche de la réclamation. **Attendu :** panneau « Avis du client », 4 / 5, 9 / 10, le commentaire. **Tableau de bord** : bloc « Satisfaction des clients » avec le commentaire en tête des derniers. Export CSV : les deux notes en fin de ligne, pas le commentaire.
+5. Aya, **Tableau de bord** : le bloc, sur ses réclamations seulement, sans tableau par agent.
+6. Serge clôture de force une autre réclamation (doublon). **Attendu :** pas de lien d'avis, pas d'enquête sur la fiche.
+7. Koffi, **Plateforme › Activité et SMS** : tableau « Satisfaction des clients », une ligne pour Alpha, aucun commentaire.
+
+Preuve automatique : `satisfaction.e2e.test.ts` (12 tests, dont la fin après 7 jours), `navigateur/8-satisfaction.spec.ts` (6 tests), vérifications de sécurité (13 contrôles : réponse figée, commentaire illisible pour la plateforme).
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
+### Critère 13 (phase 2, étape 16) — Attribution et escalade automatiques
+
+*L'Admin Entreprise confie chaque catégorie et chaque agence à un groupe d'agents ; une nouvelle réclamation va à l'agent disponible le moins chargé, ou lui est proposée ; un agent absent ne reçoit rien ; au-delà d'un seuil, l'Admin Entreprise est prévenu.*
+
+Comme le critère 12, il se signe à part, à la livraison de la phase 2. Les étapes 5 et 6 se passent pendant les heures d'ouverture de la banque (lundi–vendredi, 8 h–12 h et 14 h–17 h 30).
+
+1. Koffi, **Plateforme › Banques**, Banque Alpha : **Attribution et escalade automatiques** cochée (jeu de démonstration). **Attendu :** Fatou voit « Attribution et escalade automatiques : Oui, mode suggestion » dans **Banque et apparence**, et les pages **Attribution et escalade** et **Absences**. Avec Horizon, décochée : ni l'une ni l'autre.
+2. Fatou, **Attribution et escalade** : trois groupes (Monétique, Comptes et crédits, Agence de Bouaké) avec la charge de chaque agent. Elle crée le groupe « Litiges » avec Ibrahim, lui confie la catégorie « Crédit » avec un seuil de 200 %, enregistre. **Attendu :** la carte du groupe affiche « Reçoit : Crédit » ; le journal d'audit montre « Groupe d'agents créé » et « Règles d'attribution modifiées ».
+3. Mode **Suggestion**. Un client dépose une réclamation « Carte bancaire » par le QR code. **Attendu :** Serge, file « Reçues » : l'agent proposé (Aya ou Mamadou, le moins chargé) et le bouton **Valider** ; sur la fiche, « Attribution suggérée … groupe Monétique ». Fatou ne voit pas de suggestion (elle n'assigne pas).
+4. Serge, **Absences** : il déclare l'agent proposé absent aujourd'hui. **Attendu :** la fiche propose l'autre agent du groupe ; **Assigner à …** l'assigne, l'agent est prévenu. Serge retire l'absence.
+5. Fatou passe en mode **Automatique**. Un client dépose une réclamation « Carte bancaire ». **Attendu :** elle est assignée dès le dépôt ; la chronologie montre « Attribution automatique », par le système ; l'agent reçoit la notification.
+6. Serge déclare Aya et Mamadou absents aujourd'hui ; un client dépose une réclamation « Carte bancaire ». **Attendu :** elle reste dans « Reçues ». Serge retire l'absence d'Aya : dans la minute, le worker la lui attribue. (Hors des heures d'ouverture, la réclamation attend de même l'ouverture.)
+7. Une réclamation « Banque mobile » (8 h ouvrées) n'est pas traitée. **Attendu :** alerte à 75 %, puis à l'échéance escalade au superviseur (inchangées) ; 4 h ouvrées plus tard (150 %), Fatou reçoit « … : retard important » et la fiche porte « Escaladée à l'Admin Entreprise ». Pour ne pas attendre : seuil de la catégorie à 101 %.
+8. Koffi décoche la fonction pour Alpha. **Attendu :** retour à l'attribution manuelle, les deux pages disparaissent. Recochée : Fatou retrouve ses groupes, en mode manuel.
+
+Preuve automatique : `attribution.e2e.test.ts` (20 tests, dont la nuit et l'ouverture du lendemain), `navigateur/9-attribution.spec.ts` (6 tests), vérifications de sécurité (17 contrôles : groupes et absences cloisonnés par banque, fonction ouverte par le seul Super Admin, seuils bornés).
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
+### Critère 14 (phase 2, étape 17) — Conversations et chat web
+
+*Le client écrit à la banque dans un chat intégré au portail et voit les réponses arriver ; les agents répondent depuis une boîte de réception ; une conversation par réclamation, isolée par banque ; une réponse lue dans le chat n'envoie ni e-mail ni SMS.*
+
+Comme les critères 12 et 13, il se signe à part, à la livraison de la phase 2. Ouvrez le portail sur un téléphone (ou une fenêtre étroite) et la console dans une autre fenêtre, côte à côte.
+
+1. Koffi, **Plateforme › Banques**, Banque Alpha : **Chat web et boîte de réception** cochée (jeu de démonstration). **Attendu :** Fatou voit « Chat web : Oui, sur le portail » dans **Banque et apparence** ; Aya, Serge et Fatou ont le menu **Conversations**. Horizon, décochée : pas de menu, et l'espace client d'Horizon garde son fil « Échanges ».
+2. Serge, **Conversations** : deux clients attendent une réponse (Yao Kouassi, carte ; Brice Tanoh, fraude), la plus longue attente en tête, avec l'agent qui les suit. Aya ne voit que celle de Yao Kouassi ; Mamadou, aucune.
+3. Le client Yao Kouassi ouvre son lien de suivi, saisit son code. **Attendu :** la réclamation, puis « Discussion avec Banque Alpha », « Ouvert : un conseiller vous répond ici » ; la réponse d'Aya signée par la banque, jamais par Aya. Il écrit deux messages d'affilée (Entrée envoie). **Attendu :** chaque message s'affiche aussitôt, « Envoyé » sous le dernier ; Aya ne reçoit qu'une notification pour les deux.
+4. Aya, **Conversations** : la ligne en gras, rond vert (client en ligne). Elle l'ouvre. **Attendu :** dans les 5 secondes, « Lu » sous le dernier message du client. Elle répond. **Attendu :** dans les 5 secondes, la réponse apparaît dans le chat du client, puis « Lu par le client » chez Aya ; aucun SMS « nouvelle réponse ».
+5. Le client ferme son téléphone (ou quitte la page). Aya répond deux fois de suite. **Attendu :** environ 2 à 3 minutes après la seconde, un seul SMS « nouvelle réponse sur votre réclamation … » avec le lien, sans le texte.
+6. Serge ouvre la conversation de Brice Tanoh, suivie par Ibrahim. **Attendu :** elle reste « non lue » pour Ibrahim. Fatou peut lire une conversation, pas y répondre.
+7. Le soir ou le week-end (hors des heures d'ouverture), le client ouvre son chat. **Attendu :** « Fermé : réponse dès la réouverture, lundi … à 08:00 ».
+8. Koffi décoche le chat pour Alpha. **Attendu :** le menu **Conversations** disparaît ; l'espace client affiche de nouveau le fil « Échanges », avec tous les messages.
+
+Preuve automatique : `conversations.e2e.test.ts` (17 tests, dont les avis différés et la limite de 30 messages en 10 minutes), `navigateur/10-conversations.spec.ts` (5 tests), `domaine/conversation.test.ts` (11 tests), vérifications de sécurité (14 contrôles : conversations cloisonnées par banque, illisibles pour la plateforme, chat ouvert par le seul Super Admin).
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
 ## 3. Contrôles d'exploitation (hors section 10, avant la mise en production)
 
 | Contrôle | Commande | Attendu | Résultat |
@@ -264,6 +320,14 @@ Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 | 11. Export CSV | | |
 
 Décision : ☐ MVP accepté ☐ Accepté avec réserves ☐ Refusé
+
+Phase 2, à signer à la livraison de chaque fonction :
+
+| Critère | Résultat | Réserve éventuelle |
+|---|---|---|
+| 12. Enquête de satisfaction (étape 15) | | |
+| 13. Attribution et escalade automatiques (étape 16) | | |
+| 14. Conversations et chat web (étape 17) | | |
 
 | | Nom | Date | Signature |
 |---|---|---|---|

@@ -11,8 +11,9 @@ export default defineConfig({
     environment: 'node',
     globalSetup: ['test/e2e/preparation.ts'],
     fileParallelism: false,
-    testTimeout: 60_000,
-    hookTimeout: 120_000,
+    // Larges : un poste sous Docker Desktop peut être plusieurs fois plus lent que le serveur
+    testTimeout: 180_000,
+    hookTimeout: 300_000,
     pool: 'forks',
     sequence: { sequencer: OrdreAlphabetique },
     reporters: ['default'],

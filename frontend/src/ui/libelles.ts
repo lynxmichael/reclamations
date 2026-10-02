@@ -31,6 +31,13 @@ export const CANAL: Record<S<'CanalDepot'>, string> = {
   LIEN_WEB: 'Lien web',
 };
 
+/** Canal d'une conversation (étape 17) ; WhatsApp et SMS entrant à l'étape 19 */
+export const CANAL_CONVERSATION: Record<S<'CanalConversation'>, string> = {
+  WEB: 'Chat du portail',
+  WHATSAPP: 'WhatsApp',
+  SMS: 'SMS',
+};
+
 export const ROLE: Record<S<'RoleUtilisateur'>, string> = {
   SUPER_ADMIN: 'Super Admin',
   ADMIN_ENTREPRISE: 'Admin Entreprise',
@@ -57,10 +64,18 @@ export const EVENEMENT: Record<S<'TypeEvenement'>, string> = {
   ASSIGNATION: 'Assignation',
   CHANGEMENT_PRIORITE: 'Changement de priorité',
   ESCALADE: 'Escalade',
+  ESCALADE_ADMIN: 'Escalade à l\'Admin Entreprise',
   ALERTE_SLA_PREVENTIVE: 'Alerte SLA',
   DEPASSEMENT_SLA: 'Délai SLA dépassé',
   MESSAGE: 'Message',
   PIECE_JOINTE: 'Pièce jointe',
+};
+
+/** Attribution des réclamations (étape 16) : mode choisi par l'Admin Entreprise. */
+export const MODE_ATTRIBUTION: Record<S<'ModeAttribution'>, { libelle: string; description: string }> = {
+  MANUELLE: { libelle: 'Manuelle', description: 'Le superviseur assigne chaque réclamation, comme aujourd\'hui.' },
+  SUGGESTION: { libelle: 'Suggestion', description: 'L\'agent le plus disponible est proposé ; le superviseur valide en un clic.' },
+  AUTOMATIQUE: { libelle: 'Automatique', description: 'Au dépôt, la réclamation part à l\'agent disponible le moins chargé, pendant les heures d\'ouverture.' },
 };
 
 /** Étapes visibles du client (suivi public et espace client). */
@@ -118,12 +133,28 @@ export const ETAT_CHRONO: Record<S<'EtatChrono'>, string> = {
   ARRETE: 'Chrono arrêté',
 };
 
+/** Enquête de satisfaction (étape 15) : libellé de chaque note de 1 à 5 (CSAT). */
+export const NOTE_SATISFACTION: Record<number, string> = {
+  1: 'Pas du tout satisfait',
+  2: 'Peu satisfait',
+  3: 'Moyennement satisfait',
+  4: 'Satisfait',
+  5: 'Très satisfait',
+};
+
+export const ETAT_AVIS: Record<S<'EtatAvis'>, string> = {
+  A_DONNER: 'Enquête envoyée, en attente de réponse',
+  DONNE: 'Avis donné',
+  TERMINE: 'Sans réponse (enquête terminée)',
+};
+
 export const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const;
 
 /** Actions inscrites au journal d'audit (backend : journaliser), en français. */
 export const ACTION_AUDIT: Record<string, string> = {
   'reclamation.depot': 'Dépôt d\'une réclamation',
   'reclamation.assignation': 'Assignation',
+  'reclamation.attribution_automatique': 'Attribution automatique',
   'reclamation.prise_en_charge': 'Prise en charge',
   'reclamation.reponse_client': 'Réponse au client',
   'reclamation.note_interne': 'Note interne',
@@ -136,10 +167,13 @@ export const ACTION_AUDIT: Record<string, string> = {
   'reclamation.priorite': 'Changement de priorité',
   'reclamation.escalade': 'Escalade',
   'reclamation.urgente': 'Alerte urgente',
+  'reclamation.export': 'Export CSV',
   'sla.alerte_preventive': 'Alerte SLA envoyée',
   'sla.depassement': 'Dépassement SLA et escalade',
+  'sla.escalade_admin': 'Escalade à l\'Admin Entreprise',
   'client.code_envoye': 'Code envoyé au client',
   'client.session_ouverte': 'Espace client ouvert',
+  'client.avis_donne': 'Avis du client (enquête)',
   'auth.connexion': 'Connexion',
   'auth.deconnexion': 'Déconnexion',
   'auth.echec_mot_de_passe': 'Mot de passe erroné',
@@ -157,6 +191,8 @@ export const ACTION_AUDIT: Record<string, string> = {
   'personnel.reactive': 'Compte réactivé',
   'personnel.totp_reinitialise': 'Double authentification réinitialisée',
   'personnel.reinitialisation': 'Réinitialisation',
+  'personnel.absence_ajoutee': 'Absence déclarée',
+  'personnel.absence_retiree': 'Absence retirée',
   'parametrage.apparence': 'Apparence modifiée',
   'parametrage.logo': 'Logo changé',
   'parametrage.categorie_creee': 'Catégorie créée',
@@ -168,6 +204,10 @@ export const ACTION_AUDIT: Record<string, string> = {
   'parametrage.horaires': 'Horaires remplacés',
   'parametrage.jour_ferie_ajoute': 'Jour férié ajouté',
   'parametrage.jour_ferie_retire': 'Jour férié retiré',
+  'parametrage.regles_traitement': 'Règles d\'attribution modifiées',
+  'parametrage.groupe_cree': 'Groupe d\'agents créé',
+  'parametrage.groupe_modifie': 'Groupe d\'agents modifié',
+  'parametrage.groupe_supprime': 'Groupe d\'agents supprimé',
   'plateforme.banque_creee': 'Banque créée',
   'plateforme.banque_modifiee': 'Banque modifiée',
   'plateforme.banque_suspendue': 'Banque suspendue',

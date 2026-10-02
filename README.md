@@ -19,12 +19,19 @@ Référence : cahier des charges consolidé (version du 25/09/2026).
 | 10 | Tests et déploiement | Validé | [recette automatique](recette/recette.mjs) · [rapport](docs/recette/rapport.md) · [cahier de recette](docs/recette/cahier-de-recette.md) · [guide d'exploitation](docs/exploitation.md) · [`deploiement/`](deploiement/) · [`docker/sauvegarde/`](docker/sauvegarde/) · [note](docs/etape-10-tests-deploiement.md) |
 | 11 | Anti-robot du dépôt, QR code d'activation agrandi, tableau de bord de l'agent | Validé | [`backend/src/infrastructure/securite/anti-robot.ts`](backend/src/infrastructure/securite/anti-robot.ts) · [`frontend/src/api/anti-robot.ts`](frontend/src/api/anti-robot.ts) · [note](docs/etape-11-anti-robot-qr-code.md) |
 | 12 | Sauvegardes protégées contre l'effacement | Validé | [`docker/sauvegarde/`](docker/sauvegarde/) · [guide d'exploitation, partie 7](docs/exploitation.md#7-sauvegardes) · [note](docs/etape-12-sauvegardes-protegees.md) |
-| 13 | Répétition locale complète du déploiement | À valider | [`deploiement/repetition.ps1`](deploiement/repetition.ps1) · [guide d'exploitation, partie 13](docs/exploitation.md#13-répétition-locale-sur-un-poste-windows) · [note](docs/etape-13-repetition-locale.md) |
+| 13 | Répétition locale complète du déploiement | Validé | [`deploiement/repetition.ps1`](deploiement/repetition.ps1) · [guide d'exploitation, partie 13](docs/exploitation.md#13-répétition-locale-sur-un-poste-windows) · [note](docs/etape-13-repetition-locale.md) |
+| 14 | Cadrage de la phase 2 (IA et pilotage de l'expérience) | Validé | [note](docs/etape-14-cadrage-phase-2.md) |
+| 15 | Enquêtes de satisfaction CSAT / NPS | Validé | [`backend/src/domaine/satisfaction.ts`](backend/src/domaine/satisfaction.ts) · [`frontend/src/ecrans/portail/Avis.tsx`](frontend/src/ecrans/portail/Avis.tsx) · [note](docs/etape-15-enquetes-satisfaction.md) |
+| 16 | Attribution et escalade automatiques | Validé | [`backend/src/domaine/attribution.ts`](backend/src/domaine/attribution.ts) · [`frontend/src/ecrans/back-office/Attribution.tsx`](frontend/src/ecrans/back-office/Attribution.tsx) · [note](docs/etape-16-attribution-escalade.md) |
+| 17 | Conversations et chat web | En attente de validation | [`backend/src/domaine/conversation.ts`](backend/src/domaine/conversation.ts) · [`frontend/src/ecrans/portail/Chat.tsx`](frontend/src/ecrans/portail/Chat.tsx) · [`frontend/src/ecrans/back-office/Conversations.tsx`](frontend/src/ecrans/back-office/Conversations.tsx) · [note](docs/etape-17-conversations-chat-web.md) |
+| 18 | Assistant IA de première ligne | À venir | |
+| 19 | WhatsApp Business et SMS entrant | À venir | |
+| 20 | Baromètre et recommandations IA | À venir | |
 
 ## Structure
 
 ```
-contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (84 opérations)
+contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (100 opérations)
 docker-compose.yml                    développement : PostgreSQL 16, Redis 8, Mailpit, API, worker, écrans, outils
 docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis, sauvegarde
 docker-compose.demo.yml               environnement de démonstration (second serveur) : surcharge de la production
@@ -33,7 +40,7 @@ docker-compose.repetition.yml         répétition locale sur un poste : autorit
 deploiement/                          secrets, contrôle d'un déploiement, mise à jour et retour arrière, remise à zéro de la démo
 deploiement/repetition.ps1            répétition locale complète depuis PowerShell (repetition.sh dans le conteneur d'outils)
 deploiement/outils.ps1                les scripts bash de deploiement/ depuis Windows, dans un conteneur (outils/Dockerfile)
-recette/recette.mjs                   recette automatique : toutes les suites, rapport des 11 critères (docs/recette/rapport.md)
+recette/recette.mjs                   recette automatique : toutes les suites, rapport des 11 critères et de la phase 2 (docs/recette/rapport.md)
 recette/Dockerfile                    image de la recette : Playwright, client PostgreSQL, age, rclone 1.75, moto (S3 verrouillé)
 docker/sauvegarde/                    sauvegarde chiffrée (age) copiée hors du VPS et verrouillée, restauration vérifiée, essai de 39 contrôles
 docker/postgres/init/                 bases et rôles, créés au premier démarrage
@@ -43,11 +50,11 @@ docker/caddy/commun.caddy             en-têtes de sécurité, /api/* vers l'API
 docker/caddy/options-*.caddy          émission des certificats : Let's Encrypt, ou autorité locale en répétition
 backend/
   Dockerfile                          image de l'application (API et worker) et image des migrations
-  prisma/schema.prisma                modèle de données (19 modèles, 13 énumérations)
-  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting
+  prisma/schema.prisma                modèle de données (24 modèles, 15 énumérations)
+  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting, enquêtes, attribution, conversations
   prisma.config.ts                    configuration Prisma 7
-  src/domaine/                        code pur : temps ouvré, machine d'états, SLA (+ tests unitaires), partagé avec la démo
-  src/application/reclamations/       cycle de vie d'une réclamation et tâches planifiées du SLA
+  src/domaine/                        code pur : temps ouvré, machine d'états, SLA, escalade, enquêtes, attribution, conversations (+ tests unitaires), partagé avec la démo
+  src/application/reclamations/       cycle de vie d'une réclamation, attribution, conversations, tâches planifiées du SLA
   src/contrat/                        types générés du contrat + tests de cohérence contrat ↔ code
   src/infrastructure/base-de-donnees/ accès contextuel : banque, plateforme, système
   src/infrastructure/contrat/         routes, rôles, validation et erreurs lus dans le contrat ; Swagger
@@ -58,22 +65,23 @@ backend/
   scripts/semer.ts                    jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
   scripts/demonstration.ts            environnement de démonstration : mot de passe et graine TOTP de l'installation
   scripts/creer-super-admin.ts        premier Super Admin d'une installation
-  test/e2e/                           94 tests de bout en bout, chaque réponse validée contre le contrat
+  scripts/taches.ts                   un passage des tâches planifiées du worker, à la demande (tests navigateur, dépannage)
+  test/e2e/                           143 tests de bout en bout, chaque réponse validée contre le contrat
   scripts/verifier-integrite.ts       32 vérifications du modèle (étape 2)
-  scripts/verifier-securite.ts        62 vérifications de sécurité (étapes 3 et 9)
+  scripts/verifier-securite.ts        106 vérifications de sécurité (étapes 3, 9, 15, 16 et 17)
   scripts/verifier-cycle-de-vie.ts    45 vérifications du cycle de vie et du SLA (étape 4)
 frontend/
   Dockerfile                          image web : Caddy, la console et le portail construits
   portail/ · console/                 pages d'entrée des deux applications (étape 8)
-  src/app/portail/                    portail client branché sur l'API : dépôt, suivi, espace client
-  src/app/console/                    console : connexion, réclamations, tableau de bord, paramétrage, personnel, audit, plateforme
+  src/app/portail/                    portail client branché sur l'API : dépôt, suivi, espace client, chat, avis
+  src/app/console/                    console : connexion, réclamations, conversations, tableau de bord, paramétrage, attribution, personnel, absences, audit, plateforme
   src/api/                            client d'API tiré du contrat, sessions du personnel et du client, anti-robot
   src/ui/                             système visuel : statuts, chrono SLA, couleurs de la banque, courbe d'évolution
   src/ecrans/                         écrans du portail, du back-office et de la console (étape 6)
   src/maquettes/                      données fictives conformes au contrat, galerie des maquettes
   src/demo/                           démo cliquable : API simulée, 30 jours d'historique, visite guidée
-  tests/                              143 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
-  tests/navigateur/                   26 tests dans Chromium (Playwright) sur la vraie API
+  tests/                              198 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
+  tests/navigateur/                   43 tests dans Chromium (Playwright) sur la vraie API
 docs/
   etape-2-modele-de-donnees.md        note de l'étape 2 et diagramme entité-relation
   etape-3-architecture.md             note d'architecture de l'étape 3 et diagrammes
@@ -87,11 +95,15 @@ docs/
   etape-11-anti-robot-qr-code.md      anti-robot du portail, QR code d'activation, tableau de bord de l'agent
   etape-12-sauvegardes-protegees.md   copies hors du VPS verrouillées, alerte en cas d'intrusion
   etape-13-repetition-locale.md       répétition complète du déploiement sur un poste Windows, depuis PowerShell
+  etape-14-cadrage-phase-2.md         phase 2 : ordre des étapes 15 à 20, règles de l'IA, WhatsApp, enquêtes, attribution
+  etape-15-enquetes-satisfaction.md   enquête à la clôture, CSAT et NPS au tableau de bord, totaux par banque
+  etape-16-attribution-escalade.md    groupes d'agents, attribution automatique ou suggérée, absences, escalade à l'Admin Entreprise
+  etape-17-conversations-chat-web.md  conversation par réclamation, chat sur le portail, boîte de réception des agents
   exploitation.md                     guide d'exploitation : VPS, installation, sauvegardes, supervision, mises à jour, restauration
   recette/                            cahier de recette (à signer) et rapport de la recette automatique
   demo-cliquable.md                   présenter la démo à une banque : préparation, visite, mode libre
   api/index.html                      documentation du contrat, lisible sans connexion
-  maquettes/index.html                les 21 écrans en une page, lisible sans connexion
+  maquettes/index.html                les 27 écrans en une page, lisible sans connexion
   demo/index.html                     démo cliquable pour les rendez-vous commerciaux, sans connexion
 ```
 
@@ -107,10 +119,10 @@ docker compose up -d                    # PostgreSQL 16, Redis 8, Mailpit, l'API
 docker compose exec api npm run semer   # jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
 docker compose exec api npm run totp -- serge.kouadio@banque-alpha.example   # code TOTP du moment
 docker compose logs -f api worker       # journaux (les SMS de développement s'y affichent)
-docker compose run --rm verification    # contrat, typage, tests unitaires, 137 vérifications, tests de bout en bout
-docker compose run --rm maquettes       # écrans : 143 tests, les deux applications, docs/maquettes/ et docs/demo/
-docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 26 tests
-docker compose run --rm recette         # tout ce qui précède, plus l'essai de sauvegarde : rapport des 11 critères
+docker compose run --rm verification    # contrat, typage, tests unitaires, 183 vérifications, tests de bout en bout
+docker compose run --rm maquettes       # écrans : 198 tests, les deux applications, docs/maquettes/ et docs/demo/
+docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 43 tests
+docker compose run --rm recette         # tout ce qui précède, plus l'essai de sauvegarde : rapport des 11 critères et de la phase 2
 ```
 
 | Adresse | Contenu |
@@ -123,7 +135,7 @@ docker compose run --rm recette         # tout ce qui précède, plus l'essai de
 
 Comptes de démonstration, mot de passe et codes TOTP : [note de l'étape 7, section 7](docs/etape-7-backend.md#7-jeu-de-démonstration). L'API, le worker et les écrans se rechargent à chaque modification du code, contrat d'API compris, y compris sous Windows (les fichiers sont relus chaque seconde : Docker Desktop ne signale pas les changements du dossier partagé). Si une nouvelle livraison ne semble pas prise en compte : `docker compose restart api worker console portail`, puis rechargement forcé de la page (Ctrl+Maj+R). Les liens des e-mails (Mailpit) pointent vers la console et le portail ci-dessus. Le tableau de bord et les exports de la Banque Alpha s'appuient sur 60 jours d'historique ; une base semée avant l'étape 9 ne l'a pas : `docker compose down -v`, `docker compose up -d`, puis `npm run semer`.
 
-La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `176 passed` (tests unitaires), puis `32`, `62` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `94 passed` (tests de bout en bout de l'API). Pour les écrans : `143 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `26 passed`.
+La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `201 passed` (tests unitaires), puis `32`, `106` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `143 passed` (tests de bout en bout de l'API). Pour les écrans : `198 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `43 passed`.
 
 Les maquettes et la démo s'ouvrent aussi directement dans un navigateur, sans Docker : `docs/maquettes/index.html` et `docs/demo/index.html`. Pour présenter la démo à une banque : [guide](docs/demo-cliquable.md).
 
@@ -165,8 +177,8 @@ npm install                 # installe les dépendances et génère le client Pr
 npm run migrate:deploy      # applique les migrations sur reclamations_dev
 npm run dev                 # API : http://localhost:3000/api/docs
 npm run dev:worker          # worker (dans un second terminal)
-npm test                    # 170 tests unitaires
-npm run test:e2e            # 88 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
+npm test                    # 201 tests unitaires
+npm run test:e2e            # 143 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
 npx prisma studio           # parcourir les tables (connexion propriétaire)
 ```
 
@@ -179,9 +191,9 @@ cd frontend
 npm install
 npm run dev:console         # console : http://localhost:5173 (appelle l'API sur le port 3000)
 npm run dev:portail         # portail : http://alpha.localhost:5174/d/7K3QX9P2MA
-npm test                    # 136 tests unitaires
+npm test                    # 198 tests unitaires
 npx playwright install chromium
-npm run test:navigateur     # 26 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
+npm run test:navigateur     # 43 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
 npm run build               # console, portail, docs/maquettes/ et docs/demo/
 ```
 

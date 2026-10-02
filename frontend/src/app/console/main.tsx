@@ -10,6 +10,8 @@ import { creerCache } from '../commun/requetes';
 import { PageConnexion, PageInvitation, PageMotDePasseOublie, PageReinitialisation } from './Authentification';
 import { Accueil, Protege, Reserve } from './Cadre';
 import { ROUTES_BANQUE, ROUTES_PLATEFORME } from './contexte';
+import { PageAbsences, PageAttribution } from './Attribution';
+import { PageConversations } from './Conversations';
 import { PageAudit, PageBanque, PageCategories, PageHoraires, PagePersonnel, PagePoints } from './Parametrage';
 import { PageAdministrateurs, PageAlertes, PageBanques, PageJournalPlateforme, PagePlans } from './Plateforme';
 import { PageFiche, PageFiles } from './Reclamations';
@@ -37,12 +39,16 @@ const routeur = createBrowserRouter([
       { path: '/', element: <Accueil /> },
       { path: ROUTES_BANQUE.reclamations, element: <Reserve roles={[...BANQUE]}><PageFiles /></Reserve> },
       { path: `${ROUTES_BANQUE.reclamations}/:id`, element: <Reserve roles={[...BANQUE]}><PageFiche /></Reserve> },
+      { path: ROUTES_BANQUE.conversations, element: <Reserve roles={[...BANQUE]}><PageConversations /></Reserve> },
+      { path: `${ROUTES_BANQUE.conversations}/:id`, element: <Reserve roles={[...BANQUE]}><PageConversations /></Reserve> },
       { path: ROUTES_BANQUE.tableau, element: <Reserve roles={['AGENT', ...ENCADREMENT]}><PageTableau /></Reserve> },
       { path: ROUTES_BANQUE.categories, element: <Reserve roles={[...ADMIN]}><PageCategories /></Reserve> },
       { path: ROUTES_BANQUE.points, element: <Reserve roles={[...ENCADREMENT]}><PagePoints /></Reserve> },
       { path: ROUTES_BANQUE.horaires, element: <Reserve roles={[...ADMIN]}><PageHoraires /></Reserve> },
       { path: ROUTES_BANQUE.banque, element: <Reserve roles={[...ADMIN]}><PageBanque /></Reserve> },
+      { path: ROUTES_BANQUE.attribution, element: <Reserve roles={[...ENCADREMENT]}><PageAttribution /></Reserve> },
       { path: ROUTES_BANQUE.personnel, element: <Reserve roles={[...ENCADREMENT]}><PagePersonnel /></Reserve> },
+      { path: ROUTES_BANQUE.absences, element: <Reserve roles={[...ENCADREMENT]}><PageAbsences /></Reserve> },
       { path: ROUTES_BANQUE.audit, element: <Reserve roles={[...ADMIN]}><PageAudit /></Reserve> },
       { path: ROUTES_PLATEFORME.banques, element: <Reserve roles={[...PLATEFORME]}><PageBanques /></Reserve> },
       { path: ROUTES_PLATEFORME.activite, element: <Reserve roles={[...PLATEFORME]}><PageActivite /></Reserve> },

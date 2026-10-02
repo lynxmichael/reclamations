@@ -2,7 +2,7 @@
 import type { S } from '../../api/types';
 import { DOMAINE, id, t } from './commun';
 import { CATEGORIES, agence } from './parametrage';
-import { DESCRIPTION_42, FICHE_42, PHOTO_TICKET } from './reclamations';
+import { CHAT_42, DESCRIPTION_42, FICHE_42, PHOTO_TICKET } from './reclamations';
 
 /** Ce que renvoie GET /public/points-depot/7K3QX9P2MA : le QR code du hall de l'agence Plateau. */
 export function formulaire(banque: S<'BanquePublique'>): S<'FormulaireDepot'> {
@@ -53,6 +53,39 @@ export function suivi(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
     creeLe: t('24/09 09:12'),
     banque,
     etapes: etapes42,
+    avis: null,
+  };
+}
+
+/** ALP-2026-002180 close par le client le 24/09 : l'enquête de satisfaction l'attend (étape 15). */
+export function suiviClos(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
+  return {
+    numero: `${banque.slug === 'alpha' ? 'ALP' : 'HZN'}-2026-002180`,
+    statut: 'CLOTUREE',
+    categorie: 'Virement et transfert',
+    creeLe: t('02/09 16:15'),
+    banque,
+    etapes: [
+      { type: 'CREATION', statut: 'OUVERTE', date: t('02/09 16:15') },
+      { type: 'PRISE_EN_CHARGE', statut: 'EN_COURS', date: t('03/09 08:40') },
+      { type: 'RESOLUTION', statut: 'RESOLUE', date: t('23/09 11:20') },
+      { type: 'CONFIRMATION', statut: 'CLOTUREE', date: t('24/09 10:05') },
+    ],
+    avis: { etat: 'A_DONNER', expireLe: t('01/10 10:05') },
+  };
+}
+
+/** L'enquête de ALP-2026-002180 : à donner, donnée, ou terminée sans réponse (7 jours passés). */
+export function avis(banque: S<'BanquePublique'>, etat: S<'EtatAvis'>): S<'Avis'> {
+  return {
+    numero: `${banque.slug === 'alpha' ? 'ALP' : 'HZN'}-2026-002180`,
+    categorie: 'Virement et transfert',
+    banque,
+    etat,
+    expireLe: etat === 'TERMINE' ? t('17/09 11:20') : t('01/10 10:05'),
+    reponse: etat === 'DONNE'
+      ? { note: 4, recommandation: 9, commentaire: 'Le virement est bien arrivé. Un peu long, mais on m\'a tenu informé à chaque étape.', reponduLe: t('25/09 14:48') }
+      : null,
   };
 }
 
@@ -69,7 +102,7 @@ export const MES_RECLAMATIONS: S<'ReclamationClientResume'>[] = [
 ];
 
 /** Le client ne voit jamais les notes internes ni le nom de l'agent. */
-const messagesVisibles42: S<'MessageVisible'>[] = FICHE_42.AGENT.messages
+const visibles = (messages: S<'Message'>[]): S<'MessageVisible'>[] => messages
   .filter((m) => m.type !== 'NOTE_INTERNE')
   .map((m) => ({
     id: m.id,
@@ -79,6 +112,9 @@ const messagesVisibles42: S<'MessageVisible'>[] = FICHE_42.AGENT.messages
     creeLe: m.creeLe,
     piecesJointes: m.piecesJointes,
   }));
+const chat42 = new Set(CHAT_42.map((m) => m.id));
+/** Banque sans chat : les échanges d'avant le chat */
+const messagesVisibles42 = visibles(FICHE_42.AGENT.messages.filter((m) => !chat42.has(m.id)));
 
 /** ALP-2026-002442 en cours : le client peut encore écrire. */
 export const MA_RECLAMATION_EN_COURS: S<'ReclamationClient'> = {
@@ -94,7 +130,23 @@ export const MA_RECLAMATION_EN_COURS: S<'ReclamationClient'> = {
   etapes: etapes42,
   actionsPossibles: [],
   operationsPossibles: ['CONSULTER', 'MESSAGE_DU_CLIENT'],
+  avis: null,
+  chat: null,
 };
+
+/**
+ * La même réclamation dans une banque qui a le chat web (étape 17), au 25/09 15:10 : le client a
+ * relancé, Aya a répondu, son dernier message n'est pas encore lu. Variante « fermé » : le soir.
+ */
+export function maReclamationChat(ouvert: boolean): S<'ReclamationClient'> {
+  return {
+    ...MA_RECLAMATION_EN_COURS,
+    messages: visibles(FICHE_42.AGENT.messages),
+    chat: ouvert
+      ? { ouvert: true, repriseLe: null, luParLaBanqueLe: t('25/09 15:04') }
+      : { ouvert: false, repriseLe: t('28/09 08:00'), luParLaBanqueLe: t('25/09 15:04') },
+  };
+}
 
 /** ALP-2026-002370 résolue : le client confirme ou conteste avant la clôture automatique. */
 export const MA_RECLAMATION_RESOLUE: S<'ReclamationClient'> = {
@@ -120,4 +172,6 @@ export const MA_RECLAMATION_RESOLUE: S<'ReclamationClient'> = {
   ],
   actionsPossibles: ['CONFIRMER', 'CONTESTER'],
   operationsPossibles: ['CONSULTER'],
+  avis: null,
+  chat: null,
 };

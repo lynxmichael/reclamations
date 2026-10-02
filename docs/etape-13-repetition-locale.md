@@ -1,7 +1,7 @@
 # Étape 13 — Répétition locale complète du déploiement
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 01/10/2026 · **Statut : à valider** (décisions L1 à L8).
+Version du 01/10/2026 · **Statut : validé le 01/10/2026** (décisions L1 à L8 retenues telles que proposées).
 
 Dernière des trois étapes de la préparation de la mise en production, après l'[étape 11](etape-11-anti-robot-qr-code.md) et l'[étape 12](etape-12-sauvegardes-protegees.md).
 
@@ -159,6 +159,15 @@ L'intrusion, telle que la répétition l'affiche (extrait du parcours ci-dessus)
 
 C'est l'objet de la répétition : en cas d'échec, envoyez la sortie de la commande.
 
+**Premier passage sur le PC Windows (01/10/2026).** `installer` réussit de bout en bout :
+- 27 contrôles réussis, 0 échec ;
+- Caddy joint par `host.docker.internal` (192.168.65.254) ;
+- certificat valable 89 jours ;
+- compartiment simulé créé avec le verrouillage COMPLIANCE ;
+- autorité locale ajoutée aux autorités de confiance de Windows.
+
+La connexion a d'abord échoué avec les comptes du développement : la base de la répétition est vide, comme une vraie production. Seul existe le Super Admin, dont le mot de passe se choisit par le lien d'invitation. Le résumé de fin d'installation le dit désormais.
+
 ## 6. Ce que la répétition ne couvre pas
 
 - la préparation du VPS, le DNS et le pare-feu (parties 3 et 4 du guide) ;
@@ -170,10 +179,10 @@ C'est l'objet de la répétition : en cas d'échec, envoyez la sortie de la comm
 
 Avec cette étape, le dépôt est prêt pour la mise en production. Restent, hors du dépôt :
 
-1. la répétition sur votre PC ;
+1. la fin du parcours de répétition sur le PC (sauvegarde, intrusion, mise à jour, restauration, démonstration) ;
 2. l'installation sur le VPS en suivant le [guide](exploitation.md) ;
 3. la recette contractuelle sur l'environnement de démonstration ([cahier de recette](recette/cahier-de-recette.md)).
 
 Les fonctions de phase 2 du CDC (chatbot, WhatsApp) viendront ensuite.
 
-Pour valider : répondre « suivant », ou indiquer les décisions à changer.
+Suite : la phase 2 du CDC, en commençant par son [cadrage (étape 14)](etape-14-cadrage-phase-2.md).

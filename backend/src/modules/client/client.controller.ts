@@ -1,18 +1,27 @@
 /**
  * Espace client (après code OTP) : ses réclamations dans cette banque, messages, confirmation,
- * contestation, pièces jointes. Une réclamation d'un autre client répond 404.
+ * contestation, pièces jointes ; chat web quand Makor l'a ouvert à la banque (étape 17).
+ * Une réclamation d'un autre client répond 404.
  */
 import { Controller, Inject, Injectable, Module, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CycleDeVie } from '../../application/reclamations/cycle-de-vie.js';
+import { lectureClient } from '../../application/reclamations/conversations.js';
+import { chargerParametres, type ParametresBanque } from '../../application/reclamations/parametres.js';
 import { BaseDonnees } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { acteurDe, AppelCourant, clientDe, EntreesValidees, traceDe, type Appel, type Entrees } from '../../infrastructure/contrat/appel.js';
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
-import { introuvable } from '../../infrastructure/contrat/probleme.js';
+import { introuvable, Probleme } from '../../infrastructure/contrat/probleme.js';
+import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { avecFichiers, envoyerFichier, stockerPiecesJointes, telechargement, type S } from '../commun.js';
-import { lireVueClient } from '../reclamations/lecture.js';
+import { etatChat, INCLUSION_MESSAGE, lireVueClient, messageVisible } from '../reclamations/lecture.js';
+
+/** Le chat web s'ouvre banque par banque (décision I2). */
+export function exigerChat(p: ParametresBanque): void {
+  if (!p.banque.chatWeb) throw new Probleme(403, 'FONCTION_NON_OUVERTE', 'Le chat n\'est pas ouvert dans cette banque');
+}
 
 @Injectable()
 export class ServiceClient {
@@ -21,6 +30,7 @@ export class ServiceClient {
     @Inject(CycleDeVie) private readonly cycle: CycleDeVie,
     @Inject(STOCKAGE) private readonly stockage: Stockage,
     @Inject(HORLOGE) private readonly horloge: Horloge,
+    @Inject(Limiteur) private readonly limiteur: Limiteur,
   ) {}
 
   async mesReclamations(appel: Appel): Promise<{ donnees: S<'ReclamationClientResume'>[] }> {
@@ -35,7 +45,42 @@ export class ServiceClient {
 
   lire(appel: Appel, id: string) {
     const c = clientDe(appel);
-    return this.bd.enBanque(c.tenantId, (tx) => lireVueClient(tx, id, c.id, this.horloge()));
+    return this.bd.enBanque(c.tenantId, async (tx) => lireVueClient(tx, id, c.id, this.horloge(), await chargerParametres(tx, c.tenantId)));
+  }
+
+  /** Chat (étape 17) : messages publics écrits à partir de `apres`, état du chat. */
+  conversation(appel: Appel, id: string, apres?: string): Promise<S<'ConversationClient'>> {
+    const c = clientDe(appel);
+    const maintenant = this.horloge();
+    return this.bd.enBanque(c.tenantId, async (tx) => {
+      const p = await chargerParametres(tx, c.tenantId);
+      exigerChat(p);
+      const t = await tx.reclamation.findFirst({ where: { id, clientId: c.id }, select: { id: true, statut: true, conversation: { select: { luBanqueLe: true } } } });
+      if (!t) throw introuvable('Réclamation introuvable');
+      const messages = await tx.commentaire.findMany({
+        where: { reclamationId: id, type: { not: 'NOTE_INTERNE' }, ...(apres ? { creeLe: { gte: new Date(apres) } } : {}) },
+        orderBy: [{ creeLe: 'asc' }, { id: 'asc' }],
+        include: INCLUSION_MESSAGE,
+      });
+      const dernier = messages.at(-1)?.creeLe ?? (apres ? new Date(apres) : null);
+      return {
+        statut: t.statut,
+        messages: messages.map(messageVisible),
+        curseur: dernier ? dernier.toISOString() : null,
+        chat: etatChat(t.conversation, maintenant, p.sla.calendrier),
+      };
+    });
+  }
+
+  /** Le chat est à l'écran : lecture et présence ; le premier appel ouvre la conversation. */
+  async lectureConversation(appel: Appel, id: string): Promise<void> {
+    const c = clientDe(appel);
+    await this.bd.enBanque(c.tenantId, async (tx) => {
+      exigerChat(await chargerParametres(tx, c.tenantId));
+      const t = await tx.reclamation.findFirst({ where: { id, clientId: c.id }, select: { id: true, tenantId: true } });
+      if (!t) throw introuvable('Réclamation introuvable');
+      await lectureClient(tx, t, this.horloge());
+    });
   }
 
   /** La réclamation doit être celle du client connecté (sinon 404, jamais 403). */
@@ -48,6 +93,7 @@ export class ServiceClient {
 
   async message(appel: Appel, id: string, e: Entrees) {
     const c = await this.exigerSienne(appel, id);
+    await this.limiteur.consommer(LIMITES.messagesClient, `${c.tenantId}:${id}`, 'Trop de messages en peu de temps : patientez quelques minutes');
     const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, c.tenantId, e.fichiers, this.horloge());
     await avecFichiers(annuler, () => this.cycle.messageDuClient(c.tenantId, id, acteurDe(appel), String(e.corps.contenu), traceDe(appel), fichiers));
     return this.lire(appel, id);
@@ -98,6 +144,16 @@ export class ClientControleur {
   @Operation('envoyerMessageClient')
   message(@AppelCourant() appel: Appel, @EntreesValidees() e: Entrees) {
     return this.service.message(appel, e.chemin.id, e);
+  }
+
+  @Operation('lireConversationClient')
+  conversation(@AppelCourant() appel: Appel, @EntreesValidees() e: Entrees) {
+    return this.service.conversation(appel, e.chemin.id, e.requete.apres as string | undefined);
+  }
+
+  @Operation('marquerConversationLueClient')
+  lecture(@AppelCourant() appel: Appel, @EntreesValidees() e: Entrees) {
+    return this.service.lectureConversation(appel, e.chemin.id);
   }
 
   @Operation('confirmerResolution')

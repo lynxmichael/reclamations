@@ -2,7 +2,9 @@
  * Création d'une démo : le moteur, puis 30 jours d'activité rejoués avec les vraies règles
  * (dépôts, assignations, réponses, questions, résolutions, contestations, clôtures). Tableau de
  * bord, files, chronos et journal d'audit sont donc cohérents entre eux, et identiques à chaque
- * ouverture (tirage pseudo-aléatoire à graine fixe).
+ * ouverture (tirage pseudo-aléatoire à graine fixe). Étape 15 : un client sur deux répond à
+ * l'enquête de satisfaction, dans les 48 heures (tirage à part : le reste de l'historique ne change pas).
+ * Étape 17 : le chat web s'ouvre une heure avant l'ouverture de la démo ; deux clients y écrivent.
  */
 import { DateTime } from 'luxon';
 import { ajouterMinutesOuvrees, minutesOuvreesEntre } from '@domaine/temps-ouvre/calendrier';
@@ -83,6 +85,24 @@ const RESOLUTIONS = [
   'Bonjour, les frais ont été remboursés et l\'incident a été signalé au service concerné.',
 ];
 
+/** Commentaires laissés dans les enquêtes simulées, du plus positif au plus critique. */
+const COMMENTAIRES_AVIS = [
+  'Réponse rapide et montant recrédité le lendemain. Merci à la conseillère.',
+  'Très bon suivi, j\'étais informé à chaque étape.',
+  'Problème réglé, mais il a fallu attendre plusieurs jours.',
+  'Il a fallu relancer deux fois avant d\'avoir une vraie réponse.',
+  'On ne m\'a pas expliqué pourquoi l\'opération avait été bloquée.',
+];
+
+/** Avis simulé : plutôt satisfait, la recommandation suit la note ; un commentaire une fois sur trois. */
+function avisSimule(h: ReturnType<typeof aleatoire>) {
+  const note = h.pondere([[5, 34], [4, 32], [3, 14], [2, 10], [1, 10]] as const);
+  const base = [0, 1, 3, 6, 8, 9][note]!;
+  const recommandation = Math.min(10, base + h.entier(0, note >= 4 ? 2 : 3));
+  const commentaire = h.nombre() < 0.35 ? COMMENTAIRES_AVIS[note >= 4 ? h.entier(0, 1) : note === 3 ? 2 : h.entier(3, 4)]! : undefined;
+  return { note, recommandation, ...(commentaire ? { commentaire } : {}) };
+}
+
 const AGENTS = PERSONNEL.filter((u) => u.role === 'AGENT' && u.statut === 'ACTIF');
 const POIDS_CATEGORIES = [30, 22, 17, 12, 5, 8, 6];
 const QR = POINTS_DEPOT.filter((p) => p.actif && p.canal === 'QR_CODE');
@@ -150,6 +170,8 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
     sansAssignation?: boolean;
     /** L'agent n'a pas résolu à temps : la réclamation sera en retard et escaladée */
     sansResolution?: boolean;
+    /** Chat web (étape 17) : le client écrit, tant de minutes avant l'ouverture de la démo */
+    chat?: { avant: number; messages: string[] };
   }
   function reclamation(quand: Date, client: { nom: string; telephone: string; email?: string }, choix: Choix = {}) {
     const cat = choix.cat ?? h.pondere(categoriesActives.map((c, i) => [c, POIDS_CATEGORIES[i]!] as const));
@@ -186,6 +208,14 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
         if (apres > finTraitement) finTraitement = apres;
       } else if (h.nombre() < 0.85) {
         planifier(ouvre(t, h.entier(15, 90)), () => m.repondre(agent.id, id, h.parmi(REPONSES)));
+      }
+      if (choix.chat) {
+        const { avant, messages } = choix.chat;
+        planifier(new Date(debut.getTime() - avant * MINUTE), () => {
+          const s = sessionDe(id);
+          m.lireChat(s, id);
+          for (const texte of messages) m.messageClient(s, id, texte);
+        });
       }
       if (choix.sansResolution) return;
       if (finTraitement <= t) finTraitement = ouvre(t, 30);
@@ -244,8 +274,19 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
   const cat = (nom: string) => categoriesActives.find((c) => c.nom === nom)!;
   const point = (code: string) => POINTS_DEPOT.find((p) => p.code === code)!;
   const client = () => ({ nom: `${h.parmi(PRENOMS)} ${h.parmi(NOMS)}`, telephone: `07${String(h.entier(0, 99_999_999)).padStart(8, '0')}` });
-  reclamation(ilYaOuvrees(1500), client(), { cat: cat('Carte bancaire'), point: point('B6N4TR8YQE'), sansResolution: true });
-  reclamation(ilYaOuvrees(380), client(), { cat: cat('Banque mobile'), point: point('W5Q9HB2MLC'), sansResolution: true });
+  // Chat web : ouvert une heure avant ; le client en retard demande des nouvelles, l'autre écrit deux fois
+  m.chatActif = false;
+  planifier(new Date(debut.getTime() - 60 * MINUTE), () => {
+    m.chatActif = true;
+  });
+  reclamation(ilYaOuvrees(1500), client(), {
+    cat: cat('Carte bancaire'), point: point('B6N4TR8YQE'), sansResolution: true,
+    chat: { avant: 24, messages: ['Bonjour, avez-vous des nouvelles ? Cela fait plusieurs jours que j\'attends.'] },
+  });
+  reclamation(ilYaOuvrees(380), client(), {
+    cat: cat('Banque mobile'), point: point('W5Q9HB2MLC'), sansResolution: true,
+    chat: { avant: 7, messages: ['J\'ai réinstallé l\'application, toujours le même message d\'erreur.', 'Je peux vous envoyer une capture d\'écran si besoin.'] },
+  });
   reclamation(new Date(debut.getTime() - 55 * MINUTE), client(), { cat: cat('Virement et transfert'), point: point('K4V8PZ3TRG'), sansAssignation: true });
   reclamation(new Date(debut.getTime() - 31 * MINUTE), client(), { cat: cat('Accueil en agence'), point: point('P9D2LK7VXR'), sansAssignation: true });
   reclamation(new Date(debut.getTime() - 12 * MINUTE), client(), { cat: cat('Fraude suspectée'), point: point('7K3QX9P2MA'), sansAssignation: true });
@@ -256,6 +297,15 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
     while (minutesOuvreesEntre(new Date(x), debut, m.calendrier) < minutes) x -= 5 * MINUTE;
     return new Date(x);
   }
+
+  // Les réponses aux enquêtes, planifiées dès leur ouverture (clôture confirmée ou automatique)
+  const ha = aleatoire(graine + 15);
+  m.apresOuvertureEnquete = (t) => {
+    if (ha.nombre() >= 0.5) return;
+    const quand = new Date(t.enquete!.ouverteLe.getTime() + ha.entier(30, 48 * 60) * MINUTE);
+    const r = avisSimule(ha);
+    planifier(quand, () => m.donnerAvis(t.jetonSuivi, r));
+  };
 
   m.enSilence(() => {
     for (let p = plans.retirer(); p; p = plans.retirer()) {
@@ -268,6 +318,8 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
       }
     }
     m.avancerJusqua(debut);
+    m.apresOuvertureEnquete = null;
+    m.declarerAbsencesDeDemo();
     m.marquerHistoriqueLu(new Date(debut.getTime() - 60 * MINUTE));
     m.envois.length = 0;
   });

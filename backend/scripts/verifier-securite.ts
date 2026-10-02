@@ -266,6 +266,129 @@ async function main() {
     proprietaire.reclamationEvenement.delete({ where: { id: evenementA.id } }));
 
   // ----------------------------------------------------------------------------------
+  cr.section('Enquêtes de satisfaction (étape 15)');
+
+  const ouverture = new Date();
+  const fin = new Date(ouverture.getTime() + 7 * 24 * 3600 * 1000);
+  const enqueteA = await enA.enqueteSatisfaction.create({
+    data: { tenantId: A.tenantId, reclamationId: reclamationA.id, creeLe: ouverture, expireLe: fin },
+  });
+  await proprietaire.enqueteSatisfaction.create({
+    data: { tenantId: B.tenantId, reclamationId: reclamationB.id, creeLe: ouverture, expireLe: fin, reponduLe: ouverture, note: 2, recommandation: 3, commentaire: 'Avis de B' },
+  });
+  await cr.doitReussir('En contexte A, une seule enquête visible : celle de A', async () => {
+    const liste = await enA.enqueteSatisfaction.findMany();
+    verifier(liste.length === 1 && liste[0]!.tenantId === A.tenantId, `${liste.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, ouvrir une enquête sur une réclamation de B', '42501', () =>
+    enA.enqueteSatisfaction.create({ data: { tenantId: B.tenantId, reclamationId: reclamationB.id, creeLe: ouverture, expireLe: fin } }));
+  await cr.doitEtreRefuse("Repousser la fin d'une enquête (expire_le)", '42501', () =>
+    enA.enqueteSatisfaction.update({ where: { id: enqueteA.id }, data: { expireLe: new Date(fin.getTime() + 86_400_000) } }));
+  await cr.doitReussir('Le client répond une fois (contexte banque)', () =>
+    enA.enqueteSatisfaction.update({ where: { id: enqueteA.id }, data: { reponduLe: new Date(), note: 4, recommandation: 9, commentaire: 'Merci' } }));
+  await cr.doitEtreRefuse('Changer une réponse déjà donnée', '23514', () =>
+    enA.enqueteSatisfaction.update({ where: { id: enqueteA.id }, data: { note: 5 } }));
+  await cr.doitEtreRefuse('Changer une réponse, même en propriétaire des tables', '23514', () =>
+    proprietaire.enqueteSatisfaction.update({ where: { id: enqueteA.id }, data: { commentaire: 'Autre avis' } }));
+  await cr.doitEtreRefuse('Supprimer une enquête (contexte banque)', '42501', () =>
+    enA.enqueteSatisfaction.delete({ where: { id: enqueteA.id } }));
+  await refusCheck('Note hors bornes (6 sur 5)', () =>
+    proprietaire.enqueteSatisfaction.create({ data: { tenantId: A.tenantId, reclamationId: reclamationA.id, creeLe: ouverture, expireLe: fin, reponduLe: ouverture, note: 6, recommandation: 5 } }));
+  await refusCheck('Réponse incomplète (note sans recommandation)', () =>
+    proprietaire.enqueteSatisfaction.create({ data: { tenantId: A.tenantId, reclamationId: reclamationA.id, creeLe: ouverture, expireLe: fin, reponduLe: ouverture, note: 3 } }));
+  await cr.doitReussir('Super Admin : notes de toutes les banques pour ses totaux', async () => {
+    const notes = await plateforme.enqueteSatisfaction.findMany({ select: { tenantId: true, note: true, recommandation: true } });
+    verifier(notes.length === 2 && new Set(notes.map((n) => n.tenantId)).size === 2, `${notes.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('Super Admin : lire le commentaire d\'un client', '42501', () =>
+    plateforme.enqueteSatisfaction.findMany({ select: { commentaire: true } }));
+  await cr.doitEtreRefuse('Super Admin : modifier une enquête', '42501', () =>
+    plateforme.enqueteSatisfaction.updateMany({ data: { note: 1 } }));
+  await cr.doitEtreRefuse('Contexte système (worker, authentification) : aucun accès aux enquêtes', '42501', () =>
+    systeme.enqueteSatisfaction.count());
+
+  // ----------------------------------------------------------------------------------
+  cr.section('Attribution et escalade automatiques (étape 16)');
+
+  const groupeA = await enA.groupeAgents.create({ data: { tenantId: A.tenantId, nom: 'Monétique' } });
+  const groupeB = await proprietaire.groupeAgents.create({ data: { tenantId: B.tenantId, nom: 'Monétique' } });
+  await proprietaire.groupeAgentsMembre.create({ data: { tenantId: B.tenantId, groupeId: groupeB.id, utilisateurId: B.agent.id } });
+  await cr.doitReussir('En contexte A : un groupe et son agent', () =>
+    enA.groupeAgentsMembre.create({ data: { tenantId: A.tenantId, groupeId: groupeA.id, utilisateurId: A.agent.id } }));
+  await cr.doitReussir('En contexte A, seuls les groupes et membres de A sont visibles', async () => {
+    const [g, m] = [await enA.groupeAgents.findMany(), await enA.groupeAgentsMembre.findMany()];
+    verifier(g.length === 1 && m.length === 1 && g[0]!.tenantId === A.tenantId && m[0]!.tenantId === A.tenantId, `${g.length} groupe(s), ${m.length} membre(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, mettre un agent de B dans un groupe', '42501', () =>
+    enA.groupeAgentsMembre.create({ data: { tenantId: B.tenantId, groupeId: groupeB.id, utilisateurId: B.agent.id } }));
+  await cr.doitEtreRefuse('Un groupe de A avec un agent de B (clé étrangère par banque)', '23503', () =>
+    proprietaire.groupeAgentsMembre.create({ data: { tenantId: A.tenantId, groupeId: groupeA.id, utilisateurId: B.agent.id } }));
+  await cr.doitEtreRefuse('Confier une catégorie de A au groupe de B (clé étrangère par banque)', '23503', () =>
+    enA.categorie.update({ where: { id: A.categorie.id }, data: { groupeId: groupeB.id } }));
+  await cr.doitEtreRefuse('En contexte A, déclarer absent un agent de B', '42501', () =>
+    enA.absenceAgent.create({ data: { tenantId: B.tenantId, utilisateurId: B.agent.id, du: new Date('2026-11-09'), au: new Date('2026-11-10') } }));
+  const absenceA = await enA.absenceAgent.create({ data: { tenantId: A.tenantId, utilisateurId: A.agent.id, du: new Date('2026-11-09'), au: new Date('2026-11-10') } });
+  await cr.doitEtreRefuse('Modifier une absence (on la retire et on en déclare une autre)', '42501', () =>
+    enA.absenceAgent.update({ where: { id: absenceA.id }, data: { au: new Date('2026-12-31') } }));
+  await refusCheck('Absence qui finit avant de commencer', () =>
+    proprietaire.absenceAgent.create({ data: { tenantId: A.tenantId, utilisateurId: A.agent.id, du: new Date('2026-11-10'), au: new Date('2026-11-09') } }));
+  await refusCheck('Absence de plus d\'un an', () =>
+    proprietaire.absenceAgent.create({ data: { tenantId: A.tenantId, utilisateurId: A.agent.id, du: new Date('2026-01-01'), au: new Date('2027-06-30') } }));
+  await cr.doitEtreRefuse('L\'Admin Entreprise ouvre lui-même la fonction (réservé au Super Admin)', '42501', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { attributionAutomatique: true } }));
+  await refusCheck('Mode automatique alors que la fonction est fermée', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { modeAttribution: 'AUTOMATIQUE' } }));
+  await cr.doitReussir('Fonction ouverte par le Super Admin : l\'Admin Entreprise choisit le mode et les seuils', async () => {
+    await plateforme.banque.update({ where: { id: A.tenantId }, data: { attributionAutomatique: true } });
+    await enA.banque.update({ where: { id: A.tenantId }, data: { modeAttribution: 'AUTOMATIQUE', seuilEscaladeAdminPourcent: 150 } });
+  });
+  await refusCheck('Seuil d\'escalade avant l\'échéance (100 %)', () =>
+    enA.categorie.update({ where: { id: A.categorie.id }, data: { seuilEscaladeAdminPourcent: 100 } }));
+  await refusCheck('Escalade à l\'Admin Entreprise sans dépassement signalé', () =>
+    enA.reclamation.update({ where: { id: reclamationA.id }, data: { escaladeeAdminLe: new Date() } }));
+  await cr.doitReussir('Attribution : la date de la dernière attribution d\'un agent (contexte A)', () =>
+    enA.utilisateur.updateMany({ where: { id: A.agent.id }, data: { derniereAttributionLe: new Date() } }));
+  await cr.doitEtreRefuse('Super Admin : lire les groupes d\'une banque', '42501', () => plateforme.groupeAgents.count());
+  await cr.doitEtreRefuse('Contexte système : aucun accès aux absences', '42501', () => systeme.absenceAgent.count());
+
+  // ----------------------------------------------------------------------------------
+  cr.section('Conversations et chat web (étape 17)');
+
+  const conversationA = await enA.conversation.create({ data: { tenantId: A.tenantId, reclamationId: reclamationA.id, luClientLe: new Date() } });
+  await proprietaire.conversation.create({ data: { tenantId: B.tenantId, reclamationId: reclamationB.id, dernierMessageClientLe: new Date() } });
+  await cr.doitReussir('En contexte A, une seule conversation visible : celle de A', async () => {
+    const liste = await enA.conversation.findMany();
+    verifier(liste.length === 1 && liste[0]!.tenantId === A.tenantId, `${liste.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, ouvrir une conversation sur une réclamation de B', '42501', () =>
+    enA.conversation.create({ data: { tenantId: B.tenantId, reclamationId: reclamationB.id } }));
+  await cr.doitEtreRefuse('Une conversation de A sur une réclamation de B (clé étrangère par banque)', '23503', () =>
+    proprietaire.conversation.create({ data: { tenantId: A.tenantId, reclamationId: reclamationB.id } }));
+  await cr.doitEtreRefuse('Deux conversations pour une même réclamation', '23505', () =>
+    enA.conversation.create({ data: { tenantId: A.tenantId, reclamationId: reclamationA.id } }));
+  await cr.doitReussir('Marques de lecture et derniers messages (contexte A)', () =>
+    enA.conversation.update({ where: { id: conversationA.id }, data: { luBanqueLe: new Date(), dernierMessageClientLe: new Date() } }));
+  await cr.doitEtreRefuse('Rattacher une conversation à une autre réclamation', '42501', () =>
+    enA.conversation.update({ where: { id: conversationA.id }, data: { reclamationId: reclamationA.id } }));
+  await cr.doitEtreRefuse('Supprimer une conversation (contexte banque)', '42501', () =>
+    enA.conversation.delete({ where: { id: conversationA.id } }));
+  await refusCheck('Avis différé sans réponse de la banque', () =>
+    enA.conversation.update({ where: { id: conversationA.id }, data: { avisClientLe: new Date() } }));
+  await cr.doitEtreRefuse('L\'Admin Entreprise ouvre lui-même le chat (réservé au Super Admin)', '42501', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { chatWeb: true } }));
+  await cr.doitReussir('Le Super Admin ouvre le chat d\'une banque', () =>
+    plateforme.banque.update({ where: { id: A.tenantId }, data: { chatWeb: true } }));
+  await cr.doitEtreRefuse('Super Admin : lire les conversations (arbitrage 7, décision I5)', '42501', () => plateforme.conversation.count());
+  await cr.doitReussir('Contexte système (worker) : les colonnes des avis différés, toutes banques', async () => {
+    const n = await systeme.conversation.findMany({ select: { id: true, tenantId: true, reclamationId: true, dernierMessageBanqueLe: true, luClientLe: true, avisClientLe: true } });
+    verifier(n.length === 2, `${n.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('Contexte système : lire les marques de lecture de la banque', '42501', () =>
+    systeme.conversation.findMany({ select: { luBanqueLe: true } }));
+  await cr.doitEtreRefuse('Contexte système : modifier une conversation', '42501', () =>
+    systeme.conversation.updateMany({ data: { avisClientLe: null } }));
+
+  // ----------------------------------------------------------------------------------
   cr.section('Transactions dans un contexte');
 
   await cr.doitReussir('Dépôt atomique en contexte A : numéro, réclamation et événement', async () => {

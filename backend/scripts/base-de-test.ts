@@ -2,6 +2,8 @@
  * Base jetable pour les tests de bout en bout : recréée à chaque lancement sur le serveur de
  * DATABASE_URL (propriétaire des tables), avec le tri français ICU, puis les migrations SQL du
  * dépôt appliquées dans l'ordre — exactement celles que « prisma migrate deploy » applique.
+ * Sans attente du disque à chaque validation (synchronous_commit = off) : une base jetable n'a pas
+ * à survivre à une panne de courant.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -41,6 +43,9 @@ export async function recreerBase(urlProprietaire: string): Promise<void> {
   try {
     await c.query(`DROP DATABASE IF EXISTS ${nom} WITH (FORCE)`);
     await c.query(`CREATE DATABASE ${nom} TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER icu ICU_LOCALE 'fr-FR' LOCALE 'C.UTF-8'`);
+    // Base jetable : une validation n'attend pas l'écriture sur disque. Rien ne change pour les tests,
+    // sinon la vitesse là où le disque est lent (Docker Desktop sous Windows : 5 à 10 fois plus lent)
+    await c.query(`ALTER DATABASE ${nom} SET synchronous_commit = off`);
   } finally {
     await c.end();
   }

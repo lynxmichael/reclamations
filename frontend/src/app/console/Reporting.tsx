@@ -87,6 +87,7 @@ export function PageTableau() {
       // Étape 11 : l'agent a le sien, limité par l'API aux réclamations qui lui sont assignées
       agent={moi.role === 'AGENT'}
       surOuvrirRetard={() => navigate(`${ROUTES_BANQUE.reclamations}?file=en-retard`)}
+      surOuvrirReclamation={(id) => navigate(`${ROUTES_BANQUE.reclamations}/${id}`)}
       fuseau={fuseau}
       chargement={indicateurs.isFetching && indicateurs.isPlaceholderData}
       exportEnCours={enCours}

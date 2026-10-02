@@ -25,7 +25,13 @@
 	handle /api/* {
 		# X-Forwarded-For porte l'adresse de la connexion TCP (limites de débit, journal d'audit) :
 		# Caddy ignore celui qu'enverrait le client, aucun mandataire amont n'étant déclaré de confiance
-		reverse_proxy {$API_AMONT:api:3000}
+		# Connexions vers l'API gardées 30 s au plus : l'API garde les siennes 65 s. Caddy ne réutilise
+		# donc jamais une connexion que l'API vient de fermer (sinon : 502 sur la requête suivante)
+		reverse_proxy {$API_AMONT:api:3000} {
+			transport http {
+				keepalive 30s
+			}
+		}
 	}
 	# Taille maximale d'une requête : 5 fichiers de 5 Mo et le formulaire
 	request_body {

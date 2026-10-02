@@ -6,14 +6,14 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowUpRight, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, Phone, QrCode, SendHorizontal, UserRound, X,
+  ArrowUpRight, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, MessagesSquare, Phone, QrCode, SendHorizontal, Sparkles, UserRound, X,
 } from 'lucide-react';
 import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Liste, Panneau, Texte, cx } from '../../ui/composants';
 import { dateCourte, dateHeure } from '../../ui/format';
 import { JaugeFiche } from '../../ui/JaugeSla';
-import { CANAL, EVENEMENT, MOTIF_CLOTURE } from '../../ui/libelles';
+import { CANAL, ETAT_AVIS, EVENEMENT, MOTIF_CLOTURE, NOTE_SATISFACTION } from '../../ui/libelles';
 import { PieceJointe } from '../portail/MaReclamation';
 
 export type Fenetre = 'aucune' | 'resoudre' | 'cloturer';
@@ -32,6 +32,8 @@ export interface ActionsFiche {
   priorite?: () => void;
   escalader?: () => void;
   cloturer?: (motif: S<'MotifClotureForcee'>, precision: string) => Issue;
+  /** Chat web (étape 17) : la conversation dans la boîte de réception */
+  ouvrirConversation?: (conversationId: string) => void;
   /** Une action est en cours : ses boutons attendent */
   occupe?: boolean;
 }
@@ -104,7 +106,11 @@ function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; acti
           onChange={(e) => setTexte(e.target.value)}
           data-visite="redaction"
           className={note ? 'border-attente/35 bg-surface' : undefined}
-          placeholder={note ? 'Visible seulement par l\'équipe de la banque' : `Votre réponse à ${r.client.nom}, envoyée par e-mail et SMS`}
+          placeholder={note
+            ? 'Visible seulement par l\'équipe de la banque'
+            : r.conversation
+              ? `Votre réponse à ${r.client.nom}, dans son chat (e-mail ou SMS s'il ne la lit pas)`
+              : `Votre réponse à ${r.client.nom}, envoyée par e-mail et SMS`}
         />
         <div className="mt-3 flex flex-wrap items-start gap-3">
           <div className="min-w-0 basis-full sm:basis-auto">
@@ -139,12 +145,86 @@ function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; acti
   );
 }
 
+/** Chat web (étape 17) : le client écrit depuis le portail ; présence et réponse attendue. */
+function ChatClient({ c, actions }: { c: NonNullable<S<'ReclamationDetail'>['conversation']>; actions?: ActionsFiche }) {
+  return (
+    <Panneau titre="Chat web">
+      <p className="flex items-center gap-2 text-[15px] text-encre-2">
+        <span aria-hidden className={cx('h-2.5 w-2.5 shrink-0 rounded-full', c.clientEnLigne ? 'bg-resolue' : 'bg-trait-fort')} />
+        {c.clientEnLigne ? 'Le client est en ligne' : c.luParLeClientLe ? `Vu par le client ${dateCourte(c.luParLeClientLe)}` : 'Le client n\'a pas encore ouvert le chat'}
+      </p>
+      {c.aRepondre && <p className="mt-2 text-[15px] font-semibold text-marque-texte">Il attend une réponse{c.nonLue ? ' (message non lu)' : ''}.</p>}
+      <Bouton className="mt-3 w-full" icone={<MessagesSquare aria-hidden size={16} />} onClick={() => actions?.ouvrirConversation?.(c.id)}>
+        Ouvrir la conversation
+      </Bouton>
+    </Panneau>
+  );
+}
+
 function Info({ libelle, children }: { libelle: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 py-2.5">
       <dt className="text-[13px] text-encre-3">{libelle}</dt>
       <dd className="text-[15px] text-encre">{children}</dd>
     </div>
+  );
+}
+
+/** Mode suggestion (étape 16) : l'agent proposé ; le superviseur valide en un clic, ou choisit un autre agent. */
+function Suggestion({ s, actions }: { s: NonNullable<S<'ReclamationDetail'>['attributionSuggeree']>; actions?: ActionsFiche }) {
+  return (
+    <section aria-labelledby="suggestion-titre" className="rounded-xl border border-dashed border-marque bg-marque-doux/60 p-4">
+      <h2 id="suggestion-titre" className="flex items-center gap-2 text-[15px] font-bold">
+        <Sparkles aria-hidden size={16} className="text-marque-texte" />
+        Attribution suggérée
+      </h2>
+      <p className="mt-2 flex items-center gap-2 text-[15px] font-semibold">
+        <Avatar nom={s.agent.nom} taille={26} ton="marque" />
+        {s.agent.nom}
+      </p>
+      <p className="mt-1.5 text-sm leading-snug text-encre-2">
+        L'agent disponible le moins chargé du groupe {s.groupe.nom}. Vous pouvez aussi en choisir un autre dans « Agent assigné ».
+      </p>
+      <Bouton variante="principal" taille="petit" className="mt-3" disabled={actions?.occupe} onClick={() => actions?.assigner?.(s.agent.id)}>
+        Assigner à {s.agent.nom}
+      </Bouton>
+    </section>
+  );
+}
+
+/** Enquête de satisfaction de la réclamation close (étape 15) : la réponse du client, telle quelle. */
+function AvisClient({ avis }: { avis: NonNullable<S<'ReclamationDetail'>['avis']> }) {
+  const r = avis.reponse;
+  return (
+    <Panneau titre="Avis du client">
+      {r ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-6">
+            <div>
+              <p className="text-[13px] text-encre-3">Satisfaction</p>
+              <p className="chiffres text-[22px] leading-tight font-bold">
+                {r.note}
+                <span className="text-[15px] font-semibold text-encre-3"> / 5</span>
+              </p>
+            </div>
+            <div>
+              <p className="text-[13px] text-encre-3">Recommandation</p>
+              <p className="chiffres text-[22px] leading-tight font-bold">
+                {r.recommandation}
+                <span className="text-[15px] font-semibold text-encre-3"> / 10</span>
+              </p>
+            </div>
+          </div>
+          <p className="text-sm text-encre-2">{NOTE_SATISFACTION[r.note]}, le <span className="chiffres">{dateCourte(r.reponduLe)}</span></p>
+          {r.commentaire && <blockquote className="border-l-3 border-marque-trait pl-3 text-[15px] leading-relaxed whitespace-pre-line">{r.commentaire}</blockquote>}
+        </div>
+      ) : (
+        <p className="text-[15px] text-encre-2">
+          {ETAT_AVIS[avis.etat]}
+          {avis.etat === 'A_DONNER' && <span className="block text-sm text-encre-3">Jusqu'au <span className="chiffres">{dateCourte(avis.expireLe)}</span></span>}
+        </p>
+      )}
+    </Panneau>
   );
 }
 
@@ -226,6 +306,12 @@ export function Ticket({
                 Escaladée vers {r.escaladeeVers.nom}
               </span>
             )}
+            {r.jalons.escaladeeAdminLe && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-urgent-doux px-2 py-0.5 text-[13px] font-semibold text-urgent">
+                <ArrowUpRight aria-hidden size={14} />
+                Escaladée à l'Admin Entreprise
+              </span>
+            )}
             <span className="text-[15px] text-encre-2">{r.categorie.nom}</span>
           </div>
         </div>
@@ -285,6 +371,8 @@ export function Ticket({
         </div>
 
         <aside className="flex flex-col gap-5">
+          {r.attributionSuggeree && o('ASSIGNER') && <Suggestion s={r.attributionSuggeree} actions={actions} />}
+          {r.conversation && <ChatClient c={r.conversation} actions={actions} />}
           <Panneau titre="Client">
             <dl className="-my-2.5 divide-y divide-trait">
               <Info libelle="Nom">
@@ -336,8 +424,13 @@ export function Ticket({
               <Info libelle="Déposée le"><span className="chiffres">{dateHeure(r.creeLe)}</span></Info>
               <Info libelle="Première réponse"><span className="chiffres">{r.jalons.premiereReponseLe ? dateHeure(r.jalons.premiereReponseLe) : 'Pas encore'}</span></Info>
               {r.nbReouvertures > 0 && <Info libelle="Réouvertures">{r.nbReouvertures}</Info>}
+              {r.jalons.escaladeeAdminLe && (
+                <Info libelle="Escaladée à l'Admin Entreprise"><span className="chiffres">{dateHeure(r.jalons.escaladeeAdminLe)}</span></Info>
+              )}
             </dl>
           </Panneau>
+
+          {r.avis && <AvisClient avis={r.avis} />}
 
           <Panneau titre="Chronologie">
             <ol className="flex flex-col gap-3.5">
@@ -346,7 +439,7 @@ export function Ticket({
                   <span aria-hidden className={cx('mt-1.5 h-2 w-2 shrink-0 rounded-full', e.visibleClient ? 'bg-marque' : 'bg-trait-fort')} />
                   <div>
                     <p className="font-semibold text-encre">
-                      {EVENEMENT[e.type]}
+                      {e.type === 'ASSIGNATION' && e.acteur.type === 'SYSTEME' ? 'Attribution automatique' : EVENEMENT[e.type]}
                       {!e.visibleClient && <span className="ml-1.5 font-normal text-encre-3">(interne)</span>}
                     </p>
                     <p className="text-encre-3">

@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { describe, expect, it } from 'vitest';
-import { ajouterMinutesOuvrees, minutesOuvreesEntre, normaliserCalendrier, type Calendrier } from './calendrier.js';
+import { ajouterMinutesOuvrees, dateLocale, minutesOuvreesEntre, normaliserCalendrier, prochainInstantOuvre, type Calendrier } from './calendrier.js';
 
 /** Lundi → vendredi, 08:00–12:00 et 14:00–17:30 (450 minutes par jour), heure d'Abidjan (UTC). */
 const JOURS_OUVRES = [1, 2, 3, 4, 5];
@@ -126,5 +126,26 @@ describe('fuseaux et cas limites', () => {
   });
   it('refuse une plage inversée', () => {
     expect(() => normaliserCalendrier({ fuseauHoraire: 'UTC', plages: [{ jourSemaine: 1, debutMinute: 600, finMinute: 500 }], joursFeries: [] })).toThrow(/Plage horaire invalide/);
+  });
+});
+
+describe('prochainInstantOuvre (étape 16)', () => {
+  const cal = abidjan([{ date: '2026-12-25', recurrent: true }]);
+
+  it('pendant les heures ouvrées : l\'instant lui-même', () => {
+    expect(local(prochainInstantOuvre(t('2026-09-25 10:00'), cal))).toBe('2026-09-25 10:00');
+  });
+  it('à midi, la reprise de 14:00 ; le soir, le lendemain à 08:00', () => {
+    expect(local(prochainInstantOuvre(t('2026-09-24 12:30'), cal))).toBe('2026-09-24 14:00');
+    expect(local(prochainInstantOuvre(t('2026-09-24 21:00'), cal))).toBe('2026-09-25 08:00');
+  });
+  it('le week-end et un jour férié : le prochain jour ouvré', () => {
+    expect(local(prochainInstantOuvre(t('2026-09-26 10:00'), cal))).toBe('2026-09-28 08:00');
+    expect(local(prochainInstantOuvre(t('2026-12-24 18:00'), cal))).toBe('2026-12-28 08:00');
+    expect(dateLocale(prochainInstantOuvre(t('2026-12-24 18:00'), cal), cal)).toBe('2026-12-28');
+  });
+  it('sans horaires, le temps est continu', () => {
+    const continu = normaliserCalendrier({ fuseauHoraire: 'Africa/Abidjan', plages: [], joursFeries: [] });
+    expect(local(prochainInstantOuvre(t('2026-09-26 03:00'), continu))).toBe('2026-09-26 03:00');
   });
 });

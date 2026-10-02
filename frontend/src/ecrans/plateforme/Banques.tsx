@@ -100,6 +100,9 @@ export function Banques({
                   <td className="px-3 py-3.5 text-sm leading-relaxed text-encre-2">
                     <div>Préfixe <span className="chiffres font-semibold text-encre">{b.prefixeTickets}</span>, alerte à {b.seuilAlerteSlaPourcent} %</div>
                     <div>Clôture après {b.delaiClotureAutoJours} jours, SMS {b.smsChaqueChangementStatut ? 'à chaque étape' : 'au dépôt et à la résolution'}</div>
+                    {b.enqueteSatisfaction && <div>Enquête de satisfaction à la clôture</div>}
+                    {b.attributionAutomatique && <div>Attribution et escalade automatiques</div>}
+                    {b.chatWeb && <div>Chat web et boîte de réception</div>}
                   </td>
                   <td className="px-3 py-3.5">
                     {b.suspendueLe ? (
@@ -233,11 +236,14 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
   const [seuil, setSeuil] = useState(String(b.seuilAlerteSlaPourcent));
   const [delai, setDelai] = useState(String(b.delaiClotureAutoJours));
   const [sms, setSms] = useState(b.smsChaqueChangementStatut);
+  const [enquete, setEnquete] = useState(b.enqueteSatisfaction);
+  const [attribution, setAttribution] = useState(b.attributionAutomatique);
+  const [chat, setChat] = useState(b.chatWeb);
   const [motif, setMotif] = useState('');
   const e = actions.erreurs ?? {};
   const valide = nom.trim().length >= 2 && Number(seuil) >= 1 && Number(seuil) <= 99 && Number(delai) >= 1 && Number(delai) <= 60;
   const enregistrer = async () => {
-    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms });
+    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat });
     if (issue !== false) surFermer();
   };
   return (
@@ -290,6 +296,27 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
             <span>
               SMS au client à chaque changement de statut
               <span className="block text-sm text-encre-3">Sinon, au dépôt et à la résolution seulement. Chaque SMS est refacturé à la banque.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 text-[15px]">
+            <input type="checkbox" checked={enquete} onChange={(x) => setEnquete(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              Enquête de satisfaction à la clôture (phase 2)
+              <span className="block text-sm text-encre-3">Le message de clôture invite le client à noter le traitement (1 à 5) et sa recommandation (0 à 10), pendant 7 jours. Sans SMS supplémentaire.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 text-[15px]">
+            <input type="checkbox" checked={attribution} onChange={(x) => setAttribution(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              Attribution et escalade automatiques (phase 2)
+              <span className="block text-sm text-encre-3">L'Admin Entreprise compose des groupes d'agents et choisit le mode : suggestion ou automatique. La fermer remet la banque en attribution manuelle.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2.5 text-[15px]">
+            <input type="checkbox" checked={chat} onChange={(x) => setChat(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              Chat web et boîte de réception (phase 2)
+              <span className="block text-sm text-encre-3">Le client écrit à la banque dans un chat, sur le portail ; les agents répondent depuis leur boîte de réception. Makor ne lit jamais les conversations.</span>
             </span>
           </label>
         </fieldset>

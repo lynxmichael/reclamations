@@ -14,7 +14,7 @@ import { TelechargerPiece } from '../../ui/contextes';
 import { useAnnoncer } from '../commun/Annonces';
 import { Chargement, ErreurChargement } from '../commun/Etats';
 import { INTERVALLE_MS } from './Cadre';
-import { nomDe, useConsole, useParametres } from './contexte';
+import { ROUTES_BANQUE, nomDe, useConsole, useParametres } from './contexte';
 import { useExport } from './Reporting';
 
 const FILES: FileTraitement[] = ['recues', 'assignees', 'urgentes', 'en-retard', 'escaladees', 'toutes'];
@@ -107,6 +107,22 @@ export function PageFiles() {
   const agences = useQuery({ queryKey: ['agences'], queryFn: () => appeler('listerAgences'), staleTime: 60_000 });
   const agents = useAgents(moi.role !== 'AGENT');
   const { exporter, enCours } = useExport();
+  const cache = useQueryClient();
+  const annoncer = useAnnoncer();
+  // Mode suggestion (étape 16) : le superviseur valide l'agent proposé depuis la file
+  const valider = useMutation({
+    mutationFn: ({ r, agent }: { r: S<'ReclamationResume'>; agent: S<'ReferenceNommee'> }) =>
+      appeler('assignerReclamation', { chemin: { id: r.id }, corps: { agentId: agent.id } }),
+    onSuccess: (_, { r, agent }) => {
+      void cache.invalidateQueries({ queryKey: ['reclamations'] });
+      void cache.invalidateQueries({ queryKey: ['compteurs'] });
+      annoncer(`${r.numero} assignée à ${agent.nom}.`);
+    },
+    onError: (e) => {
+      annoncer(messageErreur(e), 'erreur');
+      void cache.invalidateQueries({ queryKey: ['reclamations'] });
+    },
+  });
 
   if (page.isPending) return <Chargement />;
   if (page.isError) return <ErreurChargement erreur={page.error} surReessayer={() => void page.refetch()} />;
@@ -140,6 +156,7 @@ export function PageFiles() {
         agents: agents.data ?? [],
       }}
       surOuvrir={(id) => navigate(`/reclamations/${id}`, { state: { depuis: `/reclamations?${params.toString()}` } })}
+      surValiderSuggestion={(r, agent) => valider.mutate({ r, agent })}
     />
   );
 }
@@ -205,6 +222,7 @@ export function PageFiche() {
       ),
     escalader: () => void executer(() => appeler('escaladerReclamation', { chemin: { id }, corps: {} }), 'Réclamation escaladée au superviseur.'),
     cloturer: (motif, precision) => executer(() => appeler('cloturerDeForce', { chemin: { id }, corps: { motif, precision } }), 'Réclamation clôturée de force, motif inscrit au journal.'),
+    ouvrirConversation: (conversation) => navigate(`${ROUTES_BANQUE.conversations}/${conversation}?filtre=toutes`),
   };
   const telecharger = (piece: S<'PieceJointe'>) =>
     void appeler('telechargerPieceJointe', { chemin: { id, pieceId: piece.id } })

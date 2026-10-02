@@ -11,6 +11,11 @@ import { minutesOuvreesEntre, type CalendrierNormalise } from '../../domaine/tem
 import { etat } from '../../application/reclamations/cycle-de-vie.js';
 import type { ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
 import { introuvable } from '../../infrastructure/contrat/probleme.js';
+import { etatAvis } from '../../domaine/satisfaction.js';
+import type { Choix } from '../../domaine/attribution.js';
+import { chargerContexte, suggestion, type ContexteAttribution } from '../../application/reclamations/attribution.js';
+import type { ParametresBanque } from '../../application/reclamations/parametres.js';
+import { clientEnLigne, disponibilite, nonLueParLaBanque, reponseDue } from '../../domaine/conversation.js';
 
 type S<N extends keyof components['schemas']> = components['schemas'][N];
 
@@ -21,6 +26,12 @@ const reference = (u: { id: string; prenom: string; nom: string } | null) => (u 
 const PERSONNE = { select: { id: true, nom: true, prenom: true } } as const;
 const PIECE = { select: { id: true, nomFichier: true, typeMime: true, tailleOctets: true, creeLe: true } } as const;
 
+/** Un message et ses pièces jointes (fiche, vue du client, conversations). */
+export const INCLUSION_MESSAGE = {
+  auteurUtilisateur: { select: { nom: true, prenom: true } },
+  piecesJointes: { ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] },
+} satisfies Prisma.CommentaireInclude;
+
 export const INCLUSION_FICHE = {
   categorie: { select: { id: true, nom: true } },
   agence: { select: { id: true, nom: true } },
@@ -29,17 +40,16 @@ export const INCLUSION_FICHE = {
   escaladeeVers: PERSONNE,
   cloturePar: PERSONNE,
   client: { select: { id: true, nom: true, email: true, telephone: true } },
-  commentaires: {
-    orderBy: [{ creeLe: 'asc' }, { id: 'asc' }],
-    include: { auteurUtilisateur: { select: { nom: true, prenom: true } }, piecesJointes: { ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] } },
-  },
+  commentaires: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: INCLUSION_MESSAGE },
   piecesJointes: { where: { commentaireId: null }, ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] },
   evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: { acteurUtilisateur: { select: { nom: true, prenom: true } } } },
+  enquete: true,
+  conversation: true,
 } satisfies Prisma.ReclamationInclude;
 
 export type TicketComplet = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_FICHE }>;
 
-const piece = (p: { id: string; nomFichier: string; typeMime: string; tailleOctets: number; creeLe: Date }): S<'PieceJointe'> =>
+export const piece = (p: { id: string; nomFichier: string; typeMime: string; tailleOctets: number; creeLe: Date }): S<'PieceJointe'> =>
   ({ id: p.id, nomFichier: p.nomFichier, typeMime: p.typeMime, tailleOctets: p.tailleOctets, creeLe: p.creeLe.toISOString() });
 
 // ---------------------------------------------------------------------------
@@ -85,13 +95,26 @@ export function operationsPossibles(e: EtatMachine, acteur: Acteur): Operation[]
  * Fiche d'une réclamation pour un membre du personnel. Un agent ne lit que les tickets qui lui
  * sont assignés : les autres lui répondent 404 (décision C5), comme ceux d'une autre banque.
  */
-export async function lireFiche(tx: ClientTransaction, id: string, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise): Promise<S<'ReclamationDetail'>> {
+export async function lireFiche(tx: ClientTransaction, id: string, acteur: Acteur, maintenant: Date, p: ParametresBanque): Promise<S<'ReclamationDetail'>> {
   const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
   if (!t || !verifierOperation('CONSULTER', etat(t), acteur).ok) throw introuvable('Réclamation introuvable');
-  return fiche(t, acteur, maintenant, cal);
+  const ctx = peutRecevoirSuggestion(p, acteur) && !t.agentId && t.statut === 'OUVERTE' ? await chargerContexte(tx, p, maintenant) : null;
+  return fiche(t, acteur, maintenant, p.sla.calendrier, suggestion(ctx, t), p.banque.chatWeb);
 }
 
-export function fiche(t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise): S<'ReclamationDetail'> {
+/** Mode suggestion (étape 16) : l'agent proposé s'affiche pour qui peut assigner, le superviseur. */
+export function peutRecevoirSuggestion(p: ParametresBanque, acteur: Acteur): boolean {
+  return p.banque.modeAttribution === 'SUGGESTION' && acteur.type === 'UTILISATEUR' && acteur.role === 'SUPERVISEUR';
+}
+
+/** Suggestions d'une page des files : un seul chargement des groupes et des charges. */
+export async function contexteSuggestions(tx: ClientTransaction, p: ParametresBanque, acteur: Acteur, maintenant: Date): Promise<ContexteAttribution | null> {
+  return peutRecevoirSuggestion(p, acteur) ? chargerContexte(tx, p, maintenant) : null;
+}
+
+export function fiche(
+  t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise, suggeree: Choix | null = null, chatWeb = false,
+): S<'ReclamationDetail'> {
   const c = chrono(t, maintenant, cal);
   const qui = (type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME', u: { nom: string; prenom: string } | null): S<'ActeurVisible'> =>
     ({ type, nom: type === 'UTILISATEUR' && u ? nomComplet(u) : null });
@@ -126,19 +149,13 @@ export function fiche(t: TicketComplet, acteur: Acteur, maintenant: Date, cal: C
       clotureLe: iso(t.clotureLe),
       clotureAutoPrevueLe: iso(t.clotureAutoPrevueLe),
       escaladeeLe: iso(t.escaladeeLe),
+      escaladeeAdminLe: iso(t.escaladeeAdminLe),
     },
     cloture: t.modeCloture
       ? { mode: t.modeCloture, motif: t.motifClotureForcee, precision: t.commentaireCloture, par: reference(t.cloturePar) }
       : null,
     nbReouvertures: t.nbReouvertures,
-    messages: t.commentaires.map((m) => ({
-      id: m.id,
-      type: m.type,
-      contenu: m.contenu,
-      auteur: m.type === 'MESSAGE_DU_CLIENT' ? qui('CLIENT', null) : qui('UTILISATEUR', m.auteurUtilisateur),
-      creeLe: m.creeLe.toISOString(),
-      piecesJointes: m.piecesJointes.map(piece),
-    })),
+    messages: t.commentaires.map(messagePersonnel),
     piecesJointes: t.piecesJointes.map(piece),
     chronologie: t.evenements.map((e) => ({
       type: e.type,
@@ -150,7 +167,79 @@ export function fiche(t: TicketComplet, acteur: Acteur, maintenant: Date, cal: C
     })),
     actionsPossibles: actionsPossibles(etat(t), acteur, maintenant),
     operationsPossibles: operationsPossibles(etat(t), acteur),
+    avis: avisReclamation(t.enquete, maintenant),
+    attributionSuggeree: suggeree
+      ? { agent: { id: suggeree.agent.id, nom: suggeree.agent.nom }, groupe: { id: suggeree.groupe.id, nom: suggeree.groupe.nom } }
+      : null,
+    conversation: chatWeb && t.conversation ? conversationTicket(t.conversation, t.statut, maintenant) : null,
   };
+}
+
+type LigneConversation = NonNullable<TicketComplet['conversation']>;
+
+/** Conversation sur la fiche (étape 17) : à répondre, non lue, client en ligne. */
+export function conversationTicket(c: LigneConversation, statut: string, maintenant: Date): S<'ConversationTicket'> {
+  return {
+    id: c.id,
+    canal: c.canal,
+    aRepondre: reponseDue(c, statut),
+    nonLue: nonLueParLaBanque(c),
+    clientEnLigne: clientEnLigne(c, maintenant),
+    luParLeClientLe: iso(c.luClientLe),
+  };
+}
+
+/** Le chat vu du client (étape 17) : disponibilité de la banque, sa dernière lecture. */
+export function etatChat(c: { luBanqueLe: Date | null } | null, maintenant: Date, cal: CalendrierNormalise): S<'EtatChat'> {
+  const d = disponibilite(maintenant, cal);
+  return { ouvert: d.ouverte, repriseLe: iso(d.repriseLe), luParLaBanqueLe: iso(c?.luBanqueLe) };
+}
+
+/** Message tel que le personnel le voit : auteur nommé, notes internes comprises sur la fiche. */
+export function messagePersonnel(m: TicketComplet['commentaires'][number]): S<'Message'> {
+  return {
+    id: m.id,
+    type: m.type,
+    contenu: m.contenu,
+    auteur: m.type === 'MESSAGE_DU_CLIENT'
+      ? { type: 'CLIENT', nom: null }
+      : { type: 'UTILISATEUR', nom: m.auteurUtilisateur ? nomComplet(m.auteurUtilisateur) : null },
+    creeLe: m.creeLe.toISOString(),
+    piecesJointes: m.piecesJointes.map(piece),
+  };
+}
+
+/** Message public tel que le client le voit : jamais le nom de l'agent. */
+export function messageVisible(m: TicketComplet['commentaires'][number]): S<'MessageVisible'> {
+  return {
+    id: m.id,
+    type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
+    contenu: m.contenu,
+    auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' : 'BANQUE',
+    creeLe: m.creeLe.toISOString(),
+    piecesJointes: m.piecesJointes.map(piece),
+  };
+}
+
+type Enquete = TicketComplet['enquete'];
+
+/** Enquête de satisfaction vue par le personnel (étape 15) : réponse et commentaire compris. */
+export function avisReclamation(e: Enquete, maintenant: Date): S<'AvisReclamation'> | null {
+  if (!e) return null;
+  return {
+    etat: etatAvis(e, maintenant),
+    ouverteLe: e.creeLe.toISOString(),
+    expireLe: e.expireLe.toISOString(),
+    reponse: e.reponduLe
+      ? { note: e.note!, recommandation: e.recommandation!, commentaire: e.commentaire, reponduLe: e.reponduLe.toISOString() }
+      : null,
+  };
+}
+
+/** Enquête vue par le client dans son espace, avec l'adresse de sa page sur le portail. */
+export function avisClient(e: Enquete, jetonSuivi: string, maintenant: Date): S<'AvisClient'> | null {
+  if (!e) return null;
+  return { etat: etatAvis(e, maintenant), expireLe: e.expireLe.toISOString(), chemin: `/suivi/${jetonSuivi}/avis` };
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +255,8 @@ export const INCLUSION_RESUME = {
 
 export type TicketResume = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_RESUME }>;
 
-export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormalise): S<'ReclamationResume'> {
+export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormalise, ctx: ContexteAttribution | null = null): S<'ReclamationResume'> {
+  const suggeree = suggestion(ctx, t);
   const c = chrono(t, maintenant, cal);
   return {
     id: t.id,
@@ -177,6 +267,7 @@ export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormali
     categorie: { id: t.categorie.id, nom: t.categorie.nom },
     agence: t.agence ? { id: t.agence.id, nom: t.agence.nom } : null,
     agent: reference(t.agent),
+    agentSuggere: suggeree ? { id: suggeree.agent.id, nom: suggeree.agent.nom } : null,
     client: { nom: t.client.nom },
     creeLe: t.creeLe.toISOString(),
     echeanceSlaLe: c.etat === 'EN_PAUSE' || c.etat === 'ARRETE' ? null : iso(t.echeanceSlaLe),
@@ -198,7 +289,7 @@ export function etapesSuivi(evenements: readonly { visibleClient: boolean; statu
 }
 
 /** Réclamation vue par son client : jamais de note interne ni de pièce jointe d'une note. */
-export async function lireVueClient(tx: ClientTransaction, id: string, clientId: string, maintenant: Date): Promise<S<'ReclamationClient'>> {
+export async function lireVueClient(tx: ClientTransaction, id: string, clientId: string, maintenant: Date, p: ParametresBanque): Promise<S<'ReclamationClient'>> {
   const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
   if (!t || t.clientId !== clientId) throw introuvable('Réclamation introuvable');
   const acteur: Acteur = { type: 'CLIENT', clientId };
@@ -210,19 +301,12 @@ export async function lireVueClient(tx: ClientTransaction, id: string, clientId:
     description: t.description,
     creeLe: t.creeLe.toISOString(),
     clotureAutoPrevueLe: t.statut === 'RESOLUE' ? iso(t.clotureAutoPrevueLe) : null,
-    messages: t.commentaires
-      .filter((m) => m.type !== 'NOTE_INTERNE')
-      .map((m) => ({
-        id: m.id,
-        type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
-        contenu: m.contenu,
-        auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' as const : 'BANQUE' as const,
-        creeLe: m.creeLe.toISOString(),
-        piecesJointes: m.piecesJointes.map(piece),
-      })),
+    messages: t.commentaires.filter((m) => m.type !== 'NOTE_INTERNE').map(messageVisible),
     piecesJointes: t.piecesJointes.map(piece),
     etapes: etapesSuivi(t.evenements),
     actionsPossibles: actionsPossibles(etat(t), acteur, maintenant),
     operationsPossibles: operationsPossibles(etat(t), acteur),
+    avis: avisClient(t.enquete, t.jetonSuivi, maintenant),
+    chat: p.banque.chatWeb ? etatChat(t.conversation, maintenant, p.sla.calendrier) : null,
   };
 }

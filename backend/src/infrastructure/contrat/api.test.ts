@@ -5,6 +5,8 @@
 import 'reflect-metadata';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
 import { describe, expect, it } from 'vitest';
+import { AttributionControleur } from '../../modules/attribution/attribution.controller.js';
+import { ConversationsControleur } from '../../modules/conversations/conversations.controller.js';
 import { AuditControleur } from '../../modules/audit/audit.controller.js';
 import { AuthControleur } from '../../modules/auth/auth.controller.js';
 import { ClientControleur } from '../../modules/client/client.controller.js';
@@ -22,7 +24,7 @@ import { erreursChamps, validateurDe } from './validation.js';
 
 const CONTROLEURS = [
   SanteControleur, PublicControleur, ClientControleur, AuthControleur, ReclamationsControleur, NotificationsControleur,
-  ParametrageControleur, PersonnelControleur, AuditControleur, PlateformeControleur, ReportingControleur,
+  ParametrageControleur, PersonnelControleur, AuditControleur, PlateformeControleur, ReportingControleur, AttributionControleur, ConversationsControleur,
 ];
 
 const METHODES_HTTP = ['get', 'post', 'put', 'delete', 'patch'];
@@ -39,12 +41,12 @@ function routes() {
 }
 
 describe('routes de l\'API ↔ opérations du contrat', () => {
-  it('chaque opération du contrat est servie une fois (84, anti-robot de l\'étape 11 compris)', () => {
+  it('chaque opération du contrat est servie une fois (100, phase 2 comprise)', () => {
     const servies = routes().map((r) => r.id);
     expect(new Set(servies).size).toBe(servies.length);
     const attendues = [...contratApi().operations.keys()].sort();
     expect([...servies].sort()).toEqual(attendues);
-    expect(attendues.length).toBe(84);
+    expect(attendues.length).toBe(100);
   });
 
   it('méthode et chemin HTTP de chaque route sont ceux du contrat', () => {

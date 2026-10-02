@@ -17,7 +17,7 @@ import { introuvable } from '../../infrastructure/contrat/probleme.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { avecFichiers, envoyerFichier, pageDe, pagination, stockerPiecesJointes, telechargement, type S } from '../commun.js';
-import { INCLUSION_RESUME, lireFiche, resume } from './lecture.js';
+import { contexteSuggestions, INCLUSION_RESUME, lireFiche, resume } from './lecture.js';
 
 type Where = Prisma.ReclamationWhereInput;
 
@@ -63,8 +63,10 @@ export class ServiceReclamations {
         () => tx.reclamation.count({ where: { AND: [visibles, parFile['en-retard']] } }),
         () => tx.reclamation.count({ where: { AND: [visibles, parFile.escaladees] } }),
       ]);
+      // Mode suggestion (étape 16) : l'agent proposé pour chaque réclamation non assignée
+      const ctx = lignes.some((t) => !t.agentId && t.statut === 'OUVERTE') ? await contexteSuggestions(tx, p, acteurDe(appel), maintenant) : null;
       return {
-        ...pageDe(lignes.map((t) => resume(t, maintenant, p.sla.calendrier)), page, parPage, total),
+        ...pageDe(lignes.map((t) => resume(t, maintenant, p.sla.calendrier, ctx)), page, parPage, total),
         compteurs: { recues, assignees, urgentes, enRetard: retard, escaladees },
       };
     });
@@ -74,7 +76,7 @@ export class ServiceReclamations {
     const moi = personnelBanque(appel);
     return this.bd.enBanque(moi.tenantId, async (tx) => {
       const p = await chargerParametres(tx, moi.tenantId);
-      return lireFiche(tx, id, acteurDe(appel), this.horloge(), p.sla.calendrier);
+      return lireFiche(tx, id, acteurDe(appel), this.horloge(), p);
     });
   }
 

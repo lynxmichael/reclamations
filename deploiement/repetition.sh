@@ -199,8 +199,10 @@ resume() {
     info "Mot de passe      $(valeur_env DEMO_MOT_DE_PASSE)"
     info "Double auth.      repetition totp <e-mail> : code du moment et adresse otpauth:// pour le téléphone"
   else
+    info "Base vide, comme une vraie production : seul ce compte existe (les comptes du développement et"
+    info "de la démonstration n'y sont pas ; pour eux : repetition demo)."
     info "Super Admin       admin@$DOMAINE : ouvrir le lien d'invitation ci-dessous, choisir le mot de passe,"
-    info "                  enrôler la double authentification avec le téléphone"
+    info "                  enrôler la double authentification avec le téléphone, puis se connecter avec ce compte"
     [[ ! -s $DOSSIER/lien-invitation.txt ]] || info "                  $(cat "$DOSSIER/lien-invitation.txt")"
     info "Portail           https://<slug>.$DOMAINE, une fois la banque créée dans la console"
     info "                  (puis : repetition verifier --portail <slug>)"

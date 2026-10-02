@@ -4,12 +4,15 @@
  *
  *   /d/{code}                 dépôt depuis un QR code ou un lien web (lireFormulaireDepot, deposerReclamation)
  *   /suivi/{jeton}            suivi public, puis code à usage unique (lireSuivi, demanderCodeOtp, verifierCodeOtp)
+ *   /suivi/{jeton}/avis       enquête de satisfaction après la clôture (lireAvis, donnerAvis, étape 15)
  *
  * Le dépôt et la demande de code exigent un défi anti-robot résolu (lireDefiAntiRobot, étape 11).
- *   /mes-reclamations[/{id}]  espace client, 30 minutes (listerMesReclamations, lireMaReclamation…)
+ *   /mes-reclamations[/{id}]  espace client, 30 minutes (listerMesReclamations, lireMaReclamation…) ;
+ *                             chat web quand la banque l'a (étape 17) : relu toutes les 5 secondes tant que
+ *                             la page est visible (lireConversationClient, marquerConversationLueClient)
  *   /politique-donnees        politique de données (?point={code} pour les couleurs de la banque)
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { QrCode as IconeQr, MessageSquareText } from 'lucide-react';
@@ -18,6 +21,7 @@ import { ErreurApi, enregistrer, messageErreur } from '../../api/client';
 import { useSessionClientOuverte, type SessionClient } from '../../api/session-client';
 import type { S } from '../../api/types';
 import { Accuse } from '../../ecrans/portail/Accuse';
+import { Avis } from '../../ecrans/portail/Avis';
 import { CadrePortail } from '../../ecrans/portail/CadrePortail';
 import { CodeOtp } from '../../ecrans/portail/CodeOtp';
 import { Depot, type SaisieDepot } from '../../ecrans/portail/Depot';
@@ -211,11 +215,58 @@ export function PageSuivi({ session }: { session: SessionClient }) {
   return (
     <Suivi
       suivi={s}
+      surAvis={() => navigate(`/suivi/${encodeURIComponent(jeton)}/avis`)}
       surDemanderCode={(canal) => {
         // Une session déjà ouverte dans cet onglet évite un nouveau SMS
         if (dejaOuverte) void ouvrirEspace().catch(() => demande.mutate(canal));
         else demande.mutate(canal);
       }}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ Enquête de satisfaction */
+
+export function PageAvis({ session }: { session: SessionClient }) {
+  const { jeton = '' } = useParams();
+  const navigate = useNavigate();
+  const cache = useQueryClient();
+  const cle = ['avis', jeton];
+  const avis = useQuery({ queryKey: cle, queryFn: () => session.appeler('lireAvis', { chemin: { jetonSuivi: jeton } }) });
+  const [erreur, setErreur] = useState<string | null>(null);
+  useTitre(avis.data ? `Votre avis — ${avis.data.banque.nom}` : null);
+
+  const envoi = useMutation({
+    mutationFn: (corps: S<'ReponseAvis'>) => session.appeler('donnerAvis', { chemin: { jetonSuivi: jeton }, corps }),
+    onSuccess: (a) => {
+      cache.setQueryData(cle, a);
+      void cache.invalidateQueries({ queryKey: ['suivi', jeton] });
+      void cache.invalidateQueries({ queryKey: ['ma-reclamation'] });
+      setErreur(null);
+      window.scrollTo({ top: 0 });
+    },
+    onError: (e) => {
+      // Déjà répondu (autre onglet) ou enquête terminée entre-temps : l'écran suit le nouvel état
+      if (e instanceof ErreurApi && (e.code === 'AVIS_DEJA_DONNE' || e.code === 'ENQUETE_TERMINEE')) void avis.refetch();
+      setErreur(messageErreur(e));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+  });
+
+  if (avis.isPending) return <Chargement pleinEcran />;
+  if (avis.isError) {
+    if (avis.error instanceof ErreurApi && avis.error.statut === 404) {
+      return <Introuvable titre="Pas d'enquête pour ce lien">Vérifiez que vous avez ouvert le lien complet reçu après la clôture de votre réclamation.</Introuvable>;
+    }
+    return <ErreurChargement erreur={avis.error} surReessayer={() => void avis.refetch()} pleinEcran />;
+  }
+  return (
+    <Avis
+      avis={avis.data}
+      erreur={avis.data.etat === 'A_DONNER' ? erreur : null}
+      occupe={envoi.isPending}
+      surEnvoyer={(r) => envoi.mutate(r)}
+      surSuivi={() => navigate(`/suivi/${encodeURIComponent(jeton)}`)}
     />
   );
 }
@@ -254,6 +305,59 @@ export function PageMesReclamations({ session }: { session: SessionClient }) {
   return <MesReclamations banque={banque} reclamations={liste.data.donnees} surOuvrir={(id) => navigate(`/mes-reclamations/${id}`)} surQuitter={quitter} />;
 }
 
+/** Chat web (étape 17) : relecture des nouveaux messages, et marque « lu » au rythme de la page. */
+export const RAFRAICHISSEMENT_CHAT_MS = 5_000;
+export const BATTEMENT_CHAT_MS = 60_000;
+
+/** Ajoute les nouveaux messages (dédoublonnés par id, la relecture repart de l'heure du dernier). */
+export function fusionnerChat(r: S<'ReclamationClient'>, c: S<'ConversationClient'>): S<'ReclamationClient'> {
+  const parId = new Map(r.messages.map((m) => [m.id, m]));
+  for (const m of c.messages) parId.set(m.id, m);
+  const messages = [...parId.values()].sort((a, b) => a.creeLe.localeCompare(b.creeLe) || a.id.localeCompare(b.id));
+  return { ...r, messages, chat: c.chat };
+}
+
+function useChat(session: SessionClient, id: string, r: S<'ReclamationClient'> | undefined, actif: boolean) {
+  const cache = useQueryClient();
+  const appeler = session.appeler;
+  const cle = ['ma-reclamation', id];
+  const chat = actif && !!r?.chat;
+  const curseur = r?.messages.at(-1)?.creeLe;
+  useQuery({
+    queryKey: ['chat', id],
+    enabled: chat,
+    refetchInterval: RAFRAICHISSEMENT_CHAT_MS,
+    queryFn: async () => {
+      const c = await appeler('lireConversationClient', { chemin: { id }, requete: curseur ? { apres: curseur } : {} });
+      const avant = cache.getQueryData<S<'ReclamationClient'>>(cle);
+      if (avant) {
+        // Un changement de statut (résolution…) change les boutons et l'historique : relecture complète
+        if (avant.statut !== c.statut) void cache.invalidateQueries({ queryKey: cle });
+        else cache.setQueryData(cle, fusionnerChat(avant, c));
+      }
+      return c;
+    },
+  });
+
+  // Lu et présent : à l'ouverture, à chaque nouvelle réponse de la banque, puis chaque minute à l'écran
+  const reponses = r?.messages.filter((m) => m.auteur === 'BANQUE').length ?? 0;
+  const lire = useCallback(() => {
+    if (document.visibilityState === 'visible') void appeler('marquerConversationLueClient', { chemin: { id } }).catch(() => undefined);
+  }, [appeler, id]);
+  useEffect(() => {
+    if (chat) lire();
+  }, [chat, reponses, lire]);
+  useEffect(() => {
+    if (!chat) return;
+    const minute = window.setInterval(lire, BATTEMENT_CHAT_MS);
+    document.addEventListener('visibilitychange', lire);
+    return () => {
+      window.clearInterval(minute);
+      document.removeEventListener('visibilitychange', lire);
+    };
+  }, [chat, lire]);
+}
+
 export function PageMaReclamation({ session }: { session: SessionClient }) {
   const { id = '' } = useParams();
   const { ouverte, retour, quitter } = useEspace(session);
@@ -263,13 +367,14 @@ export function PageMaReclamation({ session }: { session: SessionClient }) {
   const appeler = session.appeler;
   const cle = ['ma-reclamation', id];
   const r = useQuery({ queryKey: cle, queryFn: () => appeler('lireMaReclamation', { chemin: { id } }), enabled: ouverte, refetchInterval: 60_000 });
+  useChat(session, id, r.data, ouverte);
   const banque = session.banque();
   useTitre(r.data && banque ? `${r.data.numero} — ${banque.nom}` : null);
 
   const apres = (texte: string) => (maj: S<'ReclamationClient'>) => {
     cache.setQueryData(cle, maj);
     void cache.invalidateQueries({ queryKey: ['mes-reclamations'] });
-    annoncer(texte);
+    if (texte) annoncer(texte);
   };
   const echec = (e: unknown) => annoncer(messageErreur(e), 'erreur');
   const confirmer = useMutation({ mutationFn: () => appeler('confirmerResolution', { chemin: { id } }), onSuccess: apres('Merci : votre réclamation est clôturée.'), onError: echec });
@@ -280,7 +385,8 @@ export function PageMaReclamation({ session }: { session: SessionClient }) {
   });
   const message = useMutation({
     mutationFn: ({ texte, fichiers }: { texte: string; fichiers: File[] }) => appeler('envoyerMessageClient', { chemin: { id }, corps: { contenu: texte, fichiers } }),
-    onSuccess: apres('Message envoyé à la banque.'),
+    // Dans le chat, le message s'affiche dans le fil (annoncé par lui) : pas de message de plus
+    onSuccess: (maj) => (maj.chat ? apres('')(maj) : apres('Message envoyé à la banque.')(maj)),
     onError: echec,
   });
 
@@ -304,6 +410,7 @@ export function PageMaReclamation({ session }: { session: SessionClient }) {
         reclamation={r.data}
         occupe={occupe}
         surRetour={() => navigate('/mes-reclamations')}
+        surAvis={(chemin) => navigate(chemin)}
         surQuitter={quitter}
         surConfirmer={() => confirmer.mutate()}
         surContester={(motif) => contester.mutate(motif)}

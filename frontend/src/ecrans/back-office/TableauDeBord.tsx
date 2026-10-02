@@ -3,14 +3,14 @@
  * (exporterReclamations). Les délais sont en temps ouvré ; les taux suivent les définitions de
  * l'étape 4 (S5, S6). Étape 9 : courbe d'évolution, filtres réels (période, agence, catégorie).
  * Étape 11 : la charge du moment (hors période) et le tableau de bord de l'agent, limité aux
- * réclamations qui lui sont assignées.
+ * réclamations qui lui sont assignées. Étape 15 : la satisfaction des clients (enquêtes à la clôture).
  */
 import type { ReactNode } from 'react';
-import { CalendarDays, ChevronDown, ChevronRight, Download, Hourglass, Inbox, Siren, TriangleAlert } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronRight, Download, Hourglass, Inbox, MessageSquareQuote, Siren, TriangleAlert } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Panneau, cx } from '../../ui/composants';
 import { Evolution } from '../../ui/Evolution';
-import { duree, nombre, pourcent } from '../../ui/format';
+import { dateCourte, duree, nombre, pourcent } from '../../ui/format';
 
 const COULEUR_STATUT: Record<string, string> = {
   OUVERTE: 'bg-ouverte',
@@ -86,6 +86,119 @@ function Charge({ charge, surOuvrirRetard }: { charge: S<'Charge'>; surOuvrirRet
   );
 }
 
+/** NPS signé : +32, −8, 0 */
+export function signe(n: number): string {
+  return n > 0 ? `+${n}` : n < 0 ? `\u2212${-n}` : '0';
+}
+
+function RepartitionNps({ s }: { s: S<'Satisfaction'> }) {
+  const parts = [
+    { libelle: 'Promoteurs (9 et 10)', total: s.promoteurs, couleur: 'bg-resolue' },
+    { libelle: 'Passifs (7 et 8)', total: s.passifs, couleur: 'bg-trait-fort' },
+    { libelle: 'Détracteurs (0 à 6)', total: s.detracteurs, couleur: 'bg-urgent' },
+  ];
+  return (
+    <div>
+      <div className="flex h-4 overflow-hidden rounded-md bg-fond" role="img" aria-label={parts.map((p) => `${p.libelle} ${p.total}`).join(', ')}>
+        {parts.map((p) => (
+          <span key={p.libelle} className={cx('h-full border-r-2 border-surface last:border-0', p.couleur)} style={{ width: `${(p.total / Math.max(1, s.reponses)) * 100}%` }} />
+        ))}
+      </div>
+      <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-sm">
+        {parts.map((p) => (
+          <li key={p.libelle} className="flex items-center gap-2">
+            <span aria-hidden className={cx('h-3 w-3 rounded-sm', p.couleur)} />
+            <span className="text-encre-2">{p.libelle}</span>
+            <span className="chiffres font-bold">{nombre(p.total)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function Satisfaction({ s, agent, surOuvrir }: { s: S<'Satisfaction'>; agent?: boolean; surOuvrir?: (id: string) => void }) {
+  const moyenne = s.noteMoyenne === null ? '—' : s.noteMoyenne.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return (
+    <section aria-labelledby="satisfaction-titre" className="rounded-xl border border-trait bg-surface">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-trait px-5 py-3">
+        <h2 id="satisfaction-titre" className="text-[15px] font-bold">Satisfaction des clients</h2>
+        <p className="text-[13px] text-encre-3">Enquêtes ouvertes sur la période, à la clôture confirmée ou automatique</p>
+      </div>
+      <dl className="grid grid-cols-4 divide-x divide-trait border-b border-trait">
+        <Indicateur libelle="Taux de réponse" valeur={pourcent(s.tauxReponse)} detail={`${nombre(s.reponses)} réponse${s.reponses > 1 ? 's' : ''} sur ${nombre(s.enquetes)} enquête${s.enquetes > 1 ? 's' : ''}`} />
+        <Indicateur libelle="Clients satisfaits" valeur={pourcent(s.tauxSatisfaits)} detail="Notes 4 et 5 sur 5 (CSAT)" />
+        <Indicateur libelle="Note moyenne" valeur={moyenne} unite="/ 5" detail="Satisfaction sur le traitement" />
+        <Indicateur libelle="NPS" valeur={s.nps === null ? '—' : signe(s.nps)} detail="Promoteurs moins détracteurs, de −100 à +100" />
+      </dl>
+      {s.reponses === 0 ? (
+        <p className="px-5 py-4 text-[15px] text-encre-3">Pas encore de réponse sur la période.</p>
+      ) : (
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] divide-x divide-trait">
+          <div className="flex flex-col gap-5 px-5 py-4">
+            <div>
+              <h3 className="mb-3 text-sm font-semibold text-encre-2">Recommandation de la banque</h3>
+              <RepartitionNps s={s} />
+            </div>
+            {!agent && s.parAgent.length > 0 && (
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-encre-2">Par agent</h3>
+                <table className="w-full text-left text-[15px]">
+                  <thead>
+                    <tr className="border-b border-trait text-[13px] text-encre-3">
+                      <th scope="col" className="py-1.5 pr-3 font-semibold">Agent</th>
+                      <th scope="col" className="px-3 py-1.5 text-right font-semibold">Réponses</th>
+                      <th scope="col" className="px-3 py-1.5 text-right font-semibold">Satisfaits</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-semibold">NPS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.parAgent.map((a) => (
+                      <tr key={a.cle} className="border-b border-trait last:border-0">
+                        <td className="py-2 pr-3">{a.libelle}</td>
+                        <td className="chiffres px-3 py-2 text-right">{nombre(a.reponses)}</td>
+                        <td className="chiffres px-3 py-2 text-right font-semibold">{pourcent(a.tauxSatisfaits)}</td>
+                        <td className="chiffres py-2 pl-3 text-right font-semibold">{signe(a.nps)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div className="px-5 py-4">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-encre-2">
+              <MessageSquareQuote aria-hidden size={16} className="text-encre-3" />
+              Derniers commentaires
+            </h3>
+            {s.commentaires.length === 0 ? (
+              <p className="text-[15px] text-encre-3">Aucun commentaire sur la période.</p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-trait">
+                {s.commentaires.map((c) => (
+                  <li key={c.reclamationId} className="py-2.5 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+                      {surOuvrir ? (
+                        <button type="button" onClick={() => surOuvrir(c.reclamationId)} className="chiffres font-semibold text-marque-texte hover:underline">{c.numero}</button>
+                      ) : (
+                        <span className="chiffres font-semibold">{c.numero}</span>
+                      )}
+                      <span className={cx('chiffres rounded px-1.5 font-semibold', c.note >= 4 ? 'bg-resolue-doux text-resolue' : c.note <= 2 ? 'bg-urgent-doux text-urgent' : 'bg-fond text-encre-2')}>{c.note}/5</span>
+                      <span className="chiffres text-encre-3">recommandation {c.recommandation}/10</span>
+                      <span className="chiffres ml-auto text-encre-3">{dateCourte(c.reponduLe)}</span>
+                    </div>
+                    <p className="mt-1 text-[15px] leading-relaxed text-encre">{c.commentaire}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Vide() {
   return <p className="text-[15px] text-encre-3">Aucune réclamation sur la période.</p>;
 }
@@ -143,6 +256,7 @@ export function TableauDeBord({
   exportEnCours,
   agent,
   surOuvrirRetard,
+  surOuvrirReclamation,
 }: {
   indicateurs: S<'Indicateurs'>;
   periode?: string;
@@ -157,6 +271,8 @@ export function TableauDeBord({
   agent?: boolean;
   /** Ouvre la file « En retard » */
   surOuvrirRetard?: () => void;
+  /** Ouvre la fiche d'une réclamation (commentaires de l'enquête) */
+  surOuvrirReclamation?: (id: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-5">
@@ -210,6 +326,8 @@ export function TableauDeBord({
         <Indicateur libelle="SLA respecté" valeur={pourcent(ind.tauxRespectSla)} detail="Réclamations résolues avant leur échéance" />
         <Indicateur libelle="Premier contact" valeur={pourcent(ind.tauxResolutionPremierContact)} detail="Résolues sans question au client, sans escalade ni réouverture" />
       </dl>
+
+      {ind.satisfaction && <Satisfaction s={ind.satisfaction} agent={agent} surOuvrir={surOuvrirReclamation} />}
 
       <Panneau titre="Évolution">
         <Evolution evolution={ind.evolution} fuseau={fuseau} />

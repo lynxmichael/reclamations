@@ -61,7 +61,7 @@ export interface ApiDeTest {
 
 export async function demarrerApi(o: { horloge?: Horloge } = {}): Promise<ApiDeTest> {
   const config = configurationE2E();
-  const app = await creerApplication({ configuration: config, horloge: o.horloge, journaux: false });
+  const app = await creerApplication({ configuration: config, horloge: o.horloge, journaux: 'erreurs' });
   await app.listen(0, '127.0.0.1');
   const adresse = app.getHttpServer().address() as { port: number };
   return { app, url: `http://127.0.0.1:${adresse.port}/api/v1`, config, fermer: () => app.close() };

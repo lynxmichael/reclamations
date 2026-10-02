@@ -17,6 +17,10 @@ import { contexte, transactionEn, type ClientBase, type ClientTransaction } from
 import { ErreurMetier, exiger, introuvable } from './erreurs.js';
 import { adminsEntreprise, agent, Envois, superviseurs, type TicketNotifie } from './notifications.js';
 import { chargerParametres, type ParametresBanque } from './parametres.js';
+import { ouvrirEnquete } from './satisfaction.js';
+import type { Choix } from '../../domaine/attribution.js';
+import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
+import { messageDuClientDansConversation, reponseDansConversation } from './conversations.js';
 
 export interface OptionsCycleDeVie {
   /** Horloge ; remplacée dans les tests pour simuler le passage du temps */
@@ -54,6 +58,8 @@ export interface EntreeDepot {
 }
 
 type Ticket = Reclamation & { categorie: { nom: string } };
+
+const SYSTEME: Acteur = { type: 'SYSTEME' };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -124,10 +130,19 @@ export class CycleDeVie {
       const acteur: Acteur = { type: 'CLIENT', clientId: client.id };
       await this.evenement(tx, reclamation, 'CREATION', acteur, maintenant, { statutApres: 'OUVERTE' });
       await this.joindre(tx, reclamation, null, entree.fichiers, acteur, maintenant, true);
-      const envois = this.envois(tx, reclamation, p, maintenant);
+
+      // Attribution automatique (étape 16) : pendant les heures ouvrées, à l'agent disponible le moins
+      // chargé du groupe ; sinon la réclamation attend dans la file « Reçues » (reprise par le worker)
+      let t: Ticket = reclamation;
+      const choix = p.banque.modeAttribution === 'AUTOMATIQUE' && banqueOuverte(maintenant, p.sla.calendrier)
+        ? choisir(await chargerContexte(tx, p, maintenant), categorie.id, reclamation.agenceId)
+        : null;
+      if (choix) t = await this.attribuer(tx, t, p, maintenant, choix);
+
+      const envois = this.envois(tx, t, p, maintenant);
       await envois.client('client.depot');
-      if (reclamation.priorite === 'URGENTE') {
-        await envois.alerteUrgente([...(await superviseurs(tx, null)), ...(await adminsEntreprise(tx))]);
+      if (t.priorite === 'URGENTE') {
+        await envois.alerteUrgente([...(await agent(tx, t.agentId)), ...(await superviseurs(tx, t.agentId)), ...(await adminsEntreprise(tx))]);
       }
       await this.signalerPlafond(tx, envois, p, maintenant);
       await this.auditer(tx, reclamation, acteur, 'reclamation.depot', { canal: point.canal, priorite: reclamation.priorite }, trace);
@@ -136,6 +151,7 @@ export class CycleDeVie {
         id: reclamation.id,
         numero,
         jetonSuivi,
+        agentId: t.agentId,
         lienSuivi: this.options.lienSuivi(p.banque.slug, jetonSuivi),
         priorite: reclamation.priorite,
         echeanceSlaLe: reclamation.echeanceSlaLe,
@@ -206,6 +222,8 @@ export class CycleDeVie {
       if (!cible) throw new ErreurMetier('AGENT_INVALIDE', 'L\'agent doit être un agent actif de la banque', 422);
       if (t.agentId === agentId) return;
       const apres = await tx.reclamation.update({ where: { id: t.id }, data: { agentId }, include: { categorie: { select: { nom: true } } } });
+      // Départage de l'attribution automatique (étape 16) : l'agent servi le moins récemment d'abord
+      await tx.utilisateur.updateMany({ where: { id: agentId }, data: { derniereAttributionLe: maintenant } });
       await this.evenement(tx, t, 'ASSIGNATION', acteur, maintenant, { donnees: { agentAvant: t.agentId, agentApres: agentId } });
       const envois = this.envois(tx, apres, p, maintenant);
       await envois.personnel('agent.assignation', await agent(tx, agentId));
@@ -230,10 +248,12 @@ export class CycleDeVie {
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       await this.joindre(tx, t, message.id, options.fichiers, acteur, maintenant, true);
       t = await this.noterPremiereReponse(tx, t, p, maintenant);
+      // Chat web (étape 17) : avis différé si le client a ouvert le chat, envoyé par le worker s'il ne lit pas
+      const { avisDiffere } = await reponseDansConversation(tx, t, p, maintenant);
       if (options.attendreReponse && t.statut === 'EN_COURS') {
         t = await this.transition(tx, t, 'QUESTIONNER_CLIENT', acteur, maintenant, { ...slaEnPause(maintenant, t, p.sla), passeEnAttenteClient: true });
-        await this.envois(tx, t, p, maintenant).client('client.question');
-      } else {
+        if (!avisDiffere) await this.envois(tx, t, p, maintenant).client('client.question');
+      } else if (!avisDiffere) {
         await this.envois(tx, t, p, maintenant).client('client.reponse');
       }
       await this.auditer(tx, t, acteur, 'reclamation.reponse_client', { attendreReponse: !!options.attendreReponse }, trace);
@@ -262,7 +282,9 @@ export class CycleDeVie {
       if (t.statut === 'EN_ATTENTE_CLIENT') {
         t = await this.transition(tx, t, 'REPRENDRE_SUR_REPONSE', acteur, maintenant, slaALaReprise(maintenant, t, p.sla));
       }
-      await this.envois(tx, t, p, maintenant).personnel('agent.message_client', await agent(tx, t.agentId));
+      // Chat web (étape 17) : une rafale de messages n'alerte l'agent qu'une fois
+      const { alerterAgent } = await messageDuClientDansConversation(tx, t, p, maintenant);
+      if (alerterAgent) await this.envois(tx, t, p, maintenant).personnel('agent.message_client', await agent(tx, t.agentId));
       await this.auditer(tx, t, acteur, 'reclamation.message_client', {}, trace);
       return { commentaireId: message.id, statut: t.statut };
     });
@@ -274,6 +296,8 @@ export class CycleDeVie {
       const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, reponseFinale);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       t = await this.noterPremiereReponse(tx, t, p, maintenant);
+      // La notification de résolution part tout de suite et tient lieu d'avis de la réponse finale
+      await reponseDansConversation(tx, t, p, maintenant, { avisDonne: true });
       const champs = slaALaResolution(maintenant, t.creeLe, t, p.sla);
       t = await this.transition(tx, t, 'RESOUDRE', acteur, maintenant, champs, { slaRespecte: champs.slaRespecte });
       await this.envois(tx, t, p, maintenant).client('client.resolution');
@@ -287,7 +311,9 @@ export class CycleDeVie {
       t = await this.transition(tx, t, 'CONFIRMER', acteur, maintenant, {
         clotureLe: maintenant, modeCloture: 'CONFIRMATION_CLIENT', clotureAutoPrevueLe: null,
       });
-      await this.envois(tx, t, p, maintenant).client('client.cloture');
+      // Étape 15 : enquête de satisfaction, dont le lien part avec le message de clôture
+      const avis = await ouvrirEnquete(tx, t, p, 'CONFIRMATION_CLIENT', maintenant);
+      await this.envois(tx, t, p, maintenant).client('client.cloture', { avis });
       await this.auditer(tx, t, acteur, 'reclamation.confirmation', {}, trace);
     });
   }
@@ -360,6 +386,25 @@ export class CycleDeVie {
   // =========================================================================
   //  Outils internes (partagés avec les tâches planifiées)
   // =========================================================================
+
+  /**
+   * Attribution par le système (étape 16), au dépôt ou par le worker : l'agent est prévenu (et reçoit
+   * l'alerte d'une réclamation urgente), le choix est tracé dans l'historique et au journal d'audit.
+   */
+  async attribuer(tx: ClientTransaction, t: Ticket, p: ParametresBanque, maintenant: Date, choix: Choix): Promise<Ticket> {
+    const apres = await tx.reclamation.update({
+      where: { id: t.id }, data: { agentId: choix.agent.id }, include: { categorie: { select: { nom: true } } },
+    });
+    await tx.utilisateur.updateMany({ where: { id: choix.agent.id }, data: { derniereAttributionLe: maintenant } });
+    const donnees = { agentAvant: null, agentApres: choix.agent.id, origine: 'AUTOMATIQUE', groupeId: choix.groupe.id };
+    await this.evenement(tx, t, 'ASSIGNATION', SYSTEME, maintenant, { donnees });
+    const envois = this.envois(tx, apres, p, maintenant);
+    const destinataire = await agent(tx, choix.agent.id);
+    await envois.personnel('agent.assignation', destinataire);
+    if (apres.priorite === 'URGENTE') await envois.personnel('reclamation.urgente', destinataire, true);
+    await this.auditer(tx, t, SYSTEME, 'reclamation.attribution_automatique', { agentApres: choix.agent.id, groupeId: choix.groupe.id });
+    return apres;
+  }
 
   /** Verrouille le ticket (FOR UPDATE) dans une transaction de sa banque, puis applique `travail`. */
   async surTicket<T>(

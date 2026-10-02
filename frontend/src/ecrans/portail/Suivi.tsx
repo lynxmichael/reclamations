@@ -1,15 +1,17 @@
 /**
  * Suivi public, ouvert depuis le lien reçu par SMS ou e-mail (lireSuivi).
  * Sans code : la chronologie seule. Les messages exigent un code à usage unique (demanderCodeOtp).
+ * Étape 15 : une réclamation close avec enquête invite à donner son avis (sans code).
  */
 import { LockKeyhole } from 'lucide-react';
 import type { S } from '../../api/types';
 import { BadgeStatut, Bouton } from '../../ui/composants';
 import { date } from '../../ui/format';
+import { InvitationAvis } from './Avis';
 import { CadrePortail } from './CadrePortail';
 import { Etapes } from './Etapes';
 
-export function Suivi({ suivi, surDemanderCode }: { suivi: S<'SuiviPublic'>; surDemanderCode?: (canal?: 'EMAIL') => void }) {
+export function Suivi({ suivi, surDemanderCode, surAvis }: { suivi: S<'SuiviPublic'>; surDemanderCode?: (canal?: 'EMAIL') => void; surAvis?: () => void }) {
   return (
     <CadrePortail banque={suivi.banque}>
       <div className="px-5 pt-6 pb-8">
@@ -21,6 +23,8 @@ export function Suivi({ suivi, surDemanderCode }: { suivi: S<'SuiviPublic'>; sur
             {suivi.categorie}, déposée le {date(suivi.creeLe)}
           </span>
         </div>
+
+        {suivi.avis && <InvitationAvis avis={suivi.avis} surAvis={surAvis} />}
 
         <section className="mt-8">
           <h2 className="mb-4 text-lg font-bold">Où en est-elle ?</h2>

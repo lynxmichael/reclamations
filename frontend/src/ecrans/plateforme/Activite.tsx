@@ -1,12 +1,14 @@
 /**
  * Activité de toutes les banques (lireIndicateursPlateforme) et facturation des SMS du mois
- * (lireFacturationSms). Métadonnées seulement : volumes, taux, compteurs.
+ * (lireFacturationSms). Métadonnées seulement : volumes, taux, compteurs. Étape 15 : totaux des
+ * enquêtes de satisfaction par banque, jamais les commentaires des clients.
  */
 import type { ReactNode } from 'react';
 import { CalendarDays, ChevronDown, Download } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Panneau, cx } from '../../ui/composants';
 import { nombre, pourcent, relatif } from '../../ui/format';
+import { signe } from '../back-office/TableauDeBord';
 import { nomMois } from '../../ui/periodes';
 
 const COULEURS = ['bg-ouverte', 'bg-en-cours', 'bg-attente', 'bg-resolue', 'bg-cloturee/45'];
@@ -26,6 +28,7 @@ export function Activite({
   surExporterSms?: () => void;
   chargement?: boolean;
 }) {
+  const avecEnquetes = indicateurs.banques.filter((b) => b.satisfaction);
   const totalSms = sms.banques.reduce((s, b) => ({ sms: s.sms + b.sms, segments: s.segments + b.segments, echecs: s.echecs + b.echecs }), { sms: 0, segments: 0, echecs: 0 });
   return (
     <div className="flex flex-col gap-5">
@@ -84,6 +87,39 @@ export function Activite({
           ))}
         </ul>
       </Panneau>
+
+      {avecEnquetes.length > 0 && (
+        <Panneau titre="Satisfaction des clients" sansMarge>
+          <table className="w-full text-left text-[15px]">
+            <thead>
+              <tr className="border-b border-trait text-[13px] text-encre-3">
+                <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Banque</th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold">Enquêtes</th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold">Réponses</th>
+                <th scope="col" className="px-3 py-2.5 text-right font-semibold">Satisfaits</th>
+                <th scope="col" className="py-2.5 pr-5 pl-3 text-right font-semibold">NPS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {avecEnquetes.map(({ banque, satisfaction: e }) => (
+                <tr key={banque.id} className="border-b border-trait last:border-0">
+                  <td className="py-3 pr-3 pl-5 font-semibold">{banque.nom}</td>
+                  <td className="chiffres px-3 py-3 text-right">{nombre(e!.enquetes)}</td>
+                  <td className="chiffres px-3 py-3 text-right">
+                    {nombre(e!.reponses)}
+                    <span className="ml-2 text-sm text-encre-3">{pourcent(e!.enquetes ? e!.reponses / e!.enquetes : null)}</span>
+                  </td>
+                  <td className="chiffres px-3 py-3 text-right font-semibold">{pourcent(e!.tauxSatisfaits)}</td>
+                  <td className="chiffres py-3 pr-5 pl-3 text-right font-semibold">{e!.nps === null ? '—' : signe(e!.nps)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
+            Enquêtes ouvertes à la clôture sur la période. Satisfaits : notes 4 et 5 sur 5. NPS : part des notes 9 et 10 moins part des notes 0 à 6, sur 10. Les commentaires restent dans chaque banque.
+          </p>
+        </Panneau>
+      )}
 
       <Panneau
         titre={`SMS de ${nomMois(sms.mois)}`}

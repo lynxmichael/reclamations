@@ -30,6 +30,7 @@ const INCLUSION_EXPORT = {
   categorie: { select: { nom: true } },
   agence: { select: { nom: true } },
   agent: { select: { prenom: true, nom: true } },
+  enquete: { select: { note: true, recommandation: true } },
 } satisfies Prisma.ReclamationInclude;
 
 type TicketExporte = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_EXPORT }>;
@@ -39,6 +40,7 @@ export const COLONNES_EXPORT = [
   'Échéance SLA', 'Prise en charge le', 'Première réponse le', 'Délai de première réponse (min ouvrées)',
   'Résolue le', 'Délai de résolution (min ouvrées)', 'SLA respecté', 'Premier contact',
   'Réouvertures', 'Escaladée le', 'Clôturée le', 'Mode de clôture', 'Motif de clôture forcée',
+  'Satisfaction (1 à 5)', 'Recommandation (0 à 10)',
 ] as const;
 
 /**
@@ -72,6 +74,9 @@ function valeursExport(t: TicketExporte, fuseau: string): Cellule[] {
     date(t.clotureLe),
     t.modeCloture ? MODES_CLOTURE[t.modeCloture] : null,
     t.motifClotureForcee ? MOTIFS_CLOTURE[t.motifClotureForcee] : null,
+    // Étape 15 : notes de l'enquête, jamais le commentaire (texte libre du client)
+    t.enquete?.note ?? null,
+    t.enquete?.recommandation ?? null,
   ];
 }
 
@@ -99,10 +104,12 @@ export class ServiceReporting {
     const moi = personnelBanque(appel);
     const maintenant = this.horloge();
     return this.bd.enBanque(moi.tenantId, async (tx) => {
-      const { fuseauHoraire } = await tx.banque.findUniqueOrThrow({ where: { id: moi.tenantId }, select: { fuseauHoraire: true } });
+      const { fuseauHoraire, enqueteSatisfaction } = await tx.banque.findUniqueOrThrow({
+        where: { id: moi.tenantId }, select: { fuseauHoraire: true, enqueteSatisfaction: true },
+      });
       const p = periodeDe(q, fuseauHoraire, maintenant);
       const filtres = { ...filtresDe(q, p), ...(moi.role === 'AGENT' ? { agentId: moi.id } : {}) };
-      return indicateursBanque(tx, filtres, fuseauHoraire, regroupementDe(p, q.regroupement), maintenant);
+      return indicateursBanque(tx, filtres, fuseauHoraire, regroupementDe(p, q.regroupement), maintenant, enqueteSatisfaction);
     });
   }
 

@@ -1,7 +1,8 @@
 /**
  * Banque et apparence (lireParametresBanque, modifierApparence, televerserLogo).
  * L'Admin Entreprise règle l'apparence du portail ; le contrat commercial (plan, préfixe,
- * fuseau, seuil d'alerte, délai de clôture, SMS) est réglé par le Super Admin (décision C12).
+ * fuseau, seuil d'alerte, délai de clôture, SMS, enquête de satisfaction) est réglé par le Super Admin
+ * (décision C12, étape 15).
  */
 import { useRef, useState } from 'react';
 import { CircleCheck, TriangleAlert, Upload } from 'lucide-react';
@@ -9,6 +10,7 @@ import type { S } from '../../api/types';
 import { Bouton, Champ, LogoBanque, Panneau, Saisie, cx } from '../../ui/composants';
 import { nombre } from '../../ui/format';
 import { contraste, couleurValide, styleMarque, texteSur } from '../../ui/marque';
+import { MODE_ATTRIBUTION } from '../../ui/libelles';
 
 function Jauge({ libelle, valeur, plafond }: { libelle: string; valeur: number; plafond: number | null }) {
   const part = plafond ? valeur / plafond : 0;
@@ -198,6 +200,9 @@ export function Banque({
               <Reglage libelle="Seuil d'alerte SLA" valeur={`${p.seuilAlerteSlaPourcent} %`} />
               <Reglage libelle="Clôture automatique" valeur={`après ${p.delaiClotureAutoJours} jours`} />
               <Reglage libelle="SMS à chaque étape" valeur={p.smsChaqueChangementStatut ? 'Oui' : 'Non'} />
+              <Reglage libelle="Enquête de satisfaction" valeur={p.enqueteSatisfaction ? 'Oui, à la clôture' : 'Non'} />
+              <Reglage libelle="Attribution et escalade automatiques" valeur={p.attributionAutomatique ? `Oui, mode ${MODE_ATTRIBUTION[p.modeAttribution].libelle.toLowerCase()}` : 'Non'} />
+              <Reglage libelle="Chat web" valeur={p.chatWeb ? 'Oui, sur le portail' : 'Non'} />
             </dl>
             <p className="mt-3 text-sm leading-relaxed text-encre-3">Ces réglages relèvent de votre contrat. Pour les changer, contactez Makor Telecoms.</p>
           </Panneau>

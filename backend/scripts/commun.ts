@@ -19,7 +19,7 @@ export function urlBaseJetable(variable: 'DATABASE_URL' | 'APP_DATABASE_URL'): s
 }
 
 /**
- * Durée maximale d'une transaction des vérifications. Vider la base (TRUNCATE de 19 tables)
+ * Durée maximale d'une transaction des vérifications. Vider la base (TRUNCATE de 20 tables)
  * peut prendre plus de 15 s sur un poste lent : le défaut de Prisma (5 s) faisait échouer
  * la vérification sans raison liée au code vérifié.
  */
@@ -35,10 +35,10 @@ export function clientProprietaire() {
 export type ClientProprietaire = ReturnType<typeof clientProprietaire>;
 
 const TABLES = [
-  'journal_audit', 'notification', 'reclamation_evenement', 'piece_jointe', 'commentaire',
+  'journal_audit', 'notification', 'enquete_satisfaction', 'conversation', 'reclamation_evenement', 'piece_jointe', 'commentaire',
   'reclamation', 'compteur_numero', 'code_otp', 'client_final', 'jeton_utilisateur',
-  'session_utilisateur', 'utilisateur', 'jour_ferie', 'horaire_ouvre', 'categorie',
-  'point_depot', 'agence', 'banque', 'plan',
+  'session_utilisateur', 'absence_agent', 'groupe_agents_membre', 'utilisateur', 'jour_ferie', 'horaire_ouvre', 'categorie',
+  'point_depot', 'agence', 'groupe_agents', 'banque', 'plan',
 ];
 
 /**
