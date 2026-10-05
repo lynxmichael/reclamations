@@ -160,6 +160,31 @@ enum CanalConversation {
   @@map("canal_conversation")
 }
 
+/// Usage d'un appel à l'IA (étape 18) : il n'en existe que deux (décision I4).
+enum FinaliteIa {
+  /// Tri des messages du client sur l'assistant du portail
+  ACCUEIL_PORTAIL
+  /// Brouillon de réponse demandé par un agent
+  SUGGESTION_AGENT
+
+  @@map("finalite_ia")
+}
+
+/// Issue d'un appel à l'IA. Hors OK, la réponse vient des règles, sans IA.
+enum IssueAppelIa {
+  OK
+  /// Aucun fournisseur configuré : règles seules, rien n'est envoyé
+  REGLES
+  /// Plafond quotidien de la banque atteint : règles, rien n'est envoyé
+  PLAFOND
+  HORS_DELAI
+  ERREUR
+  /// Réponse hors du format demandé
+  REPONSE_INVALIDE
+
+  @@map("issue_appel_ia")
+}
+
 /// Auteur d'une action : client final, membre du personnel ou tâche automatique.
 enum TypeActeur {
   CLIENT
@@ -211,56 +236,63 @@ model Plan {
 
 /// Le tenant. Son identifiant est la valeur de tenant_id dans toutes les tables de la banque.
 model Banque {
-  id                        String    @id @default(uuid(7)) @db.Uuid
-  nom                       String    @db.VarChar(160)
+  id                                String          @id @default(uuid(7)) @db.Uuid
+  nom                               String          @db.VarChar(160)
   /// Adresse du portail : https://<slug>.<domaine de la plateforme>
-  slug                      String    @unique @db.VarChar(63)
+  slug                              String          @unique @db.VarChar(63)
   /// Préfixe des numéros de ticket, ex. SGCI → SGCI-2026-000042
-  prefixeTickets            String    @unique @map("prefixe_tickets") @db.VarChar(10)
-  planId                    String    @map("plan_id") @db.Uuid
-  fuseauHoraire             String    @default("Africa/Abidjan") @map("fuseau_horaire") @db.VarChar(64)
-  couleurPrimaire           String?   @map("couleur_primaire") @db.VarChar(7)
-  couleurSecondaire         String?   @map("couleur_secondaire") @db.VarChar(7)
+  prefixeTickets                    String          @unique @map("prefixe_tickets") @db.VarChar(10)
+  planId                            String          @map("plan_id") @db.Uuid
+  fuseauHoraire                     String          @default("Africa/Abidjan") @map("fuseau_horaire") @db.VarChar(64)
+  couleurPrimaire                   String?         @map("couleur_primaire") @db.VarChar(7)
+  couleurSecondaire                 String?         @map("couleur_secondaire") @db.VarChar(7)
   /// Clé du logo dans le stockage objet
-  logoCle                   String?   @map("logo_cle") @db.VarChar(255)
-  emailContact              String?   @map("email_contact") @db.VarChar(254)
+  logoCle                           String?         @map("logo_cle") @db.VarChar(255)
+  emailContact                      String?         @map("email_contact") @db.VarChar(254)
   /// Alerte préventive à ce pourcentage du délai cible (arbitrage 4)
-  seuilAlerteSlaPourcent    Int       @default(75) @map("seuil_alerte_sla_pourcent")
+  seuilAlerteSlaPourcent            Int             @default(75) @map("seuil_alerte_sla_pourcent")
   /// Clôture automatique après ce nombre de jours sans réaction (arbitrage 5)
-  delaiClotureAutoJours     Int       @default(5) @map("delai_cloture_auto_jours")
+  delaiClotureAutoJours             Int             @default(5) @map("delai_cloture_auto_jours")
   /// SMS à chaque changement de statut, ou seulement au dépôt et à la résolution (point ouvert n° 5)
-  smsChaqueChangementStatut Boolean   @default(true) @map("sms_chaque_changement_statut")
+  smsChaqueChangementStatut         Boolean         @default(true) @map("sms_chaque_changement_statut")
   /// Enquête de satisfaction à la clôture (étape 15), activée par Makor banque par banque (décision I2)
-  enqueteSatisfaction       Boolean   @default(false) @map("enquete_satisfaction")
+  enqueteSatisfaction               Boolean         @default(false) @map("enquete_satisfaction")
   /// Attribution et escalade automatiques (étape 16), ouvertes par Makor banque par banque (décision I2)
-  attributionAutomatique    Boolean         @default(false) @map("attribution_automatique")
+  attributionAutomatique            Boolean         @default(false) @map("attribution_automatique")
   /// Réglé par l'Admin Entreprise quand la fonction est ouverte
-  modeAttribution           ModeAttribution @default(MANUELLE) @map("mode_attribution")
+  modeAttribution                   ModeAttribution @default(MANUELLE) @map("mode_attribution")
   /// Escalade à l'Admin Entreprise à ce pourcentage du délai cible ; vide : pas de second niveau
-  seuilEscaladeAdminPourcent       Int?     @map("seuil_escalade_admin_pourcent")
+  seuilEscaladeAdminPourcent        Int?            @map("seuil_escalade_admin_pourcent")
   /// Même seuil pour une réclamation urgente
-  seuilEscaladeAdminUrgentPourcent Int?     @map("seuil_escalade_admin_urgent_pourcent")
+  seuilEscaladeAdminUrgentPourcent  Int?            @map("seuil_escalade_admin_urgent_pourcent")
   /// Chat web sur le portail (étape 17), ouvert par Makor banque par banque (décision I2)
-  chatWeb                   Boolean   @default(false) @map("chat_web")
-  suspendueLe               DateTime? @map("suspendue_le") @db.Timestamptz(3)
-  motifSuspension           String?   @map("motif_suspension")
-  creeLe                    DateTime  @default(now()) @map("cree_le") @db.Timestamptz(3)
-  modifieLe                 DateTime  @updatedAt @map("modifie_le") @db.Timestamptz(3)
+  chatWeb                           Boolean         @default(false) @map("chat_web")
+  /// Assistant IA (étape 18) : accueil du portail et brouillons pour les agents ; exige le chat web
+  assistantIa                       Boolean         @default(false) @map("assistant_ia")
+  /// Double authentification du personnel (étape 19) : obligatoire, ou facultative (chacun l'active
+  /// depuis « Mon compte »), réglée par l'Admin Entreprise ; toujours obligatoire pour le Super Admin
+  doubleAuthentificationObligatoire Boolean         @default(false) @map("double_authentification_obligatoire")
+  suspendueLe                       DateTime?       @map("suspendue_le") @db.Timestamptz(3)
+  motifSuspension                   String?         @map("motif_suspension")
+  creeLe                            DateTime        @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe                         DateTime        @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
-  plan          Plan             @relation(fields: [planId], references: [id], onDelete: Restrict)
-  agences       Agence[]
-  pointsDepot   PointDepot[]
-  categories    Categorie[]
-  horaires      HoraireOuvre[]
-  joursFeries   JourFerie[]
-  utilisateurs  Utilisateur[]
-  clients       ClientFinal[]
-  reclamations  Reclamation[]
-  compteurs     CompteurNumero[]
-  notifications Notification[]
-  groupes       GroupeAgents[]
-  absences      AbsenceAgent[]
-  conversations Conversation[]
+  plan              Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  agences           Agence[]
+  pointsDepot       PointDepot[]
+  categories        Categorie[]
+  horaires          HoraireOuvre[]
+  joursFeries       JourFerie[]
+  utilisateurs      Utilisateur[]
+  clients           ClientFinal[]
+  reclamations      Reclamation[]
+  compteurs         CompteurNumero[]
+  notifications     Notification[]
+  groupes           GroupeAgents[]
+  absences          AbsenceAgent[]
+  conversations     Conversation[]
+  reponsesAssistant ReponseAssistant[]
+  appelsIa          AppelIa[]
 
   @@index([planId])
   @@map("banque")
@@ -320,22 +352,22 @@ model PointDepot {
 
 /// Type de réclamation, avec priorité par défaut et délai cible (SLA, arbitrage 4).
 model Categorie {
-  id                String   @id @default(uuid(7)) @db.Uuid
-  tenantId          String   @map("tenant_id") @db.Uuid
-  nom               String   @db.VarChar(120)
-  description       String?
-  prioriteParDefaut Priorite @default(NORMALE) @map("priorite_par_defaut")
+  id                               String   @id @default(uuid(7)) @db.Uuid
+  tenantId                         String   @map("tenant_id") @db.Uuid
+  nom                              String   @db.VarChar(120)
+  description                      String?
+  prioriteParDefaut                Priorite @default(NORMALE) @map("priorite_par_defaut")
   /// Délai cible en minutes ouvrées ; copié sur le ticket à sa création
-  delaiCibleMinutes Int      @map("delai_cible_minutes")
-  ordre             Int      @default(0)
-  active            Boolean  @default(true)
+  delaiCibleMinutes                Int      @map("delai_cible_minutes")
+  ordre                            Int      @default(0)
+  active                           Boolean  @default(true)
   /// Groupe d'agents spécialiste de la catégorie (étape 16)
-  groupeId          String?  @map("groupe_id") @db.Uuid
+  groupeId                         String?  @map("groupe_id") @db.Uuid
   /// Seuils d'escalade à l'Admin Entreprise propres à la catégorie ; vides : ceux de la banque
-  seuilEscaladeAdminPourcent       Int? @map("seuil_escalade_admin_pourcent")
-  seuilEscaladeAdminUrgentPourcent Int? @map("seuil_escalade_admin_urgent_pourcent")
-  creeLe            DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
-  modifieLe         DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
+  seuilEscaladeAdminPourcent       Int?     @map("seuil_escalade_admin_pourcent")
+  seuilEscaladeAdminUrgentPourcent Int?     @map("seuil_escalade_admin_urgent_pourcent")
+  creeLe                           DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe                        DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
   banque       Banque        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   groupe       GroupeAgents? @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Restrict)
@@ -389,30 +421,30 @@ model JourFerie {
 /// Compte du personnel. Chaque compte appartient à une seule banque, sauf le Super Admin
 /// (tenant_id vide si et seulement si SUPER_ADMIN : contrainte CHECK à l'étape 3).
 model Utilisateur {
-  id                  String            @id @default(uuid(7)) @db.Uuid
-  tenantId            String?           @map("tenant_id") @db.Uuid
-  role                RoleUtilisateur
-  statut              StatutUtilisateur @default(INVITE)
+  id                    String            @id @default(uuid(7)) @db.Uuid
+  tenantId              String?           @map("tenant_id") @db.Uuid
+  role                  RoleUtilisateur
+  statut                StatutUtilisateur @default(INVITE)
   /// Normalisé en minuscules, unique sur la plateforme : la connexion ne dépend pas de la banque
-  email               String            @unique @db.VarChar(254)
-  nom                 String            @db.VarChar(120)
-  prenom              String            @db.VarChar(120)
-  telephone           String?           @db.VarChar(20)
+  email                 String            @unique @db.VarChar(254)
+  nom                   String            @db.VarChar(120)
+  prenom                String            @db.VarChar(120)
+  telephone             String?           @db.VarChar(20)
   /// argon2id ; vide tant que l'invitation n'est pas acceptée
-  motDePasseHash      String?           @map("mot_de_passe_hash") @db.VarChar(255)
+  motDePasseHash        String?           @map("mot_de_passe_hash") @db.VarChar(255)
   /// Secret TOTP chiffré en AES-256-GCM (clé hors base) ; la 2FA est obligatoire pour tout le personnel
-  totpSecretChiffre   String?           @map("totp_secret_chiffre") @db.VarChar(255)
-  totpActiveLe        DateTime?         @map("totp_active_le") @db.Timestamptz(3)
+  totpSecretChiffre     String?           @map("totp_secret_chiffre") @db.VarChar(255)
+  totpActiveLe          DateTime?         @map("totp_active_le") @db.Timestamptz(3)
   /// Équipe : un agent est rattaché à un superviseur de la même banque
-  superviseurId       String?           @map("superviseur_id") @db.Uuid
-  echecsConnexion     Int               @default(0) @map("echecs_connexion")
-  verrouilleJusquA    DateTime?         @map("verrouille_jusqu_a") @db.Timestamptz(3)
-  derniereConnexionLe DateTime?         @map("derniere_connexion_le") @db.Timestamptz(3)
-  desactiveLe         DateTime?         @map("desactive_le") @db.Timestamptz(3)
+  superviseurId         String?           @map("superviseur_id") @db.Uuid
+  echecsConnexion       Int               @default(0) @map("echecs_connexion")
+  verrouilleJusquA      DateTime?         @map("verrouille_jusqu_a") @db.Timestamptz(3)
+  derniereConnexionLe   DateTime?         @map("derniere_connexion_le") @db.Timestamptz(3)
+  desactiveLe           DateTime?         @map("desactive_le") @db.Timestamptz(3)
   /// Dernière réclamation reçue : départage les agents également chargés (étape 16)
-  derniereAttributionLe DateTime?       @map("derniere_attribution_le") @db.Timestamptz(3)
-  creeLe              DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
-  modifieLe           DateTime          @updatedAt @map("modifie_le") @db.Timestamptz(3)
+  derniereAttributionLe DateTime?         @map("derniere_attribution_le") @db.Timestamptz(3)
+  creeLe                DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe             DateTime          @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
   banque      Banque?       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   superviseur Utilisateur?  @relation("Equipe", fields: [tenantId, superviseurId], references: [tenantId, id], onDelete: Restrict)
@@ -619,8 +651,8 @@ model Reclamation {
   slaRespecte               Boolean?  @map("sla_respecte")
 
   // Escalade (manuelle par l'agent, ou au dépassement du SLA)
-  escaladeeLe     DateTime? @map("escaladee_le") @db.Timestamptz(3)
-  escaladeeVersId String?   @map("escaladee_vers_id") @db.Uuid
+  escaladeeLe      DateTime? @map("escaladee_le") @db.Timestamptz(3)
+  escaladeeVersId  String?   @map("escaladee_vers_id") @db.Uuid
   /// Second niveau : Admin Entreprise prévenu (étape 16), une seule fois
   escaladeeAdminLe DateTime? @map("escaladee_admin_le") @db.Timestamptz(3)
 
@@ -746,6 +778,50 @@ model Conversation {
   // Avis différés au client (worker)
   @@index([dernierMessageBanqueLe])
   @@map("conversation")
+}
+
+/// Base de réponses de l'assistant (étape 18, décision I4) : écrite et validée par l'Admin
+/// Entreprise. Sur le portail, le client ne lit que ces réponses et les textes fixes de l'assistant.
+model ReponseAssistant {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  question  String   @db.VarChar(300)
+  reponse   String   @db.VarChar(2000)
+  active    Boolean  @default(true)
+  ordre     Int      @default(0)
+  creeLe    DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
+
+  banque Banque @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, ordre])
+  @@map("reponse_assistant")
+}
+
+/// Journal des appels à l'IA (étape 18, décision I5) : aucun contenu, ni message ni réponse —
+/// banque, finalité, fournisseur, volume, durée, issue et coût. Sert au plafond quotidien de la
+/// banque et à la facturation de l'usage (décision I2).
+model AppelIa {
+  id           String       @id @default(uuid(7)) @db.Uuid
+  tenantId     String       @map("tenant_id") @db.Uuid
+  finalite     FinaliteIa
+  /// regles, anthropic, openai ou mistral
+  fournisseur  String       @db.VarChar(20)
+  modele       String?      @db.VarChar(80)
+  jetonsEntree Int          @default(0) @map("jetons_entree")
+  jetonsSortie Int          @default(0) @map("jetons_sortie")
+  /// Coût au tarif configuré au moment de l'appel, en millionièmes de dollar
+  coutMicroUsd Int          @default(0) @map("cout_micro_usd")
+  dureeMs      Int          @map("duree_ms")
+  issue        IssueAppelIa
+  creeLe       DateTime     @default(now()) @map("cree_le") @db.Timestamptz(3)
+
+  banque Banque @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, creeLe])
+  @@index([creeLe])
+  @@map("appel_ia")
 }
 
 /// Fichier joint (image ou PDF, 5 au plus au dépôt), avec empreinte SHA-256.

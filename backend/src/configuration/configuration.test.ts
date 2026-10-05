@@ -46,4 +46,23 @@ describe('configuration', () => {
     };
     expect(() => lireConfiguration(prod)).toThrow(/SMS_URL doit être en https en production/);
   });
+
+  it('IA : règles seules par défaut ; un fournisseur exige modèle et clé (étape 18)', () => {
+    expect(lireConfiguration(DEV).ia).toEqual({ fournisseur: 'regles', plafondJour: 2000 });
+    const anthropic = { ...DEV, IA_FOURNISSEUR: 'anthropic', IA_MODELE: 'modele-x', IA_CLE: 'c'.repeat(40), IA_PRIX_ENTREE: '1', IA_PRIX_SORTIE: '5' };
+    expect(lireConfiguration(anthropic).ia).toEqual({
+      fournisseur: 'anthropic', modele: 'modele-x', cle: 'c'.repeat(40), url: 'https://api.anthropic.com/v1/messages',
+      delaiMs: 8000, prixEntree: 1, prixSortie: 5, plafondJour: 2000,
+    });
+    expect(lireConfiguration({ ...anthropic, IA_FOURNISSEUR: 'Mistral', IA_PLAFOND_JOUR: '50' }).ia).toMatchObject({ fournisseur: 'mistral', url: 'https://api.mistral.ai/v1/chat/completions', plafondJour: 50 });
+    expect(() => lireConfiguration({ ...DEV, IA_FOURNISSEUR: 'openai' })).toThrow(/IA_MODELE est obligatoire[\s\S]*IA_CLE est obligatoire/);
+    expect(() => lireConfiguration({ ...DEV, IA_FOURNISSEUR: 'local' })).toThrow(/IA_FOURNISSEUR doit valoir regles, anthropic, openai, mistral/);
+    expect(() => lireConfiguration({ ...anthropic, IA_DELAI_MS: '100' })).toThrow(/IA_DELAI_MS doit être un entier entre 1000 et 30000/);
+    expect(() => lireConfiguration({ ...anthropic, IA_PRIX_SORTIE: '-1' })).toThrow(/IA_PRIX_SORTIE/);
+    const prod = {
+      ...anthropic, NODE_ENV: 'production', JWT_SECRET: 'z'.repeat(48), CLE_OTP: 'w'.repeat(48), CLE_CHIFFREMENT_TOTP: 'ab'.repeat(32),
+      IA_URL: 'http://passerelle.example/v1/messages',
+    };
+    expect(() => lireConfiguration(prod)).toThrow(/IA_URL doit être en https en production/);
+  });
 });

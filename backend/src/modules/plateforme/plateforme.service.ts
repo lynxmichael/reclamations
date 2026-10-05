@@ -26,7 +26,8 @@ const HORAIRES_PAR_DEFAUT = [1, 2, 3, 4, 5].map((jourSemaine) => ({ jourSemaine,
 
 const SELECTION_BANQUE = {
   id: true, nom: true, slug: true, prefixeTickets: true, fuseauHoraire: true, seuilAlerteSlaPourcent: true, delaiClotureAutoJours: true,
-  smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, suspendueLe: true, motifSuspension: true, creeLe: true,
+  smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, doubleAuthentificationObligatoire: true,
+  suspendueLe: true, motifSuspension: true, creeLe: true,
   plan: { select: { id: true, nom: true } },
 } as const satisfies Prisma.BanqueSelect;
 
@@ -60,6 +61,8 @@ export class ServicePlateforme {
       smsChaqueChangementStatut: b.smsChaqueChangementStatut, enqueteSatisfaction: b.enqueteSatisfaction,
       attributionAutomatique: b.attributionAutomatique,
       chatWeb: b.chatWeb,
+      assistantIa: b.assistantIa,
+      doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,
       suspendueLe: b.suspendueLe?.toISOString() ?? null,
       motifSuspension: b.motifSuspension, creeLe: b.creeLe.toISOString(), consommation: { agents, ticketsCeMois },
     };
@@ -111,7 +114,8 @@ export class ServicePlateforme {
         data: { tenantId: b.id, role: 'ADMIN_ENTREPRISE', statut: 'INVITE', email, nom: c.administrateur.nom.trim(), prenom: c.administrateur.prenom.trim(), telephone },
         select: { id: true, tenantId: true, email: true, prenom: true },
       });
-      await envoyerInvitation(tx, this.config, admin, b.nom, await nouveauJeton(tx, admin.id, 'INVITATION', maintenant));
+      // Étape 19 : une nouvelle banque laisse la double authentification facultative ; son Admin Entreprise décide
+      await envoyerInvitation(tx, this.config, admin, b.nom, await nouveauJeton(tx, admin.id, 'INVITATION', maintenant), false);
       await this.audit(tx, appel, 'plateforme.banque_creee', 'banque', b.id, { slug: c.slug, prefixe: c.prefixeTickets, planId: plan.id, administrateurId: admin.id });
       return this.banque(tx, b.id);
     });
@@ -119,17 +123,24 @@ export class ServicePlateforme {
 
   modifierBanque(appel: Appel, id: string, m: {
     nom?: string; planId?: string; fuseauHoraire?: string; seuilAlerteSlaPourcent?: number; delaiClotureAutoJours?: number;
-    smsChaqueChangementStatut?: boolean; enqueteSatisfaction?: boolean; attributionAutomatique?: boolean; chatWeb?: boolean;
+    smsChaqueChangementStatut?: boolean; enqueteSatisfaction?: boolean; attributionAutomatique?: boolean; chatWeb?: boolean; assistantIa?: boolean;
   }) {
     if (m.fuseauHoraire && !fuseauValide(m.fuseauHoraire)) throw invalideChamp('fuseauHoraire', 'Fuseau horaire inconnu (ex. Africa/Abidjan)');
     return this.bd.enPlateforme(async (tx) => {
       const avant = await tx.banque.findUnique({ where: { id }, select: SELECTION_BANQUE });
       if (!avant) throw introuvable('Banque introuvable');
       if (m.planId && !(await tx.plan.findFirst({ where: { id: m.planId, actif: true }, select: { id: true } }))) throw invalideChamp('planId', 'Plan inconnu ou retiré');
+      // L'assistant (étape 18) passe la main dans le chat : pas d'assistant sans chat, et fermer le chat le ferme
+      if (m.assistantIa && !(m.chatWeb ?? avant.chatWeb)) {
+        throw new Probleme(422, 'CHAT_WEB_REQUIS', 'L\'assistant IA passe la main à un conseiller dans le chat : ouvrez d\'abord le chat web');
+      }
       // Fermer l'attribution automatique (étape 16) remet la banque en attribution manuelle ; ses groupes restent
       await tx.banque.update({
         where: { id },
-        data: { ...m, ...(m.nom ? { nom: m.nom.trim() } : {}), ...(m.attributionAutomatique === false ? { modeAttribution: 'MANUELLE' } : {}) },
+        data: {
+          ...m, ...(m.nom ? { nom: m.nom.trim() } : {}), ...(m.attributionAutomatique === false ? { modeAttribution: 'MANUELLE' } : {}),
+          ...(m.chatWeb === false ? { assistantIa: false } : {}),
+        },
       });
       await this.audit(tx, appel, 'plateforme.banque_modifiee', 'banque', id, {
         champs: Object.keys(m), ...(m.planId && m.planId !== avant.plan.id ? { planAvant: avant.plan.id, planApres: m.planId } : {}),
@@ -228,7 +239,7 @@ export class ServicePlateforme {
         data: { tenantId: null, role: 'SUPER_ADMIN', statut: 'INVITE', email, nom: p.nom.trim(), prenom: p.prenom.trim(), telephone },
         select: { id: true, tenantId: true, email: true, prenom: true },
       });
-      await envoyerInvitation(tx, this.config, u, null, await nouveauJeton(tx, u.id, 'INVITATION', maintenant));
+      await envoyerInvitation(tx, this.config, u, null, await nouveauJeton(tx, u.id, 'INVITATION', maintenant), true);
       await this.audit(tx, appel, 'plateforme.super_admin_invite', 'utilisateur', u.id);
       return vueUtilisateur(await tx.utilisateur.findUniqueOrThrow({ where: { id: u.id }, select: SELECTION_UTILISATEUR }));
     });

@@ -13,10 +13,13 @@ export function Accuse({
   envoiPar,
   surSuivre,
   surAutre,
+  conseiller,
 }: {
   banque: S<'BanquePublique'>;
   accuse: S<'AccuseDepot'>;
   envoiPar: string;
+  /** Étape 18 : le client a demandé un conseiller à l'assistant ; la discussion se poursuit dans le chat de la réclamation */
+  conseiller?: boolean;
   surSuivre?: () => void;
   surAutre?: () => void;
 }) {
@@ -49,6 +52,12 @@ export function Accuse({
             Vous allez recevoir ce numéro et un lien de suivi {envoiPar}. Gardez-les : ils vous permettent de suivre votre réclamation et de lire les réponses.
           </span>
         </p>
+
+        {conseiller && (
+          <p className="mt-4 rounded-xl bg-marque-doux px-4 py-3 text-left text-[15px] leading-relaxed text-encre" data-testid="suite-conseiller">
+            Votre demande est arrivée chez un conseiller. Pour discuter avec lui, touchez « Suivre ma réclamation » : un code vous sera envoyé pour ouvrir la discussion.
+          </p>
+        )}
 
         <div className="mt-8 flex w-full flex-col gap-3">
           <Bouton variante="principal" taille="grand" className="w-full" onClick={surSuivre} data-visite="suivre">

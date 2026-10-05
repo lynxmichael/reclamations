@@ -27,6 +27,10 @@ import {
 import type { S } from '../api/types';
 import { AGENCES, CATEGORIES, GROUPES, HORAIRES, JOURS_FERIES, PARAMETRES, PERSONNEL, POINTS_DEPOT, REGLES } from '../maquettes/donnees/parametrage';
 import { DOMAINE } from '../maquettes/donnees/commun';
+import { alertesDe, contexteAssistant, REPONSES_BANQUE, tourAssistant } from '../maquettes/donnees/assistant';
+import { brouillonParRegles } from '@domaine/ia/consignes';
+import { categorieParRegles, faqParRegles, texteReprise, urgenceParRegles } from '@domaine/ia/assistant';
+import type { EchangeVu } from '../ecrans/portail/Assistant';
 
 /* ------------------------------------------------------------------ Types internes */
 
@@ -93,6 +97,8 @@ export interface Ticket {
   enquete: Enquete | null;
   /** Conversation du chat web (étape 17), ouverte quand le client affiche le chat */
   conversation: Conversation | null;
+  /** Préparée avec l'assistant du portail (étape 18) */
+  viaAssistant?: boolean;
 }
 
 interface Conversation extends EtatConversation {
@@ -167,6 +173,8 @@ export interface EntreeDepot {
   email?: string;
   consentement: boolean;
   fichiers?: { nom: string; taille: number; type: string }[];
+  /** Préparée avec l'assistant du portail (étape 18) */
+  viaAssistant?: boolean;
 }
 
 /* ------------------------------------------------------------------ Erreurs (RFC 9457) */
@@ -258,6 +266,8 @@ export class Moteur {
   enquetesActives = true;
   /** Chat web ouvert pour la banque de démonstration (étape 17, décision I2) */
   chatActif = true;
+  /** Assistant du portail ouvert (étape 18) ; dans la démo, ses décisions viennent des règles, sans IA */
+  assistantActif = true;
   /** Rejeu de l'historique : appelé à l'ouverture de chaque enquête, pour simuler des réponses */
   apresOuvertureEnquete: ((t: Ticket) => void) | null = null;
   /** Attribution (étape 16) : mode suggestion par défaut, comme le jeu de démonstration */
@@ -645,6 +655,44 @@ export class Moteur {
   private client(id: string) {
     return this.clients.find((c) => c.id === id)!;
   }
+  // ---- Assistant IA (étape 18) : dans la démo, les règles seules, comme sans fournisseur d'IA ----
+
+  /** Un tour de l'assistant du portail (converserAvecAssistant). */
+  converserAvecAssistant(codePoint: string, fil: readonly EchangeVu[]): S<'ReponseAssistant'> {
+    this.formulaire(codePoint);
+    const prochain = prochainInstantOuvre(this.maintenant, this.calendrier);
+    const ouverte = prochain.getTime() === this.maintenant.getTime();
+    return tourAssistant(contexteAssistant(this.banque.nom, ouverte, ouverte ? null : texteReprise(prochain, this.maintenant, HORAIRES.fuseauHoraire)), fil);
+  }
+
+  /** Brouillon de réponse pour l'agent (suggererReponse), par les règles. */
+  suggererReponse(userId: string, id: string): S<'SuggestionReponse'> {
+    const t = this.visibles(userId).find((x) => x.id === id);
+    if (!t) throw erreur(404, 'INTROUVABLE', 'Réclamation introuvable');
+    if (t.statut === 'CLOTUREE') throw erreur(409, 'RECLAMATION_CLOTUREE', 'Cette réclamation est clôturée : plus de réponse à rédiger');
+    const ctx = contexteAssistant(this.banque.nom);
+    const textes = [t.description, ...t.messages.filter((m) => m.type === 'MESSAGE_DU_CLIENT').map((m) => m.contenu)].join('\n');
+    const proche = faqParRegles(textes, ctx.faq);
+    const { brouillon } = brouillonParRegles(
+      { banque: this.banque.nom, categorie: this.categorie(t.categorieId).nom, statut: t.statut, description: t.description, messages: [], faq: ctx.faq, categories: ctx.categories },
+      proche ? ctx.faq.find((f) => f.id === proche.id) ?? null : null,
+    );
+    const categorieId = categorieParRegles(textes, ctx.categories);
+    const categorie = categorieId && categorieId !== t.categorieId ? ctx.categories.find((c) => c.id === categorieId) : undefined;
+    return {
+      brouillon,
+      alertes: alertesDe(brouillon),
+      categorie: categorie ? { id: categorie.id, nom: categorie.nom } : null,
+      urgente: urgenceParRegles(textes) && t.priorite !== 'URGENTE',
+      source: 'REGLES',
+    };
+  }
+
+  /** Base de réponses de la banque (listerReponsesAssistant). */
+  reponsesAssistant(): S<'ReponseBanque'>[] {
+    return REPONSES_BANQUE;
+  }
+
   categorie(id: string) {
     const c = CATEGORIES.find((x) => x.id === id);
     if (!c) throw erreur(422, 'CATEGORIE_INVALIDE', 'Catégorie inconnue');
@@ -666,6 +714,7 @@ export class Moteur {
     const p = POINTS_DEPOT.find((x) => x.code === codePoint && x.actif);
     if (!p) throw erreur(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code n\'est plus actif');
     return {
+      assistant: this.assistantActif && this.chatActif,
       banque: this.banquePublique(),
       canal: p.canal,
       agence: p.agence,
@@ -739,6 +788,7 @@ export class Moteur {
       evenements: [],
       enquete: null,
       conversation: null,
+      viaAssistant: !!e.viaAssistant && this.assistantActif,
     };
     this.tickets.push(t);
     this.evenement(t, 'CREATION', null, 'OUVERTE', { type: 'CLIENT', id: client.id }, true);
@@ -1191,6 +1241,7 @@ export class Moteur {
         ? { etat: this.etatEnquete(t.enquete), ouverteLe: t.enquete.ouverteLe.toISOString(), expireLe: t.enquete.expireLe.toISOString(), reponse: this.reponseEnquete(t.enquete) }
         : null,
       attributionSuggeree: ((c) => (c ? { agent: { id: c.agent.id, nom: c.agent.nom }, groupe: { id: c.groupe.id, nom: c.groupe.nom } } : null))(this.suggestion(t, userId)),
+      depotAssistant: !!t.viaAssistant,
       conversation: this.chatActif && t.conversation
         ? {
           id: t.conversation.id, canal: 'WEB', aRepondre: reponseDue(t.conversation, t.statut), nonLue: nonLueParLaBanque(t.conversation),
@@ -1398,6 +1449,73 @@ export class Moteur {
       evolution: this.evolution(du, au, agentId),
       satisfaction: this.satisfaction(siens, du, au),
     };
+  }
+
+  /**
+   * Activité des agences (étape 19), comme l'API : une ligne par agence (une agence inactive sans
+   * activité n'en fait pas), une ligne sans agence en dernier ; mêmes définitions que le tableau de bord.
+   */
+  indicateursAgences(jours = 30): S<'IndicateursAgences'> {
+    const au = this.maintenant;
+    const du = new Date(au.getTime() - jours * 86_400_000);
+    const taux = (n: number, d: number) => (d ? Math.round((n / d) * 10_000) / 10_000 : null);
+    const moyenne = (l: number[]) => (l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null);
+    const parTotal = (a: S<'Volume'>, b: S<'Volume'>) => b.total - a.total || a.libelle.localeCompare(b.libelle, 'fr');
+    const groupes = this.groupes();
+    const ligne = (agenceId: string | null): S<'ActiviteAgence'> | null => {
+      const a = agenceId ? AGENCES.find((x) => x.id === agenceId)! : null;
+      const siens = this.tickets.filter((t) => t.agenceId === agenceId);
+      const periode = siens.filter((t) => t.creeLe >= du && t.creeLe <= au);
+      const actifs = siens.filter((t) => t.statut !== 'RESOLUE' && t.statut !== 'CLOTUREE');
+      if (!periode.length && !actifs.length && (!a || !a.active)) return null;
+      const etats = actifs.map((t) => this.chrono(t));
+      const repondues = periode.filter((t) => t.premiereReponseLe);
+      const resolues = periode.filter((t) => t.resolueLe && t.slaRespecte !== null);
+      const compter = (cle: (t: Ticket) => string | null) => {
+        const m = new Map<string, number>();
+        for (const t of periode) {
+          const k = cle(t);
+          if (k) m.set(k, (m.get(k) ?? 0) + 1);
+        }
+        return m;
+      };
+      const volumes = (m: Map<string, number>, libelle: (k: string) => string, n: number) =>
+        [...m].map(([cle, total]) => ({ cle, libelle: libelle(cle), total })).sort(parTotal).slice(0, n);
+      const enquetes = siens.filter((t) => t.enquete && t.enquete.ouverteLe >= du && t.enquete.ouverteLe <= au);
+      const b = bilanAvis(enquetes.filter((t) => t.enquete!.reponse).map((t) => t.enquete!.reponse!));
+      const points = compter((t) => t.pointId);
+      const groupe = a ? groupes.find((g) => g.agences.some((x) => x.id === a.id)) : undefined;
+      return {
+        agence: a ? { id: a.id, code: a.code, nom: a.nom, ville: a.ville, active: a.active } : null,
+        groupe: groupe ? { id: groupe.id, nom: groupe.nom } : null,
+        total: periode.length,
+        urgentes: periode.filter((t) => t.priorite === 'URGENTE').length,
+        resolues: resolues.length,
+        delaiPremiereReponseMoyenMinutes: moyenne(repondues.map((t) => delaiPremiereReponse(t.premiereReponseLe!, t.creeLe, this.sla))),
+        delaiResolutionMoyenMinutes: moyenne(resolues.map((t) => Math.floor(minutesOuvreesEntre(t.creeLe, t.resolueLe!, this.calendrier)))),
+        tauxRespectSla: taux(resolues.filter((t) => t.slaRespecte).length, resolues.length),
+        tauxResolutionPremierContact: taux(resolues.filter((t) => !t.aEteQuestionne && !t.escaladeeVersId && t.nbReouvertures === 0).length, resolues.length),
+        charge: {
+          aTraiter: actifs.filter((t) => t.statut === 'OUVERTE' || t.statut === 'EN_COURS').length,
+          enAttenteClient: actifs.filter((t) => t.statut === 'EN_ATTENTE_CLIENT').length,
+          enAlerte: etats.filter((c) => c.etat === 'ALERTE').length,
+          enRetard: etats.filter((c) => c.etat === 'DEPASSE').length,
+        },
+        satisfaction: !this.enquetesActives && !enquetes.length
+          ? null
+          : { enquetes: enquetes.length, reponses: b.reponses, tauxSatisfaits: taux(b.satisfaits, b.reponses), nps: nps(b.promoteurs, b.detracteurs, b.reponses) },
+        parCategorie: volumes(compter((t) => t.categorieId), (k) => this.categorie(k).nom, 3),
+        agents: volumes(compter((t) => t.agentId), (k) => this.nomDe(k) ?? 'Agent', 5),
+        pointsDepot: POINTS_DEPOT
+          .filter((p) => (p.agence?.id ?? null) === agenceId || points.has(p.id))
+          .map((p) => ({ id: p.id, libelle: p.libelle, canal: p.canal, actif: p.actif, total: points.get(p.id) ?? 0 }))
+          .sort((x, y) => y.total - x.total || x.libelle.localeCompare(y.libelle, 'fr')),
+      };
+    };
+    const lignes = AGENCES.map((a) => ligne(a.id)).filter((l): l is S<'ActiviteAgence'> => l !== null)
+      .sort((x, y) => y.total - x.total || x.agence!.nom.localeCompare(y.agence!.nom, 'fr'));
+    const sans = ligne(null);
+    return { du: du.toISOString(), au: au.toISOString(), agences: sans ? [...lignes, sans] : lignes };
   }
 
   /** Comme l'API : enquêtes ouvertes sur la période ; satisfaits = notes 4 et 5 ; NPS de -100 à 100. */

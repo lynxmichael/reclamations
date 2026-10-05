@@ -265,6 +265,88 @@ export async function indicateursBanque(
 }
 
 /**
+ * Activité des agences (étape 19) : les définitions du tableau de bord, une ligne par agence, et une
+ * ligne pour les dépôts par lien web sans agence indiquée (en dernier). Les points de dépôt d'une
+ * agence sont ses QR codes et liens, et les liens par lesquels des clients l'ont choisie : leurs
+ * volumes font le total de la ligne. Contexte banque : la RLS limite à la banque.
+ */
+export async function indicateursAgences(
+  tx: ClientTransaction, f: FiltresIndicateurs, maintenant: Date, enqueteActive = false,
+): Promise<S<'IndicateursAgences'>> {
+  const quand = conditionsSql(f);
+  const [agences, totaux, delais, charges, avis, categories, nomsCategories, agents, points, volumesPoints] = await enSerie([
+    () => tx.agence.findMany({ select: { id: true, code: true, nom: true, ville: true, active: true, groupe: { select: { id: true, nom: true } } } }),
+    () => tx.$queryRaw<(Totaux & { agence: string | null })[]>`SELECT agence_id::text AS agence, ${TOTAUX} FROM reclamation WHERE ${quand} GROUP BY 1`,
+    () => tx.$queryRaw<{ agence: string | null; premiere: number | null; resolution: number | null }[]>`
+      SELECT agence_id::text AS agence, avg(delai_premiere_reponse_minutes)::float8 AS premiere,
+             avg(delai_resolution_minutes) FILTER (WHERE sla_respecte IS NOT NULL)::float8 AS resolution
+      FROM reclamation WHERE ${quand} GROUP BY 1`,
+    () => tx.$queryRaw<{ agence: string | null; a_traiter: number; en_attente_client: number; en_alerte: number; en_retard: number }[]>`
+      SELECT agence_id::text AS agence, ${CHARGE(maintenant)} FROM reclamation
+      WHERE ${conditionsSql(f, null)} AND statut IN ('OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT') GROUP BY 1`,
+    () => tx.$queryRaw<(TotauxAvis & { agence: string | null })[]>`
+      SELECT r.agence_id::text AS agence, ${AVIS}
+      FROM enquete_satisfaction e JOIN reclamation r ON r.id = e.reclamation_id
+      WHERE e.cree_le >= ${f.du} AND e.cree_le < ${f.au}
+        AND e.reclamation_id IN (SELECT id FROM reclamation WHERE ${conditionsSql(f, null)})
+      GROUP BY 1`,
+    () => tx.$queryRaw<{ agence: string | null; cle: string; n: number }[]>`
+      SELECT agence_id::text AS agence, categorie_id::text AS cle, count(*)::int AS n FROM reclamation WHERE ${quand} GROUP BY 1, 2`,
+    () => tx.categorie.findMany({ select: { id: true, nom: true } }),
+    () => tx.$queryRaw<{ agence: string | null; cle: string; prenom: string; nom: string; n: number }[]>`
+      SELECT r.agence_id::text AS agence, r.agent_id::text AS cle, u.prenom, u.nom, count(*)::int AS n
+      FROM (SELECT agence_id, agent_id FROM reclamation WHERE ${quand} AND agent_id IS NOT NULL) r
+      JOIN utilisateur u ON u.id = r.agent_id
+      GROUP BY 1, 2, 3, 4`,
+    () => tx.pointDepot.findMany({ select: { id: true, libelle: true, canal: true, actif: true, agenceId: true } }),
+    () => tx.$queryRaw<{ agence: string | null; point: string; n: number }[]>`
+      SELECT agence_id::text AS agence, point_depot_id::text AS point, count(*)::int AS n FROM reclamation WHERE ${quand} GROUP BY 1, 2`,
+  ]);
+
+  const nomCategorie = new Map(nomsCategories.map((c) => [c.id, c.nom]));
+  const parTotal = (a: S<'Volume'>, b: S<'Volume'>) => b.total - a.total || a.libelle.localeCompare(b.libelle, 'fr');
+  const ligne = (cle: string | null): S<'ActiviteAgence'> | null => {
+    const a = cle ? agences.find((x) => x.id === cle)! : null;
+    const t = totaux.find((l) => l.agence === cle);
+    const d = delais.find((l) => l.agence === cle);
+    const c = charges.find((l) => l.agence === cle);
+    const v = avis.find((l) => l.agence === cle);
+    const actif = (t?.total ?? 0) > 0 || (c ? c.a_traiter + c.en_attente_client > 0 : false);
+    // Sans activité : une agence inactive, ou des dépôts sans agence, ne font pas de ligne
+    if (!actif && (!a || !a.active)) return null;
+    const volumes = new Map(volumesPoints.filter((l) => l.agence === cle).map((l) => [l.point, l.n]));
+    return {
+      agence: a ? { id: a.id, code: a.code, nom: a.nom, ville: a.ville, active: a.active } : null,
+      groupe: a?.groupe ? { id: a.groupe.id, nom: a.groupe.nom } : null,
+      total: t?.total ?? 0,
+      urgentes: t?.urgentes ?? 0,
+      resolues: t?.resolues ?? 0,
+      delaiPremiereReponseMoyenMinutes: moyenne(d?.premiere ?? null),
+      delaiResolutionMoyenMinutes: moyenne(d?.resolution ?? null),
+      tauxRespectSla: t ? taux(t.dans_les_delais, t.resolues) : null,
+      tauxResolutionPremierContact: t ? taux(t.premier_contact, t.resolues) : null,
+      charge: { aTraiter: c?.a_traiter ?? 0, enAttenteClient: c?.en_attente_client ?? 0, enAlerte: c?.en_alerte ?? 0, enRetard: c?.en_retard ?? 0 },
+      satisfaction: !enqueteActive && !v
+        ? null
+        : { enquetes: v?.enquetes ?? 0, reponses: v?.reponses ?? 0, tauxSatisfaits: v ? taux(v.satisfaits, v.reponses) : null, nps: v ? nps(v.promoteurs, v.detracteurs, v.reponses) : null },
+      parCategorie: categories.filter((l) => l.agence === cle)
+        .map((l) => ({ cle: l.cle, libelle: nomCategorie.get(l.cle) ?? 'Catégorie', total: l.n })).sort(parTotal).slice(0, 3),
+      agents: agents.filter((l) => l.agence === cle)
+        .map((l) => ({ cle: l.cle, libelle: `${l.prenom} ${l.nom}`, total: l.n })).sort(parTotal).slice(0, 5),
+      pointsDepot: points
+        .filter((p) => p.agenceId === cle || volumes.has(p.id))
+        .map((p) => ({ id: p.id, libelle: p.libelle, canal: p.canal, actif: p.actif, total: volumes.get(p.id) ?? 0 }))
+        .sort((x, y) => y.total - x.total || x.libelle.localeCompare(y.libelle, 'fr')),
+    };
+  };
+
+  const lignes = agences.map((a) => ligne(a.id)).filter((l): l is S<'ActiviteAgence'> => l !== null)
+    .sort((x, y) => y.total - x.total || x.agence!.nom.localeCompare(y.agence!.nom, 'fr'));
+  const sansAgence = ligne(null);
+  return { du: f.du.toISOString(), au: f.au.toISOString(), agences: sansAgence ? [...lignes, sansAgence] : lignes };
+}
+
+/**
  * Statistiques de toutes les banques (contexte plateforme) : le rôle PostgreSQL de la plateforme
  * ne lit que les colonnes de métadonnées (arbitrage 7), ce que ces requêtes suffisent à servir.
  */

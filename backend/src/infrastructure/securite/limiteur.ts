@@ -24,6 +24,9 @@ export const LIMITES = {
   motDePasseOublieParIp: { nom: 'oubli-ip', max: 5, fenetreSecondes: 3600 },
   publicParIp: { nom: 'public-ip', max: 120, fenetreSecondes: 60 },
   messagesClient: { nom: 'message-client', max: 30, fenetreSecondes: 600 },
+  /** Assistant du portail (étape 18) : chaque tour peut coûter un appel à l'IA */
+  assistantParIp: { nom: 'assistant-ip', max: 40, fenetreSecondes: 600 },
+  suggestionsParUtilisateur: { nom: 'suggestion', max: 30, fenetreSecondes: 600 },
 } as const satisfies Record<string, Limite>;
 
 export class Limiteur {

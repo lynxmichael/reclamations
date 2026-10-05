@@ -55,6 +55,8 @@ export interface EntreeDepot {
   readonly consentementVersion: string;
   /** Pièces jointes du dépôt (5 au plus, déjà contrôlées et stockées) */
   readonly fichiers?: readonly FichierStocke[];
+  /** Réclamation préparée avec l'assistant du portail (étape 18), et la catégorie qu'il avait proposée */
+  readonly assistant?: { readonly categorieProposeeId: string | null } | null;
 }
 
 type Ticket = Reclamation & { categorie: { nom: string } };
@@ -128,7 +130,11 @@ export class CycleDeVie {
       });
 
       const acteur: Acteur = { type: 'CLIENT', clientId: client.id };
-      await this.evenement(tx, reclamation, 'CREATION', acteur, maintenant, { statutApres: 'OUVERTE' });
+      // Assistant (étape 18) : noté avec la catégorie proposée et le choix du client (qualité du tri)
+      const assistant = entree.assistant && p.banque.assistantIa
+        ? { categorieProposee: entree.assistant.categorieProposeeId, categorieGardee: entree.assistant.categorieProposeeId === categorie.id }
+        : null;
+      await this.evenement(tx, reclamation, 'CREATION', acteur, maintenant, { statutApres: 'OUVERTE', ...(assistant ? { donnees: { assistant } } : {}) });
       await this.joindre(tx, reclamation, null, entree.fichiers, acteur, maintenant, true);
 
       // Attribution automatique (étape 16) : pendant les heures ouvrées, à l'agent disponible le moins
@@ -145,7 +151,9 @@ export class CycleDeVie {
         await envois.alerteUrgente([...(await agent(tx, t.agentId)), ...(await superviseurs(tx, t.agentId)), ...(await adminsEntreprise(tx))]);
       }
       await this.signalerPlafond(tx, envois, p, maintenant);
-      await this.auditer(tx, reclamation, acteur, 'reclamation.depot', { canal: point.canal, priorite: reclamation.priorite }, trace);
+      await this.auditer(tx, reclamation, acteur, 'reclamation.depot', {
+        canal: point.canal, priorite: reclamation.priorite, ...(assistant ? { assistant: true } : {}),
+      }, trace);
 
       return {
         id: reclamation.id,

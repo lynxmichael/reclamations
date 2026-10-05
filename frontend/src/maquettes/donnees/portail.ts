@@ -5,8 +5,9 @@ import { CATEGORIES, agence } from './parametrage';
 import { CHAT_42, DESCRIPTION_42, FICHE_42, PHOTO_TICKET } from './reclamations';
 
 /** Ce que renvoie GET /public/points-depot/7K3QX9P2MA : le QR code du hall de l'agence Plateau. */
-export function formulaire(banque: S<'BanquePublique'>): S<'FormulaireDepot'> {
+export function formulaire(banque: S<'BanquePublique'>, assistant = false): S<'FormulaireDepot'> {
   return {
+    assistant,
     banque,
     canal: 'QR_CODE',
     agence: agence(1),

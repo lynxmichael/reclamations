@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { enregistrer, messageErreur, type FichierRecu } from '../../api/client';
+import { Agences, lignesCsvAgences } from '../../ecrans/back-office/Agences';
 import { TableauDeBord } from '../../ecrans/back-office/TableauDeBord';
 import { Activite } from '../../ecrans/plateforme/Activite';
 import { csv } from '../../ui/csv';
@@ -125,6 +126,79 @@ export function PageTableau() {
   );
 }
 
+// ---- Activité des agences (étape 19) ---------------------------------------------------------
+
+export function PageAgences() {
+  const { appeler } = useConsole();
+  const navigate = useNavigate();
+  const parametres = useParametres();
+  const annoncer = useAnnoncer();
+  const [params, setParams] = useSearchParams();
+  useTitre('Activité des agences');
+  const fuseau = parametres.fuseauHoraire;
+  const v = params.get('periode');
+  const periode: CodePeriode = v && v in PERIODES ? (v as CodePeriode) : 'mois';
+  const categorieId = params.get('categorieId') ?? undefined;
+  const canalLu = params.get('canal');
+  const canal = canalLu === 'QR_CODE' || canalLu === 'LIEN_WEB' ? canalLu : undefined;
+  const indicateurs = useQuery({
+    queryKey: ['indicateurs-agences', periode, categorieId, canal],
+    queryFn: () => appeler('lireIndicateursAgences', { requete: { ...bornes(periode, fuseau), categorieId, canal } }),
+    placeholderData: keepPreviousData,
+    refetchInterval: INTERVALLE_MS,
+  });
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => appeler('listerCategories'), staleTime: 60_000 });
+  const changer = (cle: string, valeur: string | undefined) => {
+    const p = new URLSearchParams(params);
+    if (valeur && !(cle === 'periode' && valeur === 'mois')) p.set(cle, valeur);
+    else p.delete(cle);
+    setParams(p, { replace: true });
+  };
+  // Le tableau de bord et la liste filtrés sur l'agence, pour la même période
+  const versTableau = (agenceId: string) => `${ROUTES_BANQUE.tableau}?${new URLSearchParams({ agenceId, ...(periode !== 'mois' ? { periode } : {}) })}`;
+  const versReclamations = (agenceId: string) => `${ROUTES_BANQUE.reclamations}?${new URLSearchParams({ file: 'toutes', agenceId })}`;
+
+  if (indicateurs.isPending) return <Chargement />;
+  if (indicateurs.isError) return <ErreurChargement erreur={indicateurs.error} surReessayer={() => void indicateurs.refetch()} />;
+  return (
+    <Agences
+      indicateurs={indicateurs.data}
+      chargement={indicateurs.isFetching && indicateurs.isPlaceholderData}
+      lienTableau={versTableau}
+      lienReclamations={versReclamations}
+      surOuvrirTableau={(id) => navigate(versTableau(id))}
+      surOuvrirReclamations={(id) => navigate(versReclamations(id))}
+      surExporter={() => {
+        enregistrer({ nom: `activite-agences-${periode}.csv`, type: 'text/csv', contenu: csv(lignesCsvAgences(indicateurs.data)) });
+        annoncer('Activité des agences téléchargée.');
+      }}
+      filtres={(
+        <>
+          <ChoixFiltre
+            libelle="Période"
+            obligatoire
+            valeur={periode}
+            options={(Object.entries(PERIODES) as [CodePeriode, string][]).map(([valeur, libelle]) => ({ valeur, libelle }))}
+            surChoix={(x) => changer('periode', x)}
+          />
+          <ChoixFiltre
+            libelle="Catégorie"
+            valeur={categorieId}
+            options={(categories.data ?? []).map((c) => ({ valeur: c.id, libelle: c.nom }))}
+            surChoix={(x) => changer('categorieId', x)}
+          />
+          <ChoixFiltre
+            libelle="Canal"
+            valeur={canal}
+            options={(Object.entries(CANAUX) as ['QR_CODE' | 'LIEN_WEB', string][]).map(([valeur, libelle]) => ({ valeur, libelle }))}
+            surChoix={(x) => changer('canal', x)}
+          />
+        </>
+      )}
+    />
+  );
+}
+
 // ---- Activité de la plateforme ---------------------------------------------------------------
 
 export function PageActivite() {
@@ -148,6 +222,12 @@ export function PageActivite() {
     queryFn: () => appeler('lireFacturationSms', { requete: { mois: choisi } }),
     placeholderData: keepPreviousData,
   });
+  // Assistant IA (étape 18) : facultatif, la page reste utile s'il échoue
+  const ia = useQuery({
+    queryKey: ['consommation-ia', choisi],
+    queryFn: () => appeler('lireConsommationIa', { requete: { mois: choisi } }),
+    placeholderData: keepPreviousData,
+  });
 
   if (indicateurs.isPending || sms.isPending) return <Chargement />;
   if (indicateurs.isError || sms.isError) {
@@ -157,6 +237,16 @@ export function PageActivite() {
     <Activite
       indicateurs={indicateurs.data}
       sms={sms.data}
+      ia={ia.data}
+      surExporterIa={ia.data ? () => {
+        const lignes = ia.data.banques.map((b) => [b.banque.nom, b.tours, b.suggestions, b.parIa, b.regles, b.jetonsEntree, b.jetonsSortie, b.coutUsd] as const);
+        enregistrer({
+          nom: `assistant-ia-${choisi}.csv`,
+          type: 'text/csv',
+          contenu: csv([['Banque', 'Tours du portail', 'Brouillons', 'Par l\'IA', 'Par les règles', 'Jetons en entrée', 'Jetons en sortie', 'Coût (USD)'], ...lignes]),
+        });
+        annoncer('Consommation de l\'assistant IA téléchargée.');
+      } : undefined}
       chargement={(indicateurs.isFetching && indicateurs.isPlaceholderData) || (sms.isFetching && sms.isPlaceholderData)}
       choixMois={(
         <ChoixFiltre

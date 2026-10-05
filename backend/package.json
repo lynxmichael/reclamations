@@ -28,6 +28,7 @@
     "contrat:verifier": "redocly lint ../contrat/openapi.yaml --config ../contrat/redocly.yaml",
     "contrat:types": "openapi-typescript ../contrat/openapi.yaml -o src/contrat/api.d.ts",
     "contrat:doc": "redocly build-docs ../contrat/openapi.yaml --config ../contrat/redocly.yaml -o ../docs/api/index.html",
+    "banc-ia": "tsx --env-file-if-exists=.env scripts/banc-ia.ts",
     "verifier:integrite": "tsx scripts/verifier-integrite.ts",
     "verifier:securite": "tsx scripts/verifier-securite.ts",
     "verifier:cycle-de-vie": "tsx scripts/verifier-cycle-de-vie.ts",

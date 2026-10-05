@@ -2,9 +2,11 @@
  * Ce qu'affichent le téléphone du client et le navigateur de la banque, à partir de l'état de la
  * démo. Les écrans sont ceux des maquettes de l'étape 6, alimentés par le moteur.
  */
+import { useState } from 'react';
 import { MessageSquareText, X } from 'lucide-react';
 import type { S } from '../api/types';
 import { Accuse } from '../ecrans/portail/Accuse';
+import { Assistant } from '../ecrans/portail/Assistant';
 import { Avis } from '../ecrans/portail/Avis';
 import { CodeOtp } from '../ecrans/portail/CodeOtp';
 import { Depot } from '../ecrans/portail/Depot';
@@ -12,16 +14,19 @@ import { MaReclamation } from '../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../ecrans/portail/MesReclamations';
 import { Suivi } from '../ecrans/portail/Suivi';
 import { Absences } from '../ecrans/back-office/Absences';
+import { Agences } from '../ecrans/back-office/Agences';
 import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
 import { CadreBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
+import { Compte } from '../ecrans/back-office/Compte';
 import { Conversations } from '../ecrans/back-office/Conversations';
 import { Files } from '../ecrans/back-office/Files';
 import { Horaires } from '../ecrans/back-office/Horaires';
 import { Personnel } from '../ecrans/back-office/Personnel';
 import { PointsDepot } from '../ecrans/back-office/PointsDepot';
+import { ReponsesAssistant } from '../ecrans/back-office/ReponsesAssistant';
 import { TableauDeBord } from '../ecrans/back-office/TableauDeBord';
 import { Ticket } from '../ecrans/back-office/Ticket';
 import { DOMAINE } from '../maquettes/donnees/commun';
@@ -35,16 +40,35 @@ export function EcranClient({ d }: { d: Demo }) {
   const { moteur, client: c, actionsClient: a, session } = d;
   const banque = moteur.banquePublique();
   switch (c.e) {
-    case 'depot':
+    case 'depot': {
+      const f = moteur.formulaire('7K3QX9P2MA');
       return (
         <Depot
           key={c.version}
-          formulaire={moteur.formulaire('7K3QX9P2MA')}
+          formulaire={f}
           saisie={c.saisie}
           erreur={c.erreur}
           surEnvoyer={a.deposer}
+          assistant={f.assistant ? { prepare: !!c.via, surRetour: a.assistant } : undefined}
         />
       );
+    }
+    case 'assistant': {
+      const f = moteur.formulaire('7K3QX9P2MA');
+      return (
+        <Assistant
+          banque={banque}
+          agence={f.agence?.nom}
+          fil={c.fil}
+          suggestions={c.tour.suggestions}
+          proposition={c.tour.proposition}
+          categorie={f.categories.find((x) => x.id === c.tour.proposition?.categorieId)?.nom}
+          surEnvoyer={a.ecrireAssistant}
+          surProposition={a.accepterProposition}
+          surFormulaire={a.nouveauDepot}
+        />
+      );
+    }
     case 'accuse':
       return <Accuse banque={banque} accuse={c.accuse} envoiPar="par SMS et par e-mail" surSuivre={() => a.suivre()} surAutre={a.nouveauDepot} />;
     case 'suivi':
@@ -121,7 +145,7 @@ export function adresseBanque(d: Demo) {
   const { page, ficheId } = d.banque;
   if (ficheId) return `${base}/reclamations/${d.moteur.ticket(ficheId).numero}`;
   if (page === 'conversations' && d.banque.conversationId) return `${base}/conversations/${d.banque.conversationId.slice(-6)}`;
-  return `${base}/${{ reclamations: 'reclamations', conversations: 'conversations', tableau: 'tableau-de-bord', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', attribution: 'parametrage/attribution', personnel: 'personnel', absences: 'absences', audit: 'journal-audit' }[page]}`;
+  return `${base}/${{ reclamations: 'reclamations', conversations: 'conversations', tableau: 'tableau-de-bord', agences: 'agences', compte: 'mon-compte', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', attribution: 'parametrage/attribution', assistant: 'parametrage/assistant', personnel: 'personnel', absences: 'absences', audit: 'journal-audit' }[page]}`;
 }
 
 /** Textes proposés dans la fiche de la réclamation de la démo, tant qu'ils servent. */
@@ -201,6 +225,13 @@ export function EcranBanque({ d }: { d: Demo }) {
           />
         );
         break;
+      case 'agences':
+        // Étape 19 : l'activité de chaque agence, calculée sur les réclamations de la démo
+        contenu = <Agences key={b.role} indicateurs={moteur.indicateursAgences(30)} periode="30 derniers jours" ouverte={AGENCES[0]!.id} surExporter={a.exporter} />;
+        break;
+      case 'compte':
+        contenu = <CompteDemo key={moiCourant.id} moi={moiCourant} banque={moteur.banque.nom} />;
+        break;
       case 'categories':
         contenu = <Categories categories={CATEGORIES} enEdition={null} minutesParJour={450} />;
         break;
@@ -248,6 +279,10 @@ export function EcranBanque({ d }: { d: Demo }) {
       case 'audit':
         contenu = <Audit journal={moteur.journalAudit()} verification={moteur.verificationJournal()} />;
         break;
+      case 'assistant':
+        // Démo : la base de réponses du jeu de démonstration, en lecture (l'assistant du portail s'en sert)
+        contenu = <ReponsesAssistant reponses={moteur.reponsesAssistant()} />;
+        break;
     }
   }
 
@@ -268,6 +303,30 @@ export function EcranBanque({ d }: { d: Demo }) {
     >
       {contenu}
     </CadreBackOffice>
+  );
+}
+
+/**
+ * « Mon compte » dans la démo (étape 19) : la double authentification s'active et se désactive pour
+ * de faux, avec n'importe quel code à 6 chiffres. Le QR code est celui d'une clé fictive.
+ */
+function CompteDemo({ moi: m, banque }: { moi: S<'Moi'>; banque: string }) {
+  const [actif, setActif] = useState(m.totpActif);
+  const secret = 'KRUGS4ZANFZSAZDFNVXWI5DPOR2HAMBR';
+  return (
+    <Compte
+      moi={{ ...m, totpActif: actif }}
+      banque={banque}
+      actions={{
+        preparer: () => ({
+          secret,
+          otpauthUrl: `otpauth://totp/${encodeURIComponent(`Réclamations Makor (démo):${m.email}`)}?secret=${secret}&issuer=${encodeURIComponent('Réclamations Makor (démo)')}&digits=6&period=30`,
+          qrCodeDataUrl: '',
+        }),
+        confirmer: () => setActif(true),
+        desactiver: () => setActif(false),
+      }}
+    />
   );
 }
 

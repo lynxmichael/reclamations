@@ -4,7 +4,7 @@ import { CONFIGURATION, type Configuration } from '../../configuration/configura
 import { AppelCourant, EntreesValidees, personnelDe, type Appel, type Entrees } from '../../infrastructure/contrat/appel.js';
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
 import { Probleme } from '../../infrastructure/contrat/probleme.js';
-import { ServiceAuth, type SessionOuverte } from './auth.service.js';
+import { ServiceAuth, type ResultatConnexion, type SessionOuverte } from './auth.service.js';
 
 export const COOKIE_RAFRAICHISSEMENT = 'rt';
 export const CHEMIN_COOKIE = '/api/v1/auth';
@@ -36,9 +36,15 @@ export class AuthControleur {
     res.clearCookie(COOKIE_RAFRAICHISSEMENT, { httpOnly: true, secure: this.config.cookieSecure, sameSite: 'strict', path: CHEMIN_COOKIE });
   }
 
+  /** Étape 19 : quand le mot de passe suffit, la session s'ouvre dès cette étape. */
+  private suite(res: Response, r: ResultatConnexion) {
+    if (r.session) this.poserCookie(res, r.session);
+    return r.etape;
+  }
+
   @Operation('connexion')
-  connexion(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
-    return this.auth.connexion(e.corps as { email: string; motDePasse: string }, appel);
+  async connexion(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel, @Res({ passthrough: true }) res: Response) {
+    return this.suite(res, await this.auth.connexion(e.corps as { email: string; motDePasse: string }, appel));
   }
 
   @Operation('validerCodeTotp')
@@ -47,8 +53,8 @@ export class AuthControleur {
   }
 
   @Operation('accepterInvitation')
-  accepterInvitation(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
-    return this.auth.accepterInvitation(e.corps as { jeton: string; motDePasse: string }, appel);
+  async accepterInvitation(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel, @Res({ passthrough: true }) res: Response) {
+    return this.suite(res, await this.auth.accepterInvitation(e.corps as { jeton: string; motDePasse: string }, appel));
   }
 
   @Operation('activerTotp')
@@ -85,6 +91,23 @@ export class AuthControleur {
   @Operation('lireMoi')
   lireMoi(@AppelCourant() appel: Appel) {
     return this.auth.moi(personnelDe(appel));
+  }
+
+  // ---- Mon compte : double authentification (étape 19) -------------------------
+
+  @Operation('preparerTotp')
+  preparerTotp(@AppelCourant() appel: Appel) {
+    return this.auth.preparerTotp(personnelDe(appel));
+  }
+
+  @Operation('confirmerTotp')
+  confirmerTotp(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
+    return this.auth.confirmerTotp(personnelDe(appel), (e.corps as { code: string }).code, appel);
+  }
+
+  @Operation('desactiverTotp')
+  desactiverTotp(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
+    return this.auth.desactiverTotp(personnelDe(appel), (e.corps as { code: string }).code, appel);
   }
 }
 

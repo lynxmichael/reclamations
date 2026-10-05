@@ -15,6 +15,7 @@ import { base32Encode } from './base32.js';
 import { CycleDeVie } from '../src/application/reclamations/cycle-de-vie.js';
 import { lectureClient } from '../src/application/reclamations/conversations.js';
 import type { Acteur } from '../src/domaine/reclamation/machine.js';
+import { FAQ_EXEMPLE } from '../src/domaine/ia/exemples.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { hacherMotDePasse } from '../src/infrastructure/securite/mots-de-passe.js';
 import { chiffrer } from '../src/infrastructure/securite/totp.js';
@@ -88,6 +89,11 @@ export interface OptionsSemis {
    * y écrivent (boîte de réception des agents). Non par défaut dans les tests
    */
   readonly chat?: boolean;
+  /**
+   * Étape 18 : assistant IA ouvert pour la Banque Alpha (avec le chat), base de réponses d'exemple ; avec
+   * l'historique, un journal des appels (règles seules) pour l'écran de consommation. Non par défaut dans les tests
+   */
+  readonly assistant?: boolean;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
   /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
@@ -170,12 +176,16 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
     { prenom: 'Didier', nom: 'Yao', role: 'SUPERVISEUR' },
     { prenom: 'Salif', nom: 'Koné', role: 'AGENT', superviseur: 'didier' },
   ], { qr: 'H7P4XK2RQD', lien: 'H3M9TW6ZLB' });
+  // Étape 19 : la Banque Horizon exige la double authentification ; la Banque Alpha la laisse facultative
+  // (le réglage par défaut), et tout son personnel de démonstration l'a activée
+  await bd.enSysteme((tx) => tx.banque.update({ where: { id: horizon.id }, data: { doubleAuthentificationObligatoire: true } }));
 
   if (o.historique) await historique(bd, alpha, o, o.historique);
   const exemples = o.reclamations ? await reclamationsExemple(bd, alpha, o) : null;
   // Après l'historique, qui reste assigné à la main comme en phase 1
   if (o.attribution) await attributionAlpha(bd, alpha, maintenant);
   if (o.chat) await chatAlpha(bd, alpha, o, exemples);
+  if (o.chat && o.assistant) await assistantAlpha(bd, alpha, o, maintenant);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
 }
 
@@ -244,6 +254,34 @@ async function chatAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, ex
   };
   await ecrire(exemples.carte, ['Merci. C\'était au distributeur de l\'agence du Plateau, vers 21 h. J\'ai gardé le ticket.']);
   await ecrire(exemples.fraude, ['J\'ai bloqué ma carte depuis l\'application.', 'Faut-il que je passe en agence pour la plainte ?']);
+}
+
+/**
+ * Assistant IA de la Banque Alpha (étape 18) : base de réponses d'exemple ; avec l'historique, les
+ * tours de l'assistant et les brouillons des derniers jours, journalisés sans contenu, réponses par
+ * les règles (aucun fournisseur d'IA n'est configuré en démonstration).
+ */
+async function assistantAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, maintenant: Date) {
+  await bd.enSysteme((tx) => tx.banque.update({ where: { id: alpha.id }, data: { assistantIa: true } }));
+  await bd.enBanque(alpha.id, (tx) => tx.reponseAssistant.createMany({
+    data: FAQ_EXEMPLE.map((f, i) => ({ tenantId: alpha.id, question: f.question, reponse: f.reponse, ordre: (i + 1) * 10 })),
+  }));
+  if (!o.historique) return;
+  const hasard = aleatoire(18);
+  const jours = Math.min(o.historique, 14);
+  const lignes: { tenantId: string; finalite: 'ACCUEIL_PORTAIL' | 'SUGGESTION_AGENT'; fournisseur: string; issue: 'REGLES'; dureeMs: number; creeLe: Date }[] = [];
+  for (let j = jours; j >= 1; j--) {
+    const jour = DateTime.fromJSDate(maintenant).minus({ days: j }).startOf('day');
+    const tours = 15 + Math.floor(hasard() * 25);
+    const brouillons = 2 + Math.floor(hasard() * 5);
+    for (let n = 0; n < tours + brouillons; n++) {
+      lignes.push({
+        tenantId: alpha.id, finalite: n < tours ? 'ACCUEIL_PORTAIL' : 'SUGGESTION_AGENT', fournisseur: 'regles', issue: 'REGLES',
+        dureeMs: 1 + Math.floor(hasard() * 4), creeLe: jour.plus({ minutes: 8 * 60 + Math.floor(hasard() * 9 * 60) }).toJSDate(),
+      });
+    }
+  }
+  await bd.enBanque(alpha.id, (tx) => tx.appelIa.createMany({ data: lignes }));
 }
 
 // ---- Historique (étape 9) ---------------------------------------------------------------------

@@ -86,6 +86,22 @@ describe('ouverture de la démo', () => {
     expect(banque.charge.aTraiter).toBeGreaterThanOrEqual(agent.charge.aTraiter);
   });
 
+  it('activité des agences (étape 19) : les lignes font le tableau de bord ; les QR codes font chaque ligne', () => {
+    const banque = m.indicateurs(30);
+    const a = m.indicateursAgences(30);
+    expect(ecarts('IndicateursAgences', a)).toEqual([]);
+    const somme = (f: (l: (typeof a.agences)[number]) => number) => a.agences.reduce((t, l) => t + f(l), 0);
+    expect(somme((l) => l.total)).toBe(banque.total);
+    expect(somme((l) => l.charge.aTraiter)).toBe(banque.charge.aTraiter);
+    expect(somme((l) => l.charge.enAttenteClient)).toBe(banque.charge.enAttenteClient);
+    expect(somme((l) => l.charge.enRetard)).toBe(banque.charge.enRetard);
+    for (const l of a.agences) expect(l.pointsDepot.reduce((t, p) => t + p.total, 0)).toBe(l.total);
+    // De la plus sollicitée à la moins sollicitée ; « sans agence » en dernier
+    const agences = a.agences.filter((l) => l.agence);
+    expect(agences.map((l) => l.total)).toEqual([...agences.map((l) => l.total)].sort((x, y) => y - x));
+    expect(a.agences.findIndex((l) => !l.agence)).toBe(a.agences.some((l) => !l.agence) ? a.agences.length - 1 : -1);
+  });
+
   it('toutes les réponses sont conformes au contrat', () => {
     const erreurs: string[] = [];
     const verifier = (schema: string, v: unknown, ou: string) => erreurs.push(...ecarts(schema, v).map((e) => `${ou} ${e}`));
@@ -457,6 +473,42 @@ describe('chat web (étape 17)', () => {
     expect(refus(() => m.conversation(mamadou, c.id)).status).toBe(404);
     expect(m.conversation(ADMIN, c.id).operationsPossibles).not.toContain('REPONDRE_AU_CLIENT');
     expect(m.conversation(AGENT, c.id).operationsPossibles).toContain('REPONDRE_AU_CLIENT');
+  });
+});
+
+describe('assistant IA (étape 18)', () => {
+  const C = (texte: string) => ({ auteur: 'CLIENT' as const, texte });
+
+  it('sur le portail, il se présente, répond par la base de la banque et prépare la réclamation (règles, sans IA)', () => {
+    const m = nouvelle();
+    expect(m.formulaire('7K3QX9P2MA').assistant).toBe(true);
+    const accueil = m.converserAvecAssistant('7K3QX9P2MA', []);
+    expect(accueil.messages[0]!.code).toBe('PRESENTATION');
+    expect(accueil.messages[0]!.texte).toMatch(/assistant automatique de Banque Alpha/);
+    const faq = m.converserAvecAssistant('7K3QX9P2MA', [C('Quels sont vos horaires ?')]);
+    expect(faq.messages.map((x) => x.code)).toEqual(['FAQ', 'FAQ_SUITE']);
+    const depot = m.converserAvecAssistant('7K3QX9P2MA', [C('Le GAB du Plateau a avalé ma carte hier à 21 h, je n\'ai pas pu la récupérer')]);
+    expect(depot.proposition).toMatchObject({ motif: 'DEPOT', categorieId: CARTE.id });
+    const conseiller = m.converserAvecAssistant('7K3QX9P2MA', [C('je veux un conseiller')]);
+    expect(conseiller.messages[0]!.code).toBe('TRANSFERT');
+    for (const r of [accueil, faq, depot, conseiller]) expect(ecarts('ReponseAssistant', r)).toEqual([]);
+  });
+
+  it('dépôt préparé avec l\'assistant : noté sur la fiche ; brouillon pour l\'agent, sans alerte', () => {
+    const m = nouvelle();
+    const accuse = m.deposer('7K3QX9P2MA', {
+      categorieId: CARTE.id, description: 'Retrait de 50 000 FCFA non servi au GAB du Plateau hier soir, compte débité.',
+      nom: CLIENT_DEMO.nom, telephone: CLIENT_DEMO.telephone, consentement: true, viaAssistant: true,
+    });
+    const id = m.ticket(accuse.numero).id;
+    expect(m.fiche(SUP, id).depotAssistant).toBe(true);
+    m.assigner(SUP, id, AGENT);
+    const s = m.suggererReponse(AGENT, id);
+    expect(ecarts('SuggestionReponse', s)).toEqual([]);
+    expect(s).toMatchObject({ source: 'REGLES', alertes: [], categorie: null });
+    expect(s.brouillon).toMatch(/^Bonjour,\n/);
+    expect(m.fiche(SUP, m.toutesLesReclamations().find((t) => !t.viaAssistant)!.id).depotAssistant).toBe(false);
+    for (const r of m.reponsesAssistant()) expect(ecarts('ReponseBanque', r)).toEqual([]);
   });
 });
 

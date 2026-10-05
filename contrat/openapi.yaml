@@ -13,7 +13,7 @@ info:
     |---|---|---|---|
     | `/public` | Client final, sans compte | aucune | le code du point de dépôt ou le jeton de suivi |
     | `/client` | Client final après code OTP | `jetonClient` (30 min) | le jeton |
-    | `/auth` | Personnel | mot de passe + TOTP | — |
+    | `/auth` | Personnel | mot de passe, puis code TOTP si la double authentification est exigée ou activée (étape 19) | — |
     | `/banque` | Agent, superviseur, Admin Entreprise | `jetonPersonnel` (15 min) | le jeton |
     | `/plateforme` | Super Admin | `jetonPersonnel` | — (toutes les banques, métadonnées seulement) |
 
@@ -56,11 +56,11 @@ tags:
   - name: Espace client
     description: Réclamations du client après vérification du code OTP
   - name: Authentification
-    description: Connexion du personnel, TOTP, sessions
+    description: Connexion du personnel, double authentification (TOTP), sessions, « Mon compte » (étape 19)
   - name: Réclamations
     description: Files, traitement, clôture (agent, superviseur)
   - name: Tableau de bord
-    description: Indicateurs du §6.6 et export
+    description: Indicateurs du §6.6, activité des agences (étape 19) et export
   - name: Notifications
     description: Notifications in-app du personnel
   - name: Paramétrage
@@ -77,6 +77,8 @@ tags:
     description: Groupes d'agents, absences, attribution automatique ou suggérée, escalade à l'Admin Entreprise (phase 2, étape 16)
   - name: Conversations
     description: Chat web du portail et boîte de réception des agents (phase 2, étape 17)
+  - name: Assistant IA
+    description: Assistant automatique du portail, base de réponses de la banque, brouillons pour les agents, consommation (phase 2, étape 18)
 
 paths:
   # ===========================================================================
@@ -191,6 +193,43 @@ paths:
         '413': { $ref: '#/components/responses/FichierTropVolumineux' }
         '415': { $ref: '#/components/responses/TypeNonSupporte' }
         '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/points-depot/{code}/assistant:
+    post:
+      tags: [Assistant IA]
+      operationId: converserAvecAssistant
+      summary: Un tour de l'assistant automatique du portail
+      description: |
+        Sans état côté serveur : le portail renvoie à chaque tour les derniers échanges (textes du client,
+        codes des messages de l'assistant). Sans message du client, l'assistant se présente comme tel et
+        dit comment joindre une personne (décision I3).
+        L'IA ne fait que trier le dernier message (intention, question fréquente, catégorie), après
+        masquage des numéros de carte et de compte, IBAN, téléphones, e-mails et codes (décision I5).
+        Ce que lit le client vient des textes fixes de l'assistant et des réponses validées par la
+        banque (décision I4) : il ne promet rien, ne change aucun statut et ne dépose rien lui-même.
+        Une `proposition` prépare le dépôt, que le client relit, complète et envoie avec
+        `deposerReclamation`. Sans fournisseur d'IA, s'il ne répond pas ou si le plafond quotidien de la
+        banque est atteint, des règles de mots-clés prennent le relais. Assistant fermé : 403
+        FONCTION_NON_OUVERTE. Limité à 40 tours par 10 minutes et par adresse IP.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/CodePoint'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TourAssistant' }
+      responses:
+        '200':
+          description: Réponse de l'assistant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReponseAssistant' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
   /public/suivi/{jetonSuivi}:
@@ -543,7 +582,10 @@ paths:
       operationId: connexion
       summary: Première étape de connexion (e-mail et mot de passe)
       description: |
-        Renvoie toujours une étape TOTP : la double authentification est obligatoire pour tout le personnel.
+        Étape 19 : la double authentification est exigée du Super Admin, du personnel d'une banque qui l'a
+        rendue obligatoire, et de toute personne qui l'a activée sur son compte (`TOTP_REQUIS`, ou
+        `ENROLEMENT_TOTP_REQUIS` si elle n'est pas encore activée). Sinon, le mot de passe suffit :
+        `SESSION_OUVERTE`, la session est ouverte et le refresh token posé en cookie `rt`, comme après le code.
         Après 5 échecs, le compte est verrouillé 15 minutes. 10 échecs par 15 minutes et par adresse IP (les connexions réussies ne comptent pas : le personnel d'une agence partage souvent la même adresse publique).
       x-roles: [PUBLIC]
       security: []
@@ -554,10 +596,10 @@ paths:
             schema: { $ref: '#/components/schemas/Connexion' }
       responses:
         '200':
-          description: Mot de passe accepté, code TOTP attendu
+          description: Mot de passe accepté ; code TOTP attendu, activation exigée, ou session ouverte
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/EtapeTotp' }
+              schema: { $ref: '#/components/schemas/EtapeConnexion' }
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
@@ -589,7 +631,11 @@ paths:
     post:
       tags: [Authentification]
       operationId: accepterInvitation
-      summary: Accepter une invitation (choix du mot de passe, puis enrôlement TOTP)
+      summary: Accepter une invitation (choix du mot de passe)
+      description: |
+        Si la banque exige la double authentification (étape 19), son activation suit
+        (`ENROLEMENT_TOTP_REQUIS`, puis `activerTotp`). Sinon, le compte est actif et la session s'ouvre
+        (`SESSION_OUVERTE`, cookie `rt`) ; la personne pourra l'activer depuis « Mon compte ».
       x-roles: [PUBLIC]
       security: []
       requestBody:
@@ -599,12 +645,13 @@ paths:
             schema: { $ref: '#/components/schemas/DefinitionMotDePasse' }
       responses:
         '200':
-          description: Mot de passe enregistré ; le TOTP doit maintenant être activé
+          description: Mot de passe enregistré ; activation de la double authentification exigée, ou session ouverte
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/EnrolementTotp' }
+              schema: { $ref: '#/components/schemas/EtapeConnexion' }
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
 
   /auth/totp/activation:
     post:
@@ -709,6 +756,82 @@ paths:
               schema: { $ref: '#/components/schemas/Moi' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
+
+  /auth/moi/totp/preparation:
+    post:
+      tags: [Authentification]
+      operationId: preparerTotp
+      summary: Mon compte — préparer l'activation de la double authentification
+      description: |
+        Étape 19. Nouveau secret, à scanner avec une application d'authentification ; il ne protège le
+        compte qu'après `confirmerTotp`. Un nouvel appel remplace le secret préparé.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Secret préparé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrolementCompte' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+
+  /auth/moi/totp/activation:
+    post:
+      tags: [Authentification]
+      operationId: confirmerTotp
+      summary: Mon compte — activer la double authentification avec un premier code
+      description: Le code à 6 chiffres affiché par l'application prouve que le secret préparé est enregistré.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeVerification' }
+      responses:
+        '200':
+          description: Double authentification activée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Moi' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '423': { $ref: '#/components/responses/Verrouille' }
+
+  /auth/moi/totp/desactivation:
+    post:
+      tags: [Authentification]
+      operationId: desactiverTotp
+      summary: Mon compte — désactiver la double authentification
+      description: |
+        Avec un code valide de l'application. Refusé (422 `DOUBLE_AUTHENTIFICATION_OBLIGATOIRE`) si la
+        banque l'exige. Les autres sessions de la personne sont fermées.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodeVerification' }
+      responses:
+        '200':
+          description: Double authentification désactivée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Moi' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '423': { $ref: '#/components/responses/Verrouille' }
 
   # ===========================================================================
   #  Banque : réclamations
@@ -910,6 +1033,37 @@ paths:
         '415': { $ref: '#/components/responses/TypeNonSupporte' }
         '422': { $ref: '#/components/responses/RegleMetier' }
 
+  /banque/reclamations/{id}/suggestion:
+    post:
+      tags: [Assistant IA]
+      operationId: suggererReponse
+      summary: Brouillon de réponse proposé à l'agent
+      description: |
+        « L'IA propose, l'humain décide » (décision I4) : rien n'est envoyé au client ni modifié. L'agent
+        relit, corrige et envoie lui-même avec `repondreAuClient`. Le brouillon est vérifié : chaque
+        interdit (promesse de remboursement ou de délai, statut annoncé, conseil financier, demande de
+        code) est signalé dans `alertes`. Une catégorie plus juste et l'urgence sont suggérées, à titre
+        indicatif. Seuls partent, masqués, la description et les derniers messages publics : jamais le
+        nom ni les coordonnées du client, ni les notes internes, ni les pièces jointes (décision I5).
+        Réclamation clôturée : 409 RECLAMATION_CLOTUREE. Assistant fermé : 403 FONCTION_NON_OUVERTE.
+        Limité à 30 brouillons par 10 minutes et par utilisateur.
+      x-roles: [AGENT, SUPERVISEUR]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Brouillon
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuggestionReponse' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   /banque/reclamations/{id}/resolution:
     post:
       tags: [Réclamations]
@@ -1081,6 +1235,34 @@ paths:
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
+  /banque/indicateurs/agences:
+    get:
+      tags: [Tableau de bord]
+      operationId: lireIndicateursAgences
+      summary: Activité de chaque agence sur une période (étape 19)
+      description: |
+        Une ligne par agence : réclamations déposées pendant la période (par défaut, du début du mois
+        courant à maintenant), mêmes définitions que `lireIndicateurs` ; `charge` à cet instant.
+        Une ligne sans agence, en dernier, regroupe les dépôts par lien web où le client n'a pas indiqué
+        d'agence. Une agence inactive sans réclamation de la période ni en cours n'apparaît pas.
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Du'
+        - $ref: '#/components/parameters/Au'
+        - $ref: '#/components/parameters/FiltreCategorie'
+        - $ref: '#/components/parameters/FiltreCanal'
+      responses:
+        '200':
+          description: Activité des agences, de la plus sollicitée à la moins sollicitée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IndicateursAgences' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
   /banque/notifications:
     get:
       tags: [Notifications]
@@ -1192,6 +1374,31 @@ paths:
         '403': { $ref: '#/components/responses/Interdit' }
         '413': { $ref: '#/components/responses/FichierTropVolumineux' }
         '415': { $ref: '#/components/responses/TypeNonSupporte' }
+
+  /banque/parametres/securite:
+    patch:
+      tags: [Personnel]
+      operationId: modifierSecuriteBanque
+      summary: Rendre la double authentification obligatoire ou facultative (étape 19)
+      description: |
+        Obligatoire : l'Admin Entreprise doit l'avoir activée sur son propre compte (422
+        `DOUBLE_AUTHENTIFICATION_A_ACTIVER` sinon) ; les sessions du personnel qui ne l'a pas activée sont
+        fermées, et chacun l'active à sa prochaine connexion. Facultative : rien ne change pour ceux qui
+        l'ont activée ; les autres se connectent avec leur mot de passe.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationSecurite' }
+      responses:
+        '200': { $ref: '#/components/responses/Parametres' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
 
   /banque/categories:
     get:
@@ -1788,6 +1995,91 @@ paths:
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
 
+  /banque/assistant/reponses:
+    get:
+      tags: [Assistant IA]
+      operationId: listerReponsesAssistant
+      summary: Base de réponses de l'assistant
+      description: |
+        Écrite et validée par l'Admin Entreprise (décision I4) ; l'assistant du portail n'en montre que
+        les réponses actives. Chaque réponse porte les interdits qu'elle contient, à titre d'avertissement.
+        Assistant fermé : 403 FONCTION_NON_OUVERTE.
+      x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Réponses, dans l'ordre d'affichage
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ReponseBanque' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Assistant IA]
+      operationId: creerReponseAssistant
+      summary: Ajouter une réponse validée
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EcritureReponseBanque' }
+      responses:
+        '201':
+          description: Réponse ajoutée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReponseBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/assistant/reponses/{id}:
+    patch:
+      tags: [Assistant IA]
+      operationId: modifierReponseAssistant
+      summary: Modifier, activer ou retirer une réponse
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModificationReponseBanque' }
+      responses:
+        '200':
+          description: Réponse modifiée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReponseBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+    delete:
+      tags: [Assistant IA]
+      operationId: supprimerReponseAssistant
+      summary: Supprimer une réponse
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204':
+          description: Réponse supprimée
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
   /banque/utilisateurs:
     get:
       tags: [Personnel]
@@ -1935,7 +2227,9 @@ paths:
       tags: [Personnel]
       operationId: reinitialiserTotp
       summary: Réinitialiser la double authentification (téléphone perdu)
-      description: L'utilisateur réactivera le TOTP à sa prochaine connexion ; ses sessions sont révoquées.
+      description: |
+        Ses sessions sont révoquées. Il réactivera la double authentification à sa prochaine connexion si la
+        banque l'exige, sinon quand il le souhaite, depuis « Mon compte » (étape 19).
       x-roles: [ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
@@ -2073,6 +2367,7 @@ paths:
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
         '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
 
   /plateforme/banques/{id}/suspension:
     post:
@@ -2235,6 +2530,35 @@ paths:
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
+  /plateforme/consommation-ia:
+    get:
+      tags: [Plateforme]
+      operationId: lireConsommationIa
+      summary: Usage de l'assistant IA par banque sur un mois (facturation)
+      description: |
+        Mois civil en temps universel, d'après le journal des appels, qui ne contient aucun message
+        (décision I5). `tours` : tours de l'assistant du portail ; `suggestions` : brouillons demandés
+        par les agents ; `parIa` : réponses venues du fournisseur ; `regles` : réponses venues des règles
+        (pas de fournisseur, plafond atteint, erreur ou délai dépassé). Le coût est celui du tarif
+        configuré au moment de chaque appel. Figurent les banques existant à la fin du mois et celles qui ont des appels ce mois-là.
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: mois
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', examples: ['2026-10'] }
+      responses:
+        '200':
+          description: Consommation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsommationIa' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
   /plateforme/journal-audit:
     get:
       tags: [Plateforme]
@@ -2365,7 +2689,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Jeton d'accès du personnel (15 minutes), obtenu après mot de passe + code TOTP.
+      description: Jeton d'accès du personnel (15 minutes), obtenu après le mot de passe, et le code TOTP quand la double authentification est exigée ou activée.
     jetonClient:
       type: http
       scheme: bearer
@@ -2726,6 +3050,15 @@ components:
         - FONCTION_NON_OUVERTE
         - GROUPE_INVALIDE
         - ABSENCE_INVALIDE
+        # Assistant IA (étape 18)
+        - CHAT_WEB_REQUIS
+        - RECLAMATION_CLOTUREE
+        # Double authentification au choix de la banque (étape 19)
+        - DOUBLE_AUTHENTIFICATION_OBLIGATOIRE
+        - DOUBLE_AUTHENTIFICATION_A_ACTIVER
+        - DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE
+        - DOUBLE_AUTHENTIFICATION_INACTIVE
+        - DOUBLE_AUTHENTIFICATION_NON_PREPAREE
         # Serveur
         - ERREUR_INTERNE
 
@@ -2828,8 +3161,9 @@ components:
         couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
     FormulaireDepot:
       type: object
-      required: [banque, canal, agence, agences, categories, politiqueDonnees, fichiers]
+      required: [banque, canal, agence, agences, categories, politiqueDonnees, fichiers, assistant]
       properties:
+        assistant: { type: boolean, description: "Assistant automatique ouvert sur ce portail (étape 18)" }
         banque: { $ref: '#/components/schemas/BanquePublique' }
         canal: { $ref: '#/components/schemas/CanalDepot' }
         agence:
@@ -2903,6 +3237,8 @@ components:
         versionPolitique: { type: string, maxLength: 20, examples: ['2026-09'] }
         jetonAntiRobot: { $ref: '#/components/schemas/JetonAntiRobot' }
         fichiers: { $ref: '#/components/schemas/Fichiers' }
+        viaAssistant: { type: boolean, description: "Préparée avec l'assistant du portail (étape 18) : noté dans la chronologie" }
+        categorieProposeeId: { type: string, format: uuid, description: "Catégorie proposée par l'assistant, que le client a pu changer" }
     AccuseDepot:
       type: object
       required: [numero, lienSuivi, jetonSuivi]
@@ -3131,25 +3467,46 @@ components:
       properties:
         email: { type: string, format: email, maxLength: 254 }
         motDePasse: { type: string, maxLength: 128 }
-    EtapeTotp:
+    EtapeConnexion:
       type: object
-      required: [etape, jetonIntermediaire, expireDans]
+      required: [etape]
+      description: |
+        Suite de la connexion (étape 19). `TOTP_REQUIS` : code de l'application attendu (`validerCodeTotp`).
+        `ENROLEMENT_TOTP_REQUIS` : double authentification exigée mais pas encore activée (première
+        connexion, réinitialisation, banque qui vient de l'exiger) ; `enrolement` à activer (`activerTotp`).
+        `SESSION_OUVERTE` : double authentification facultative et non activée ; la session est ouverte
+        (`session`) et le refresh token posé en cookie.
       properties:
         etape:
           type: string
-          enum: [TOTP_REQUIS, ENROLEMENT_TOTP_REQUIS]
-          description: ENROLEMENT_TOTP_REQUIS après une réinitialisation du TOTP par l'Admin Entreprise
-        jetonIntermediaire: { type: string, description: "Valable 5 minutes, pour la seconde étape seulement" }
+          enum: [TOTP_REQUIS, ENROLEMENT_TOTP_REQUIS, SESSION_OUVERTE]
+        jetonIntermediaire: { type: string, description: "Valable 5 minutes, pour la seconde étape seulement ; absent si SESSION_OUVERTE" }
         expireDans: { type: integer, examples: [300] }
         enrolement:
           $ref: '#/components/schemas/EnrolementTotp'
           description: Présent quand etape = ENROLEMENT_TOTP_REQUIS
+        session:
+          $ref: '#/components/schemas/SessionPersonnel'
+          description: Présent quand etape = SESSION_OUVERTE
     CodeTotp:
       type: object
       required: [jetonIntermediaire, code]
       properties:
         jetonIntermediaire: { type: string }
         code: { type: string, pattern: '^[0-9]{6}$' }
+    CodeVerification:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, pattern: '^[0-9]{6}$', description: "Code à 6 chiffres de l'application d'authentification" }
+    EnrolementCompte:
+      type: object
+      description: Secret à enregistrer dans l'application d'authentification (« Mon compte », étape 19)
+      required: [otpauthUrl, secret, qrCodeDataUrl]
+      properties:
+        otpauthUrl: { type: string, examples: ['otpauth://totp/Reclamations:agent@alpha.ci?secret=…&issuer=Reclamations'] }
+        secret: { type: string, description: "Secret en base32, pour une saisie manuelle" }
+        qrCodeDataUrl: { type: string, description: 'Image PNG en data: URL' }
     DefinitionMotDePasse:
       type: object
       required: [jeton, motDePasse]
@@ -3166,13 +3523,15 @@ components:
         qrCodeDataUrl: { type: string, description: 'Image PNG en data: URL' }
     Moi:
       type: object
-      required: [id, email, nom, prenom, role, banque]
+      required: [id, email, nom, prenom, role, banque, totpActif, totpObligatoire]
       properties:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         nom: { type: string }
         prenom: { type: string }
         role: { $ref: '#/components/schemas/RoleUtilisateur' }
+        totpActif: { type: boolean, description: "Double authentification activée sur ce compte (étape 19)" }
+        totpObligatoire: { type: boolean, description: "Exigée : toujours pour le Super Admin, et pour le personnel d'une banque qui l'a rendue obligatoire" }
         banque:
           description: Vide pour un Super Admin
           oneOf:
@@ -3335,8 +3694,9 @@ components:
       type: object
       required: [id, numero, statut, priorite, canal, description, categorie, agence, pointDepot, agent, escaladeeVers, client,
         creeLe, sla, jalons, cloture, nbReouvertures, messages, piecesJointes, chronologie, actionsPossibles, operationsPossibles, avis,
-        attributionSuggeree, conversation]
+        attributionSuggeree, conversation, depotAssistant]
       properties:
+        depotAssistant: { type: boolean, description: "Déposée avec l'assistant automatique du portail (étape 18)" }
         conversation:
           description: Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque
           oneOf:
@@ -3623,6 +3983,83 @@ components:
         enAttenteClient: { type: integer, minimum: 0 }
         enAlerte: { type: integer, minimum: 0 }
         enRetard: { type: integer, minimum: 0 }
+    IndicateursAgences:
+      type: object
+      description: |
+        Activité des agences (étape 19) : mêmes définitions que le tableau de bord (§6.6), réclamations
+        déposées pendant la période, délais en minutes ouvrées, charge à cet instant.
+      required: [du, au, agences]
+      properties:
+        du: { $ref: '#/components/schemas/Horodatage' }
+        au: { $ref: '#/components/schemas/Horodatage' }
+        agences:
+          type: array
+          items: { $ref: '#/components/schemas/ActiviteAgence' }
+    ActiviteAgence:
+      type: object
+      required: [agence, groupe, total, urgentes, resolues, delaiPremiereReponseMoyenMinutes, delaiResolutionMoyenMinutes,
+        tauxRespectSla, tauxResolutionPremierContact, charge, satisfaction, parCategorie, agents, pointsDepot]
+      properties:
+        agence:
+          description: Vide pour les dépôts par lien web sans agence indiquée
+          oneOf:
+            - type: object
+              required: [id, code, nom, ville, active]
+              properties:
+                id: { type: string, format: uuid }
+                code: { type: string }
+                nom: { type: string }
+                ville: { type: [string, 'null'] }
+                active: { type: boolean }
+            - type: 'null'
+        groupe:
+          description: Groupe d'agents qui reçoit les réclamations de l'agence (attribution automatique, étape 16)
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        total: { type: integer, minimum: 0, description: "Réclamations déposées pendant la période" }
+        urgentes: { type: integer, minimum: 0 }
+        resolues: { type: integer, minimum: 0, description: "Résolues et non rouvertes depuis" }
+        delaiPremiereReponseMoyenMinutes: { type: [number, 'null'] }
+        delaiResolutionMoyenMinutes: { type: [number, 'null'] }
+        tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        tauxResolutionPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        charge: { $ref: '#/components/schemas/Charge' }
+        satisfaction:
+          description: Enquêtes ouvertes pendant la période ; vide si la banque ne les a pas activées et n'en a aucune
+          oneOf:
+            - type: object
+              required: [enquetes, reponses, tauxSatisfaits, nps]
+              properties:
+                enquetes: { type: integer, minimum: 0 }
+                reponses: { type: integer, minimum: 0 }
+                tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1 }
+                nps: { type: [integer, 'null'], minimum: -100, maximum: 100 }
+            - type: 'null'
+        parCategorie:
+          type: array
+          maxItems: 3
+          description: Les trois catégories les plus fréquentes
+          items: { $ref: '#/components/schemas/Volume' }
+        agents:
+          type: array
+          maxItems: 5
+          description: Agents assignés aux réclamations de la période, du plus grand nombre au plus petit (5 au plus)
+          items: { $ref: '#/components/schemas/Volume' }
+        pointsDepot:
+          type: array
+          description: |
+            QR codes et liens web de l'agence, et liens web par lesquels des clients l'ont choisie, avec les
+            réclamations reçues par chacun pendant la période (leur somme fait `total`)
+          items:
+            type: object
+            required: [id, libelle, canal, actif, total]
+            properties:
+              id: { type: string, format: uuid }
+              libelle: { type: string }
+              canal: { $ref: '#/components/schemas/CanalDepot' }
+              actif: { type: boolean }
+              total: { type: integer, minimum: 0 }
     Regroupement:
       type: string
       description: Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)
@@ -3670,8 +4107,8 @@ components:
     ParametresBanque:
       type: object
       required: [nom, slug, prefixeTickets, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, couleurPrimaire, couleurSecondaire,
-        logoUrl, emailContact, plan, consommation]
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, assistantIa, doubleAuthentificationObligatoire,
+        couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
       properties:
         nom: { type: string }
         slug: { type: string }
@@ -3684,6 +4121,8 @@ components:
         attributionAutomatique: { type: boolean, description: "Attribution et escalade automatiques (étape 16), ouvertes par Makor" }
         modeAttribution: { $ref: '#/components/schemas/ModeAttribution' }
         chatWeb: { type: boolean, description: "Chat web du portail et boîte de réception (étape 17), ouverts par Makor" }
+        assistantIa: { type: boolean, description: "Assistant du portail et brouillons pour les agents (étape 18), ouverts par Makor" }
+        doubleAuthentificationObligatoire: { type: boolean, description: "Double authentification exigée de tout le personnel (étape 19), réglée par l'Admin Entreprise" }
         couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
         couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
         logoUrl: { type: [string, 'null'], format: uri-reference }
@@ -3701,6 +4140,11 @@ components:
           properties:
             agents: { type: integer, description: "Agents et superviseurs non désactivés" }
             ticketsCeMois: { type: integer }
+    ModificationSecurite:
+      type: object
+      required: [doubleAuthentificationObligatoire]
+      properties:
+        doubleAuthentificationObligatoire: { type: boolean }
     ModificationApparence:
       type: object
       minProperties: 1
@@ -4096,7 +4540,8 @@ components:
     BanquePlateforme:
       type: object
       required: [id, nom, slug, prefixeTickets, plan, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, suspendueLe, motifSuspension, creeLe, consommation]
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, assistantIa, doubleAuthentificationObligatoire,
+        suspendueLe, motifSuspension, creeLe, consommation]
       properties:
         id: { type: string, format: uuid }
         nom: { type: string }
@@ -4110,6 +4555,8 @@ components:
         enqueteSatisfaction: { type: boolean }
         attributionAutomatique: { type: boolean }
         chatWeb: { type: boolean }
+        assistantIa: { type: boolean }
+        doubleAuthentificationObligatoire: { type: boolean, description: "Réglée par l'Admin Entreprise de la banque (étape 19)" }
         suspendueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         motifSuspension: { type: [string, 'null'] }
         creeLe: { $ref: '#/components/schemas/Horodatage' }
@@ -4154,6 +4601,9 @@ components:
         chatWeb:
           type: boolean
           description: "Chat web du portail et boîte de réception (étape 17) ; fermé, l'espace client garde son fil de messages simple"
+        assistantIa:
+          type: boolean
+          description: "Assistant IA (étape 18) ; exige le chat web (sinon 422 CHAT_WEB_REQUIS) ; fermer le chat ferme aussi l'assistant"
     IndicateursPlateforme:
       type: object
       required: [du, au, banques]
@@ -4200,3 +4650,141 @@ components:
               sms: { type: integer, description: "SMS envoyés" }
               segments: { type: integer, description: "Segments facturés par la passerelle" }
               echecs: { type: integer }
+
+    # ---- Assistant IA (étape 18) ------------------------------------------------------
+    CodeMessageAssistant:
+      type: string
+      description: |
+        Nature d'un message de l'assistant : PRESENTATION (il se présente), SALUTATION, FAQ (réponse de la
+        base de la banque), FAQ_SUITE (relance), PRECISER (demande de précisions), PROPOSER_DEPOT,
+        TRANSFERT (passe la main à un conseiller), FIN, HORS_SUJET, INCOMPRIS, CODE_SECRET (rappel de ne
+        jamais communiquer un code)
+      enum: [PRESENTATION, SALUTATION, FAQ, FAQ_SUITE, PRECISER, PROPOSER_DEPOT, TRANSFERT, FIN, HORS_SUJET, INCOMPRIS, CODE_SECRET]
+    EchangeAssistant:
+      type: object
+      description: Un tour de la conversation. Pour l'assistant, seul le code compte ; le texte peut être omis.
+      required: [auteur]
+      properties:
+        auteur: { type: string, enum: [CLIENT, ASSISTANT] }
+        texte: { type: string, maxLength: 2000 }
+        code: { $ref: '#/components/schemas/CodeMessageAssistant' }
+    TourAssistant:
+      type: object
+      required: [echanges]
+      properties:
+        echanges:
+          type: array
+          maxItems: 30
+          description: Les échanges depuis l'ouverture, du plus ancien au plus récent ; seuls les derniers sont lus
+          items: { $ref: '#/components/schemas/EchangeAssistant' }
+    MessageAssistant:
+      type: object
+      required: [code, texte]
+      properties:
+        code: { $ref: '#/components/schemas/CodeMessageAssistant' }
+        texte: { type: string }
+    ReponseAssistant:
+      type: object
+      required: [messages, proposition, suggestions]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/MessageAssistant' }
+        proposition:
+          description: Réclamation préparée, à relire et compléter par le client avant l'envoi ; vide sinon
+          oneOf:
+            - type: object
+              required: [motif, categorieId, description]
+              properties:
+                motif: { type: string, enum: [DEPOT, TRANSFERT], description: "TRANSFERT : le client a demandé un conseiller" }
+                categorieId: { type: [string, 'null'], format: uuid }
+                description: { type: string, description: "Les mots du client, codes secrets retirés" }
+            - type: 'null'
+        suggestions:
+          type: array
+          description: Réponses proposées en un toucher
+          items: { type: string, examples: ['Parler à un conseiller'] }
+    CodeInterdit:
+      type: string
+      description: Ce que l'IA ne doit jamais écrire (décision I4)
+      enum: [REMBOURSEMENT_PROMIS, DELAI_PROMIS, STATUT_ANNONCE, CONSEIL_FINANCIER, CODE_SECRET_DEMANDE]
+    AlerteInterdit:
+      type: object
+      required: [code, libelle, extrait]
+      properties:
+        code: { $ref: '#/components/schemas/CodeInterdit' }
+        libelle: { type: string, examples: ['promet un délai'] }
+        extrait: { type: string, description: "Les mots en cause, sans accents ni majuscules", examples: ['sous 48 heures'] }
+    SuggestionReponse:
+      type: object
+      required: [brouillon, alertes, categorie, urgente, source]
+      properties:
+        brouillon: { type: string }
+        alertes:
+          type: array
+          description: Interdits trouvés dans le brouillon ; à corriger avant l'envoi
+          items: { $ref: '#/components/schemas/AlerteInterdit' }
+        categorie:
+          description: Catégorie qui conviendrait mieux, à titre indicatif ; vide si l'actuelle convient
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        urgente: { type: boolean, description: "La réclamation paraît urgente (fraude en cours, carte volée…), à titre indicatif" }
+        source: { type: string, enum: [IA, REGLES], description: "REGLES : sans fournisseur d'IA, ou s'il n'a pas répondu" }
+    ReponseBanque:
+      type: object
+      required: [id, question, reponse, active, ordre, alertes, modifieLe]
+      properties:
+        id: { type: string, format: uuid }
+        question: { type: string }
+        reponse: { type: string }
+        active: { type: boolean }
+        ordre: { type: integer }
+        alertes:
+          type: array
+          description: Interdits trouvés dans la réponse ; un avertissement, l'Admin Entreprise décide
+          items: { $ref: '#/components/schemas/AlerteInterdit' }
+        modifieLe: { $ref: '#/components/schemas/Horodatage' }
+    EcritureReponseBanque:
+      type: object
+      required: [question, reponse]
+      properties:
+        question: { type: string, minLength: 5, maxLength: 300, examples: ['Quels sont les horaires des agences ?'] }
+        reponse: { type: string, minLength: 5, maxLength: 2000 }
+        active: { type: boolean, default: true }
+        ordre: { type: integer, minimum: 0, maximum: 1000 }
+    ModificationReponseBanque:
+      type: object
+      minProperties: 1
+      properties:
+        question: { type: string, minLength: 5, maxLength: 300 }
+        reponse: { type: string, minLength: 5, maxLength: 2000 }
+        active: { type: boolean }
+        ordre: { type: integer, minimum: 0, maximum: 1000 }
+    ConsommationIa:
+      type: object
+      required: [mois, fournisseur, banques]
+      properties:
+        mois: { type: string, examples: ['2026-10'] }
+        fournisseur:
+          type: object
+          description: Fournisseur configuré aujourd'hui
+          required: [nom, modele]
+          properties:
+            nom: { type: string, examples: ['regles'] }
+            modele: { type: [string, 'null'] }
+        banques:
+          type: array
+          items:
+            type: object
+            required: [banque, assistantIa, tours, suggestions, parIa, regles, jetonsEntree, jetonsSortie, coutUsd]
+            properties:
+              banque: { $ref: '#/components/schemas/ReferenceNommee' }
+              assistantIa: { type: boolean }
+              tours: { type: integer, minimum: 0 }
+              suggestions: { type: integer, minimum: 0 }
+              parIa: { type: integer, minimum: 0 }
+              regles: { type: integer, minimum: 0 }
+              jetonsEntree: { type: integer, minimum: 0 }
+              jetonsSortie: { type: integer, minimum: 0 }
+              coutUsd: { type: number, minimum: 0, examples: [1.2345] }

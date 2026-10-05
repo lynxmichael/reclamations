@@ -57,6 +57,11 @@ const TITRES: Partial<Record<CodeErreur, string>> = {
   FONCTION_NON_OUVERTE: 'Fonction non ouverte à cette banque',
   GROUPE_INVALIDE: 'Groupe d\'agents invalide',
   ABSENCE_INVALIDE: 'Absence invalide',
+  DOUBLE_AUTHENTIFICATION_OBLIGATOIRE: 'Double authentification exigée par la banque',
+  DOUBLE_AUTHENTIFICATION_A_ACTIVER: 'Double authentification à activer d\'abord',
+  DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE: 'Double authentification déjà activée',
+  DOUBLE_AUTHENTIFICATION_INACTIVE: 'Double authentification non activée',
+  DOUBLE_AUTHENTIFICATION_NON_PREPAREE: 'Double authentification non préparée',
   ERREUR_INTERNE: 'Erreur interne',
 };
 

@@ -133,9 +133,11 @@ export class ServicePersonnel {
   /** Jeton et e-mail (contexte système), puis retour au contexte de la banque. */
   private async envoyerInvitation(tx: ClientTransaction, tenantId: string, utilisateurId: string): Promise<void> {
     await basculer(tx, contexte.systeme());
-    const u = await tx.utilisateur.findUniqueOrThrow({ where: { id: utilisateurId }, select: { id: true, tenantId: true, email: true, prenom: true, banque: { select: { nom: true } } } });
+    const u = await tx.utilisateur.findUniqueOrThrow({
+      where: { id: utilisateurId }, select: { id: true, tenantId: true, email: true, prenom: true, banque: { select: { nom: true, doubleAuthentificationObligatoire: true } } },
+    });
     const jeton = await nouveauJeton(tx, u.id, 'INVITATION', this.horloge());
-    await envoyerInvitation(tx, this.config, u, u.banque?.nom ?? null, jeton);
+    await envoyerInvitation(tx, this.config, u, u.banque?.nom ?? null, jeton, u.banque?.doubleAuthentificationObligatoire ?? true);
     await basculer(tx, contexte.banque(tenantId));
   }
 
@@ -198,8 +200,9 @@ export class ServicePersonnel {
       const u = await this.lu(tx, id);
       if (u.statut === 'DESACTIVE') {
         if (u.role !== 'ADMIN_ENTREPRISE') await this.exigerPlafond(tx, moi.tenantId, id);
-        // Sans TOTP activé, le compte n'a jamais été finalisé : il redevient une invitation
-        await tx.utilisateur.update({ where: { id }, data: { statut: u.totpActiveLe ? 'ACTIF' : 'INVITE', desactiveLe: null } });
+        // Un compte qui n'a jamais ouvert de session ni activé la double authentification n'a pas été
+        // finalisé : il redevient une invitation (étape 19 : on peut être actif sans double authentification)
+        await tx.utilisateur.update({ where: { id }, data: { statut: u.totpActiveLe || u.derniereConnexionLe ? 'ACTIF' : 'INVITE', desactiveLe: null } });
         await journaliser(tx, { tenantId: moi.tenantId, acteur: moi, action: 'personnel.reactive', entite: 'utilisateur', entiteId: id, trace: traceDe(appel) });
       }
       return vueUtilisateur(await this.lu(tx, id));
@@ -215,7 +218,10 @@ export class ServicePersonnel {
     });
   }
 
-  /** Téléphone perdu : le secret TOTP est effacé ; la prochaine connexion demandera un nouvel enrôlement. */
+  /**
+   * Téléphone perdu : le secret TOTP est effacé et les sessions fermées. La prochaine connexion demandera
+   * un nouvel enrôlement si la banque l'exige ; sinon la personne le réactive depuis « Mon compte » (étape 19).
+   */
   reinitialiserTotp(appel: Appel, id: string) {
     return this.dans(appel, async (tx, moi) => {
       await this.lu(tx, id);

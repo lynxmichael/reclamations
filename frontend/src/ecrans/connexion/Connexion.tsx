@@ -189,7 +189,7 @@ export function CodeTotp({
   surRetour,
 }: {
   banque: BanqueConnexion;
-  etape: S<'EtapeTotp'>;
+  etape: S<'EtapeConnexion'>;
   surValider?: (code: string) => void;
   erreur?: S<'Probleme'> | null;
   occupe?: boolean;
@@ -220,7 +220,7 @@ export function CodeTotp({
         </Bouton>
       </form>
       <p className="mt-5 text-sm leading-relaxed text-encre-3">
-        Cette étape expire dans {Math.round(etape.expireDans / 60)} minutes. Téléphone perdu ? Demandez à votre Admin Entreprise de réinitialiser votre double authentification.
+        Cette étape expire dans {Math.round((etape.expireDans ?? 300) / 60)} minutes. Téléphone perdu ? Demandez à votre Admin Entreprise de réinitialiser votre double authentification.
       </p>
       {surRetour && (
         <button type="button" onClick={surRetour} className="mt-3 text-[15px] font-semibold text-marque-texte hover:underline">
@@ -228,6 +228,30 @@ export function CodeTotp({
         </button>
       )}
     </CadreConnexion>
+  );
+}
+
+/**
+ * QR code et clé d'activation de la double authentification : à la première connexion, et depuis
+ * « Mon compte » (étape 19).
+ */
+export function CleTotp({ enrolement, className }: { enrolement: { otpauthUrl: string; secret: string }; className?: string }) {
+  const groupes = enrolement.secret.match(/.{1,4}/g) ?? [];
+  return (
+    <div className={cx('rounded-xl border border-trait p-4', className)}>
+      {/* Assez grand pour être lu de loin par un téléphone d'entrée de gamme (étape 11) */}
+      <div className="flex justify-center">
+        <QrCode texte={enrolement.otpauthUrl} taille={216} libelle="QR code d'activation de la double authentification (clé à saisir ci-dessous)" />
+      </div>
+      <p className="mt-2 text-center text-sm text-encre-2">Dans l'application : « + », puis « Scanner un code QR ».</p>
+      <div className="mt-4 border-t border-trait pt-3 text-sm">
+        <p className="text-encre-3">Impossible de scanner ? Choisissez « Saisir une clé de configuration » et recopiez :</p>
+        {/* Groupes de 4 jamais coupés : la clé se recopie groupe par groupe */}
+        <p className="chiffres mt-1 flex flex-wrap gap-x-2 font-bold tracking-wider text-encre" data-secret={enrolement.secret}>
+          {groupes.map((g, i) => <span key={i}>{g}</span>)}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -245,7 +269,6 @@ export function Activation({
   occupe?: boolean;
 }) {
   const [code, setCode] = useCode('', erreur);
-  const groupes = enrolement.secret.match(/.{1,4}/g) ?? [];
   return (
     <CadreConnexion banque={banque}>
       <ol className="flex items-center gap-2 text-sm font-semibold">
@@ -265,20 +288,7 @@ export function Activation({
       <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
         Scannez ce code avec une application d'authentification (Google Authenticator, Microsoft Authenticator…), puis saisissez le code qu'elle affiche.
       </p>
-      <div className="mt-5 rounded-xl border border-trait p-4">
-        {/* Assez grand pour être lu de loin par un téléphone d'entrée de gamme (étape 11) */}
-        <div className="flex justify-center">
-          <QrCode texte={enrolement.otpauthUrl} taille={216} libelle="QR code d'activation de la double authentification (clé à saisir ci-dessous)" />
-        </div>
-        <p className="mt-2 text-center text-sm text-encre-2">Dans l'application : « + », puis « Scanner un code QR ».</p>
-        <div className="mt-4 border-t border-trait pt-3 text-sm">
-          <p className="text-encre-3">Impossible de scanner ? Choisissez « Saisir une clé de configuration » et recopiez :</p>
-          {/* Groupes de 4 jamais coupés : la clé se recopie groupe par groupe */}
-          <p className="chiffres mt-1 flex flex-wrap gap-x-2 font-bold tracking-wider text-encre" data-secret={enrolement.secret}>
-            {groupes.map((g, i) => <span key={i}>{g}</span>)}
-          </p>
-        </div>
-      </div>
+      <CleTotp enrolement={enrolement} className="mt-5" />
       <AlerteErreur erreur={erreur} />
       <form
         className="mt-5 flex flex-col gap-4"

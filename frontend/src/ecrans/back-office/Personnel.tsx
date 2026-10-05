@@ -3,9 +3,12 @@
  * desactiverUtilisateur, reactiverUtilisateur, renvoyerInvitation, reinitialiserTotp). Le
  * superviseur consulte ; l'Admin Entreprise invite et modifie. Le plan limite les agents et
  * superviseurs actifs.
+ *
+ * Étape 19 (modifierSecuriteBanque) : l'Admin Entreprise rend la double authentification
+ * obligatoire pour tout le personnel, ou la laisse facultative ; il doit l'avoir activée lui-même.
  */
 import { useState } from 'react';
-import { Ellipsis, LockKeyhole, ShieldCheck, ShieldOff, UserPlus } from 'lucide-react';
+import { Ellipsis, LockKeyhole, ShieldCheck, ShieldHalf, ShieldOff, UserPlus } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Dialogue } from '../../ui/Dialogue';
 import { MenuActions, type ChoixMenu } from '../../ui/Menu';
@@ -32,6 +35,8 @@ export interface ActionsPersonnel {
   reactiver: (u: S<'Utilisateur'>) => Issue;
   renvoyerInvitation: (u: S<'Utilisateur'>) => void;
   reinitialiserTotp: (u: S<'Utilisateur'>) => Issue;
+  /** Étape 19 : double authentification obligatoire ou facultative */
+  changerDoubleAuthentification?: (obligatoire: boolean) => Issue;
   occupe?: boolean;
   erreurs?: Record<string, string>;
   /** L'utilisateur connecté : il ne peut pas se désactiver lui-même */
@@ -40,7 +45,9 @@ export interface ActionsPersonnel {
 
 const ROLES: RoleBanque[] = ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'];
 
-function FenetrePersonne({ u, superviseurs, actions, surFermer }: { u: S<'Utilisateur'> | null; superviseurs: S<'ReferenceNommee'>[]; actions: ActionsPersonnel; surFermer: () => void }) {
+function FenetrePersonne({ u, superviseurs, actions, surFermer, totpObligatoire }: {
+  u: S<'Utilisateur'> | null; superviseurs: S<'ReferenceNommee'>[]; actions: ActionsPersonnel; surFermer: () => void; totpObligatoire: boolean;
+}) {
   const [prenom, setPrenom] = useState(u?.prenom ?? '');
   const [nom, setNom] = useState(u?.nom ?? '');
   const [email, setEmail] = useState(u?.email ?? '');
@@ -57,7 +64,7 @@ function FenetrePersonne({ u, superviseurs, actions, surFermer }: { u: S<'Utilis
   return (
     <Dialogue
       titre={u ? `Modifier ${u.prenom} ${u.nom}` : 'Inviter une personne'}
-      description={!u && 'Elle reçoit un e-mail pour choisir son mot de passe et activer la double authentification. Le lien est valable 7 jours.'}
+      description={!u && `Elle reçoit un e-mail pour choisir son mot de passe${totpObligatoire ? ' et activer la double authentification' : ''}. Le lien est valable 7 jours.`}
       surFermer={surFermer}
       pied={
         <>
@@ -111,7 +118,49 @@ function FenetrePersonne({ u, superviseurs, actions, surFermer }: { u: S<'Utilis
   );
 }
 
-type Confirmation = { type: 'desactiver' | 'totp'; u: S<'Utilisateur'> };
+type Confirmation = { type: 'desactiver' | 'totp'; u: S<'Utilisateur'> } | { type: 'regle'; obligatoire: boolean };
+
+/**
+ * Étape 19 : la règle de double authentification de la banque, le nombre de comptes protégés et,
+ * pour l'Admin Entreprise, le bouton qui la change (il doit l'avoir activée lui-même pour l'exiger).
+ */
+function RegleDoubleAuthentification({
+  obligatoire, actifs, proteges, modifiable, moiActive, surChanger,
+}: {
+  obligatoire: boolean;
+  actifs: number;
+  proteges: number;
+  modifiable: boolean;
+  moiActive: boolean;
+  surChanger?: (obligatoire: boolean) => void;
+}) {
+  return (
+    <section aria-labelledby="regle-totp" className="flex items-start gap-4 rounded-xl border border-trait bg-surface px-5 py-4">
+      <span className={cx('flex h-10 w-10 shrink-0 items-center justify-center rounded-full', obligatoire ? 'bg-resolue-doux text-resolue' : 'bg-marque-doux text-marque-texte')}>
+        {obligatoire ? <ShieldCheck aria-hidden size={20} /> : <ShieldHalf aria-hidden size={20} />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 id="regle-totp" className="text-[17px] font-bold">
+          Double authentification : {obligatoire ? 'obligatoire' : 'facultative'}
+        </h2>
+        <p className="mt-0.5 text-[15px] leading-relaxed text-encre-2">
+          {obligatoire
+            ? 'Tout le personnel saisit un code de son application d\'authentification à chaque connexion. Qui ne l\'a pas encore activée le fait à sa prochaine connexion.'
+            : 'Chacun l\'active depuis « Mon compte ». Qui l\'a activée saisit un code à chaque connexion ; les autres se connectent avec leur mot de passe.'}
+        </p>
+        <p className="chiffres mt-1 text-sm text-encre-3">{proteges} compte{proteges > 1 ? 's' : ''} sur {actifs} l'{proteges > 1 ? 'ont' : 'a'} activée.</p>
+        {modifiable && !obligatoire && !moiActive && (
+          <p className="mt-1 text-sm font-semibold text-encre-2">Pour l'exiger de tous, activez-la d'abord sur votre compte (Mon compte).</p>
+        )}
+      </div>
+      {modifiable && surChanger && (
+        <Bouton variante={obligatoire ? 'secondaire' : 'principal'} disabled={!obligatoire && !moiActive} onClick={() => surChanger(!obligatoire)}>
+          {obligatoire ? 'Rendre facultative' : 'Rendre obligatoire'}
+        </Bouton>
+      )}
+    </section>
+  );
+}
 
 export function Personnel({
   page,
@@ -121,6 +170,8 @@ export function Personnel({
   maintenant,
   actions,
   superviseurs = [],
+  totpObligatoire = false,
+  moiTotpActif = true,
 }: {
   page: S<'PageUtilisateurs'>;
   plan: S<'ParametresBanque'>['plan'];
@@ -130,6 +181,9 @@ export function Personnel({
   actions?: ActionsPersonnel;
   /** Superviseurs actifs, proposés comme responsables d'un agent */
   superviseurs?: S<'ReferenceNommee'>[];
+  /** Étape 19 : règle de la banque, et si la personne connectée l'a activée sur son compte */
+  totpObligatoire?: boolean;
+  moiTotpActif?: boolean;
 }) {
   const [fenetre, setFenetre] = useState<{ u: S<'Utilisateur'> | null } | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -146,6 +200,8 @@ export function Personnel({
     return c;
   };
 
+  const enService = page.donnees.filter((u) => u.statut !== 'DESACTIVE');
+  const sansTotp = enService.filter((u) => !u.totpActif).length;
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
@@ -158,6 +214,15 @@ export function Personnel({
         </div>
         {modifiable && <Bouton variante="principal" icone={<UserPlus aria-hidden size={17} />} onClick={() => setFenetre({ u: null })}>Inviter une personne</Bouton>}
       </div>
+
+      <RegleDoubleAuthentification
+        obligatoire={totpObligatoire}
+        actifs={enService.length}
+        proteges={enService.length - sansTotp}
+        modifiable={modifiable}
+        moiActive={moiTotpActif}
+        surChanger={edition && actions?.changerDoubleAuthentification ? (o) => setConfirmation({ type: 'regle', obligatoire: o }) : undefined}
+      />
 
       <div className="overflow-hidden rounded-xl border border-trait bg-surface">
         <table className="w-full text-left text-[15px]">
@@ -207,7 +272,7 @@ export function Personnel({
                     )}
                     <div className="mt-1 flex items-start gap-1.5 text-sm text-encre-3">
                       {u.totpActif ? <ShieldCheck aria-hidden size={14} className="mt-0.5 shrink-0 text-resolue" /> : <ShieldOff aria-hidden size={14} className="mt-0.5 shrink-0" />}
-                      {u.totpActif ? 'Double authentification active' : 'Double authentification à activer'}
+                      {u.totpActif ? 'Double authentification active' : totpObligatoire ? 'Double authentification à activer' : 'Sans double authentification'}
                     </div>
                   </td>
                   <td className="py-3 pr-4 text-right">
@@ -233,8 +298,41 @@ export function Personnel({
         </p>
       )}
 
-      {actions && fenetre && <FenetrePersonne u={fenetre.u} superviseurs={superviseurs.filter((s) => s.id !== fenetre.u?.id)} actions={actions} surFermer={() => setFenetre(null)} />}
-      {actions && confirmation && (
+      {actions && fenetre && (
+        <FenetrePersonne u={fenetre.u} superviseurs={superviseurs.filter((s) => s.id !== fenetre.u?.id)} actions={actions} totpObligatoire={totpObligatoire} surFermer={() => setFenetre(null)} />
+      )}
+      {actions && confirmation?.type === 'regle' && (
+        <Dialogue
+          titre={confirmation.obligatoire ? 'Exiger la double authentification\u00a0?' : 'Ne plus exiger la double authentification\u00a0?'}
+          surFermer={() => setConfirmation(null)}
+          pied={
+            <>
+              <Bouton variante="discret" onClick={() => setConfirmation(null)}>Annuler</Bouton>
+              <Bouton
+                variante="principal"
+                disabled={actions.occupe}
+                onClick={async () => {
+                  const issue = await actions.changerDoubleAuthentification?.(confirmation.obligatoire);
+                  if (issue !== false) setConfirmation(null);
+                }}
+              >
+                {confirmation.obligatoire ? 'Rendre obligatoire' : 'Rendre facultative'}
+              </Bouton>
+            </>
+          }
+        >
+          <p className="text-[15px] leading-relaxed text-encre-2">
+            {confirmation.obligatoire
+              ? sansTotp === 0
+                ? 'Tout le personnel l\'a déjà activée : rien ne change pour personne, sauf qu\'elle ne pourra plus être désactivée.'
+                : sansTotp === 1
+                  ? 'Une personne ne l\'a pas activée : ses sessions ouvertes sont fermées maintenant, et elle l\'activera à sa prochaine connexion en scannant un QR code avec son téléphone.'
+                  : `${sansTotp} personnes ne l'ont pas activée : leurs sessions ouvertes sont fermées maintenant, et elles l'activeront à leur prochaine connexion en scannant un QR code avec leur téléphone.`
+              : 'Ceux qui l\'ont activée la gardent et peuvent la désactiver depuis « Mon compte ». Les autres se connecteront avec leur seul mot de passe.'}
+          </p>
+        </Dialogue>
+      )}
+      {actions && confirmation && confirmation.type !== 'regle' && (
         <Dialogue
           titre={confirmation.type === 'desactiver' ? `Désactiver ${confirmation.u.prenom} ${confirmation.u.nom} ?` : 'Réinitialiser la double authentification ?'}
           surFermer={() => setConfirmation(null)}
@@ -257,7 +355,9 @@ export function Personnel({
           <p className="text-[15px] leading-relaxed text-encre-2">
             {confirmation.type === 'desactiver'
               ? 'Ses sessions sont fermées tout de suite et elle ne peut plus se connecter. Son historique reste dans les réclamations et le journal. Vous pourrez réactiver le compte.'
-              : `À sa prochaine connexion, ${confirmation.u.prenom} scannera un nouveau QR code avec son téléphone. Ses sessions ouvertes sont fermées.`}
+              : totpObligatoire
+                ? `À sa prochaine connexion, ${confirmation.u.prenom} scannera un nouveau QR code avec son téléphone. Ses sessions ouvertes sont fermées.`
+                : `${confirmation.u.prenom} se connectera avec son mot de passe et pourra réactiver la double authentification depuis « Mon compte ». Ses sessions ouvertes sont fermées.`}
           </p>
         </Dialogue>
       )}

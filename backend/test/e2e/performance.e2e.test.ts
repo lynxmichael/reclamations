@@ -60,6 +60,7 @@ describe(`opérations courantes sur ${VOLUME} réclamations`, () => {
     ['fiche d\'une réclamation', (i: number) => client.appeler('lireReclamation', { jeton: superviseur, chemin: { id: ids[i * 7] } })],
     ['assignation (écriture + notifications + audit)', (i: number) => client.appeler('assignerReclamation', { jeton: superviseur, chemin: { id: ids[i * 11] }, corps: { agentId: j.horizon.comptes.salif.id } })],
     ['tableau de bord du mois (indicateurs du §6.6 et courbe)', (_: number) => client.appeler('lireIndicateurs', { jeton: superviseur })],
+    ['activité des agences du mois (étape 19)', (_: number) => client.appeler('lireIndicateursAgences', { jeton: superviseur })],
     ['tableau de bord sur un an, par semaine', (_: number) => client.appeler('lireIndicateurs', { jeton: superviseur, requete: { du: new Date(Date.now() - 365 * 86_400_000).toISOString(), regroupement: 'SEMAINE' } })],
     [`export CSV de toute la banque (plus de ${VOLUME} lignes)`, (_: number) => client.appeler('exporterReclamations', { jeton: superviseur })],
   ] as const)('%s : moins d\'une seconde', async (_nom, appel) => {

@@ -1,0 +1,38 @@
+{
+ "date": "2 octobre 2026 à 19:46",
+ "classement": [],
+ "regles": {
+  "nom": "Règles, sans IA",
+  "modele": "—",
+  "triExact": 100,
+  "triIntention": 100,
+  "triNeufs": 53.3,
+  "brouillonQualite": 93.1,
+  "brouillonsSansAlerte": 100,
+  "echecs": 0,
+  "dureeP50": 0,
+  "dureeP95": 1,
+  "jetonsTri": {
+   "entree": 0,
+   "sortie": 0
+  },
+  "jetonsBrouillon": {
+   "entree": 0,
+   "sortie": 0
+  },
+  "coutMensuel": null,
+  "notes": {
+   "donnees": null,
+   "interdits": 100,
+   "qualite": 97.2,
+   "cout": null,
+   "temps": null,
+   "total": null
+  }
+ },
+ "nonTestes": [
+  "Anthropic",
+  "OpenAI",
+  "Mistral AI"
+ ]
+}

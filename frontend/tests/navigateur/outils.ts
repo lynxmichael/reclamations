@@ -154,6 +154,8 @@ export async function capture(page: Page, nom: string, etape = 8) {
   const dossier = resolve(DOCS, `etape-${etape}-captures`);
   mkdirSync(dossier, { recursive: true });
   await page.waitForLoadState('networkidle').catch(() => undefined);
+  // Fin des transitions (couleur d'un bouton qui change de variante, par exemple)
+  await page.waitForTimeout(300);
   // Seul le dernier message affiché reste visible sur la capture. Masqués par le DOM, pas par une
   // feuille de style injectée : la CSP de production (style-src 'self') la refuserait.
   const anciens = (masquer: boolean) =>

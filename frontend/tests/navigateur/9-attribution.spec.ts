@@ -145,6 +145,9 @@ test.describe.serial('attribution et escalade automatiques (étape 16)', () => {
     await page.getByRole('link', { name: 'Absences' }).click();
     await expect(page.getByRole('heading', { name: 'Absences', level: 1 })).toBeVisible();
     await page.getByLabel('Agent').selectOption({ label: propose });
+    // Jusqu'à dans 10 jours : le soir ou le week-end, la suggestion vise le prochain jour ouvré (étape 16)
+    const dans10Jours = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+    await page.getByLabel('Dernier jour').fill(dans10Jours);
     await page.getByRole('button', { name: 'Déclarer l\'absence' }).click();
     await expect(page.getByText(`Absence de ${propose} déclarée`)).toBeVisible();
     await expect(page.getByRole('row', { name: new RegExp(propose) })).toContainText('En cours');

@@ -10,7 +10,7 @@ import { toBuffer, toString as qrEnSvg } from 'qrcode';
 import { CONFIGURATION, type Configuration } from '../../configuration/configuration.js';
 import { journaliser } from '../../infrastructure/audit/journal.js';
 import { BaseDonnees, type ClientTransaction } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
-import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
+import { basculer, contexte, enSerie } from '../../infrastructure/base-de-donnees/index.js';
 import { personnelBanque, traceDe, type Appel, type FichierRecu, type Personnel } from '../../infrastructure/contrat/appel.js';
 import { introuvable, invalideChamp, Probleme } from '../../infrastructure/contrat/probleme.js';
 import { svgSain, TYPES_LOGO, verifierFichiers } from '../../infrastructure/fichiers/fichiers.js';
@@ -76,6 +76,8 @@ export class ServiceParametrage {
       attributionAutomatique: b.attributionAutomatique,
       modeAttribution: b.modeAttribution,
       chatWeb: b.chatWeb,
+      assistantIa: b.assistantIa && b.chatWeb,
+      doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,
       couleurPrimaire: b.couleurPrimaire,
       couleurSecondaire: b.couleurSecondaire,
       logoUrl: urlLogo(b.logoCle),
@@ -98,6 +100,37 @@ export class ServiceParametrage {
       };
       await tx.banque.update({ where: { id: moi.tenantId }, data });
       await this.audit(tx, moi, appel, 'parametrage.apparence', 'banque', moi.tenantId, { champs: Object.keys(data) });
+      return this.parametres(tx, moi.tenantId);
+    });
+  }
+
+  /**
+   * Étape 19 : double authentification obligatoire ou facultative pour le personnel. Pour l'exiger,
+   * l'Admin Entreprise l'a activée lui-même ; les sessions ouvertes sans code sont alors fermées, et
+   * chacun l'active à sa prochaine connexion.
+   */
+  modifierSecurite(appel: Appel, m: { doubleAuthentificationObligatoire: boolean }) {
+    return this.dans(appel, async (tx, moi) => {
+      const obligatoire = m.doubleAuthentificationObligatoire;
+      const avant = await tx.banque.findUniqueOrThrow({ where: { id: moi.tenantId }, select: { doubleAuthentificationObligatoire: true } });
+      if (obligatoire) {
+        const lui = await tx.utilisateur.findUniqueOrThrow({ where: { id: moi.id }, select: { totpActiveLe: true } });
+        if (!lui.totpActiveLe) {
+          throw new Probleme(422, 'DOUBLE_AUTHENTIFICATION_A_ACTIVER', 'Activez d\'abord la double authentification sur votre compte (Mon compte), puis rendez-la obligatoire');
+        }
+      }
+      if (avant.doubleAuthentificationObligatoire === obligatoire) return this.parametres(tx, moi.tenantId);
+      await tx.banque.update({ where: { id: moi.tenantId }, data: { doubleAuthentificationObligatoire: obligatoire } });
+      let sessionsFermees = 0;
+      if (obligatoire) {
+        // Les sessions ne sont lisibles qu'en contexte système (étape 3)
+        await basculer(tx, contexte.systeme());
+        sessionsFermees = (await tx.sessionUtilisateur.updateMany({
+          where: { revoqueLe: null, utilisateur: { tenantId: moi.tenantId, totpActiveLe: null } }, data: { revoqueLe: this.horloge() },
+        })).count;
+        await basculer(tx, contexte.banque(moi.tenantId));
+      }
+      await this.audit(tx, moi, appel, 'parametrage.double_authentification', 'banque', moi.tenantId, { obligatoire, sessionsFermees });
       return this.parametres(tx, moi.tenantId);
     });
   }

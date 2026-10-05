@@ -13,6 +13,7 @@ import { Categories } from '../../ecrans/back-office/Categories';
 import { Horaires } from '../../ecrans/back-office/Horaires';
 import { Personnel } from '../../ecrans/back-office/Personnel';
 import { PointsDepot } from '../../ecrans/back-office/PointsDepot';
+import { ReponsesAssistant } from '../../ecrans/back-office/ReponsesAssistant';
 import { useAnnoncer } from '../commun/Annonces';
 import { useEcriture } from '../commun/ecriture';
 import { Chargement, ErreurChargement } from '../commun/Etats';
@@ -51,6 +52,29 @@ export function PageCategories() {
         erreurs,
         creer: (v) => ecrire(() => appeler('creerCategorie', { corps: { ...v, ordre: ordreSuivant } }), `Catégorie « ${v.nom} » créée : elle est proposée aux clients.`),
         modifier: (id, v) => ecrire(() => appeler('modifierCategorie', { chemin: { id }, corps: v }), v.ordre !== undefined && Object.keys(v).length === 1 ? undefined : 'Catégorie enregistrée.'),
+      }}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ Assistant IA (étape 18) */
+
+export function PageAssistant() {
+  const { appeler } = useConsole();
+  useTitre('Assistant IA');
+  const reponses = useQuery({ queryKey: ['reponses-assistant'], queryFn: () => appeler('listerReponsesAssistant') });
+  const { ecrire, occupe } = useEcriture([['reponses-assistant']]);
+  if (reponses.isPending) return <Chargement />;
+  if (reponses.isError) return <ErreurChargement erreur={reponses.error} surReessayer={() => void reponses.refetch()} />;
+  const ordreSuivant = Math.max(0, ...reponses.data.map((r) => r.ordre)) + 10;
+  return (
+    <ReponsesAssistant
+      reponses={reponses.data}
+      actions={{
+        occupe,
+        creer: (v) => ecrire(() => appeler('creerReponseAssistant', { corps: { ...v, ordre: Math.min(1000, ordreSuivant) } }), 'Réponse ajoutée : l\'assistant peut la donner aux clients.'),
+        modifier: (id, v) => ecrire(() => appeler('modifierReponseAssistant', { chemin: { id }, corps: v }), 'Réponse enregistrée.'),
+        supprimer: (id) => ecrire(() => appeler('supprimerReponseAssistant', { chemin: { id } }), 'Réponse supprimée.'),
       }}
     />
   );
@@ -181,6 +205,8 @@ export function PagePersonnel() {
       modifiable={moi.role === 'ADMIN_ENTREPRISE'}
       maintenant={new Date().toISOString()}
       superviseurs={superviseurs}
+      totpObligatoire={parametres.doubleAuthentificationObligatoire}
+      moiTotpActif={moi.totpActif}
       actions={{
         moiId: moi.id,
         occupe: occupe || renvoi.isPending,
@@ -190,7 +216,17 @@ export function PagePersonnel() {
         desactiver: (u) => ecrire(() => appeler('desactiverUtilisateur', { chemin: { id: u.id } }), `Compte de ${nomDe(u)} désactivé : ses sessions sont fermées.`),
         reactiver: (u) => ecrire(() => appeler('reactiverUtilisateur', { chemin: { id: u.id } }), `Compte de ${nomDe(u)} réactivé.`),
         renvoyerInvitation: (u) => renvoi.mutate(u),
-        reinitialiserTotp: (u) => ecrire(() => appeler('reinitialiserTotp', { chemin: { id: u.id } }), `Double authentification de ${nomDe(u)} réinitialisée : un nouveau QR code lui sera présenté à la connexion.`),
+        reinitialiserTotp: (u) => ecrire(
+          () => appeler('reinitialiserTotp', { chemin: { id: u.id } }),
+          parametres.doubleAuthentificationObligatoire
+            ? `Double authentification de ${nomDe(u)} réinitialisée : un nouveau QR code lui sera présenté à la connexion.`
+            : `Double authentification de ${nomDe(u)} réinitialisée : ${u.prenom} pourra la réactiver depuis « Mon compte ».`,
+        ),
+        // Étape 19 : les paramètres relus (useEcriture) mettent à jour la règle affichée
+        changerDoubleAuthentification: (obligatoire) => ecrire(
+          () => appeler('modifierSecuriteBanque', { corps: { doubleAuthentificationObligatoire: obligatoire } }),
+          obligatoire ? 'Double authentification obligatoire : qui ne l\'a pas activée le fera à sa prochaine connexion.' : 'Double authentification facultative : chacun choisit depuis « Mon compte ».',
+        ),
       }}
     />
   );

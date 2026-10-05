@@ -103,6 +103,7 @@ export function Banques({
                     {b.enqueteSatisfaction && <div>Enquête de satisfaction à la clôture</div>}
                     {b.attributionAutomatique && <div>Attribution et escalade automatiques</div>}
                     {b.chatWeb && <div>Chat web et boîte de réception</div>}
+                    {b.assistantIa && <div>Assistant IA</div>}
                   </td>
                   <td className="px-3 py-3.5">
                     {b.suspendueLe ? (
@@ -239,11 +240,12 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
   const [enquete, setEnquete] = useState(b.enqueteSatisfaction);
   const [attribution, setAttribution] = useState(b.attributionAutomatique);
   const [chat, setChat] = useState(b.chatWeb);
+  const [assistant, setAssistant] = useState(b.assistantIa);
   const [motif, setMotif] = useState('');
   const e = actions.erreurs ?? {};
   const valide = nom.trim().length >= 2 && Number(seuil) >= 1 && Number(seuil) <= 99 && Number(delai) >= 1 && Number(delai) <= 60;
   const enregistrer = async () => {
-    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat });
+    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat, assistantIa: chat && assistant });
     if (issue !== false) surFermer();
   };
   return (
@@ -317,6 +319,17 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
             <span>
               Chat web et boîte de réception (phase 2)
               <span className="block text-sm text-encre-3">Le client écrit à la banque dans un chat, sur le portail ; les agents répondent depuis leur boîte de réception. Makor ne lit jamais les conversations.</span>
+            </span>
+          </label>
+          <label className={cx('flex items-start gap-2.5 text-[15px]', !chat && 'opacity-55')}>
+            <input type="checkbox" checked={chat && assistant} disabled={!chat} onChange={(x) => setAssistant(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              Assistant IA (phase 2)
+              <span className="block text-sm text-encre-3">
+                {chat
+                  ? 'Sur le portail, un assistant automatique répond aux questions fréquentes avec les réponses de la banque, prépare la réclamation et passe la main à un conseiller ; les agents peuvent lui demander un brouillon. Usage facturé à la banque.'
+                  : 'Exige le chat web : l\'assistant passe la main à un conseiller dans le chat.'}
+              </span>
             </span>
           </label>
         </fieldset>

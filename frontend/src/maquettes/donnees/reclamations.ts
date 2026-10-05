@@ -172,6 +172,7 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
   attributionSuggeree: null,
   // Chat web (étape 17) : le client écrit depuis son espace ; il a le chat à l'écran
   conversation: { id: id('conversation', 42), canal: 'WEB', aRepondre: true, nonLue: true, clientEnLigne: true, luParLeClientLe: t('25/09 15:09') },
+  depotAssistant: false,
   escaladeeVers: null,
   client: { id: id('client', 1), nom: 'Yao Kouassi', email: 'yao.kouassi@exemple.ci', telephone: '+2250708091011' },
   creeLe: t('24/09 09:12'),

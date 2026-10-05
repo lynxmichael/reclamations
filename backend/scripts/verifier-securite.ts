@@ -389,6 +389,79 @@ async function main() {
     systeme.conversation.updateMany({ data: { avisClientLe: null } }));
 
   // ----------------------------------------------------------------------------------
+  cr.section('Assistant IA (étape 18)');
+
+  await refusCheck('Assistant ouvert sans le chat web', () =>
+    plateforme.banque.update({ where: { id: B.tenantId }, data: { assistantIa: true } }));
+  await cr.doitEtreRefuse('L\'Admin Entreprise ouvre lui-même l\'assistant (réservé au Super Admin)', '42501', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { assistantIa: true } }));
+  await cr.doitReussir('Le Super Admin ouvre l\'assistant d\'une banque qui a le chat', () =>
+    plateforme.banque.update({ where: { id: A.tenantId }, data: { assistantIa: true } }));
+  const reponseA = await enA.reponseAssistant.create({ data: { tenantId: A.tenantId, question: 'Horaires ?', reponse: 'De 8 h à 17 h.' } });
+  await proprietaire.reponseAssistant.create({ data: { tenantId: B.tenantId, question: 'Horaires ?', reponse: 'De 7 h 30 à 16 h.' } });
+  await cr.doitReussir('En contexte A, seule la base de réponses de A est visible', async () => {
+    const liste = await enA.reponseAssistant.findMany();
+    verifier(liste.length === 1 && liste[0]!.tenantId === A.tenantId, `${liste.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, écrire une réponse dans la base de B', '42501', () =>
+    enA.reponseAssistant.create({ data: { tenantId: B.tenantId, question: 'Q ?', reponse: 'R.' } }));
+  await cr.doitEtreRefuse('Déplacer une réponse vers une autre banque', '42501', () =>
+    enA.reponseAssistant.update({ where: { id: reponseA.id }, data: { tenantId: B.tenantId } }));
+  await refusCheck('Réponse vide', () =>
+    enA.reponseAssistant.update({ where: { id: reponseA.id }, data: { reponse: '   ' } }));
+  await cr.doitEtreRefuse('Super Admin : lire la base de réponses d\'une banque', '42501', () => plateforme.reponseAssistant.count());
+
+  const appel = { finalite: 'ACCUEIL_PORTAIL' as const, fournisseur: 'anthropic', modele: 'modele', jetonsEntree: 900, jetonsSortie: 40, coutMicroUsd: 1100, dureeMs: 800, issue: 'OK' as const };
+  const appelA = await enA.appelIa.create({ data: { tenantId: A.tenantId, ...appel } });
+  await proprietaire.appelIa.create({ data: { tenantId: B.tenantId, ...appel } });
+  await cr.doitReussir('Journal des appels sans contenu : aucune colonne de texte libre', async () => {
+    const colonnes = await proprietaire.$queryRaw<{ column_name: string; data_type: string }[]>`
+      SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'appel_ia' ORDER BY column_name`;
+    const textes = colonnes.filter((c) => ['text', 'character varying', 'json', 'jsonb'].includes(c.data_type)).map((c) => c.column_name);
+    verifier(JSON.stringify(textes) === JSON.stringify(['fournisseur', 'modele']), `colonnes de texte : ${textes.join(', ')}`);
+  });
+  await cr.doitReussir('En contexte A, seuls les appels de A sont visibles', async () => {
+    const n = await enA.appelIa.findMany();
+    verifier(n.length === 1 && n[0]!.tenantId === A.tenantId, `${n.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, journaliser un appel au nom de B', '42501', () =>
+    enA.appelIa.create({ data: { tenantId: B.tenantId, ...appel } }));
+  await cr.doitEtreRefuse('Modifier un appel journalisé (facturation)', '42501', () =>
+    enA.appelIa.update({ where: { id: appelA.id }, data: { jetonsEntree: 0 } }));
+  await cr.doitEtreRefuse('Effacer un appel journalisé', '42501', () => enA.appelIa.delete({ where: { id: appelA.id } }));
+  await refusCheck('Appel « règles » attribué à un fournisseur', () =>
+    enA.appelIa.create({ data: { tenantId: A.tenantId, ...appel, issue: 'REGLES' } }));
+  await refusCheck('Plafond atteint, mais des jetons comptés', () =>
+    enA.appelIa.create({ data: { tenantId: A.tenantId, ...appel, issue: 'PLAFOND' } }));
+  await cr.doitReussir('Super Admin : le journal des appels de toutes les banques (facturation)', async () => {
+    const n = await plateforme.appelIa.count();
+    verifier(n === 2, `${n} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('Super Admin : écrire dans le journal des appels', '42501', () =>
+    plateforme.appelIa.create({ data: { tenantId: A.tenantId, ...appel } }));
+  await cr.doitEtreRefuse('Contexte système : aucun accès au journal des appels', '42501', () => systeme.appelIa.count());
+
+  // ----------------------------------------------------------------------------------
+  cr.section('Double authentification au choix de la banque (étape 19)');
+
+  await cr.doitReussir('L\'Admin Entreprise rend la double authentification obligatoire dans sa banque', async () => {
+    const b = await enA.banque.update({ where: { id: A.tenantId }, data: { doubleAuthentificationObligatoire: true } });
+    verifier(b.doubleAuthentificationObligatoire, 'réglage non enregistré');
+  });
+  await cr.doitReussir('En contexte A, le réglage de B ne peut pas être changé (aucune ligne)', async () => {
+    const { count } = await enA.banque.updateMany({ where: { id: B.tenantId }, data: { doubleAuthentificationObligatoire: true } });
+    verifier(count === 0, `${count} ligne(s) modifiée(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte banque, marquer la double authentification d\'un compte comme activée', '42501', () =>
+    enA.utilisateur.update({ where: { id: A.agent.id }, data: { totpActiveLe: new Date() } }));
+  await cr.doitEtreRefuse('En contexte banque, effacer le secret TOTP d\'un compte', '42501', () =>
+    enA.utilisateur.update({ where: { id: A.agent.id }, data: { totpSecretChiffre: null } }));
+  await cr.doitReussir('Le Super Admin lit le réglage de chaque banque', async () => {
+    const b = await plateforme.banque.findMany({ select: { id: true, doubleAuthentificationObligatoire: true } });
+    verifier(b.find((x) => x.id === A.tenantId)?.doubleAuthentificationObligatoire === true && b.find((x) => x.id === B.tenantId)?.doubleAuthentificationObligatoire === false, JSON.stringify(b));
+  });
+
+  // ----------------------------------------------------------------------------------
   cr.section('Transactions dans un contexte');
 
   await cr.doitReussir('Dépôt atomique en contexte A : numéro, réclamation et événement', async () => {

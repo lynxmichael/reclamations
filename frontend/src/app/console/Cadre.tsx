@@ -11,6 +11,7 @@ import { messageErreur } from '../../api/client';
 import { useEtatSession, type SessionPersonnel } from '../../api/session-personnel';
 import type { S } from '../../api/types';
 import { CadreBackOffice, type PageBackOffice } from '../../ecrans/back-office/CadreBackOffice';
+import { BandeauDoubleAuthentification } from '../../ecrans/back-office/Compte';
 import { CadreConsole } from '../../ecrans/plateforme/Console';
 import { ROLE } from '../../ui/libelles';
 import { useAnnoncer } from '../commun/Annonces';
@@ -53,6 +54,8 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
   const annoncer = useAnnoncer();
   const deconnecter = useDeconnexion(session);
   const [notifsOuvertes, setNotifsOuvertes] = useState(false);
+  // Étape 19 : rappel de la double authentification, masquable jusqu'au prochain chargement de la console
+  const [rappelMasque, setRappelMasque] = useState(false);
   const parametres = useQuery({ queryKey: ['parametres'], queryFn: () => appeler('lireParametresBanque'), staleTime: 60_000 });
   const notifications = useQuery({ queryKey: ['notifications'], queryFn: () => appeler('listerNotifications', { requete: { parPage: 20 } }), refetchInterval: INTERVALLE_MS });
   const agent = moi.role === 'AGENT';
@@ -116,6 +119,9 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
         }}
         surToutLire={() => toutLire.mutate()}
         surDeconnexion={() => void deconnecter()}
+        bandeau={!moi.totpActif && !rappelMasque && page !== 'compte' ? (
+          <BandeauDoubleAuthentification lien={ROUTES_BANQUE.compte} surOuvrir={() => navigate(ROUTES_BANQUE.compte)} surMasquer={() => setRappelMasque(true)} />
+        ) : undefined}
       >
         <Outlet />
       </CadreBackOffice>

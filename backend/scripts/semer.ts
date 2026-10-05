@@ -29,6 +29,7 @@ async function principal() {
       enquetes: true,
       attribution: true,
       chat: true,
+      assistant: true,
       motDePasse: demo.motDePasse,
       graineTotp: demo.graineTotp,
       lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}`,

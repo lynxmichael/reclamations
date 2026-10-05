@@ -223,6 +223,17 @@ export function PageFiche() {
     escalader: () => void executer(() => appeler('escaladerReclamation', { chemin: { id }, corps: {} }), 'Réclamation escaladée au superviseur.'),
     cloturer: (motif, precision) => executer(() => appeler('cloturerDeForce', { chemin: { id }, corps: { motif, precision } }), 'Réclamation clôturée de force, motif inscrit au journal.'),
     ouvrirConversation: (conversation) => navigate(`${ROUTES_BANQUE.conversations}/${conversation}?filtre=toutes`),
+    // Assistant IA (étape 18) : un brouillon, que l'agent relit et envoie lui-même
+    suggerer: parametres.assistantIa && f.operationsPossibles.includes('REPONDRE_AU_CLIENT')
+      ? async () => {
+        try {
+          return await appeler('suggererReponse', { chemin: { id } });
+        } catch (e) {
+          annoncer(messageErreur(e), 'erreur');
+          return null;
+        }
+      }
+      : undefined,
   };
   const telecharger = (piece: S<'PieceJointe'>) =>
     void appeler('telechargerPieceJointe', { chemin: { id, pieceId: piece.id } })

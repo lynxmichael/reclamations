@@ -1,5 +1,9 @@
 /**
- * Authentification du personnel (décision C6) : e-mail et mot de passe, puis code TOTP obligatoire.
+ * Authentification du personnel (décision C6) : e-mail et mot de passe, puis code TOTP.
+ *
+ * Étape 19 : la double authentification est exigée du Super Admin et du personnel d'une banque qui
+ * l'a rendue obligatoire ; ailleurs, elle est facultative et chacun l'active depuis « Mon compte ».
+ * Une fois activée sur un compte, elle est demandée à chaque connexion.
  *
  * - jeton d'accès de 15 minutes, refresh token en cookie httpOnly changé à chaque usage ;
  *   réutiliser un refresh token déjà remplacé révoque toute la session (vol présumé) ;
@@ -40,8 +44,19 @@ export interface SessionOuverte {
 const CHAMPS_AUTH = {
   id: true, tenantId: true, role: true, statut: true, email: true, nom: true, prenom: true,
   motDePasseHash: true, totpSecretChiffre: true, totpActiveLe: true, echecsConnexion: true, verrouilleJusquA: true,
-  banque: { select: { id: true, nom: true, slug: true, fuseauHoraire: true, suspendueLe: true } },
+  banque: { select: { id: true, nom: true, slug: true, fuseauHoraire: true, suspendueLe: true, doubleAuthentificationObligatoire: true } },
 } as const;
+
+/** Suite d'une connexion ; avec la session à poser en cookie quand le mot de passe a suffi (étape 19). */
+export interface ResultatConnexion {
+  readonly etape: S<'EtapeConnexion'>;
+  readonly session?: SessionOuverte;
+}
+
+/** Étape 19 : double authentification exigée du Super Admin, et du personnel d'une banque qui l'a rendue obligatoire. */
+export function totpExige(u: { role: Personnel['role']; banque: { doubleAuthentificationObligatoire: boolean } | null }): boolean {
+  return u.role === 'SUPER_ADMIN' || !u.banque || u.banque.doubleAuthentificationObligatoire;
+}
 
 @Injectable()
 export class ServiceAuth {
@@ -63,7 +78,7 @@ export class ServiceAuth {
   //  Connexion
   // =========================================================================
 
-  async connexion(entree: { email: string; motDePasse: string }, appel: Appel): Promise<S<'EtapeTotp'>> {
+  async connexion(entree: { email: string; motDePasse: string }, appel: Appel): Promise<ResultatConnexion> {
     await this.limiteur.exigerSousLimite(LIMITES.echecsConnexionParIp, appel.ip, 'Trop de tentatives de connexion depuis cette adresse');
     const maintenant = this.horloge();
     const email = entree.email.trim().toLowerCase();
@@ -78,19 +93,35 @@ export class ServiceAuth {
     }
     this.exigerBanqueOuverte(u);
 
-    if (!u.totpActiveLe) {
-      // Première connexion après une réinitialisation du TOTP : nouvel enrôlement
-      const secret = nouveauSecret();
-      await this.bd.enSysteme((tx) => tx.utilisateur.update({ where: { id: u.id }, data: { totpSecretChiffre: chiffrer(this.config.cleTotp, secret) } }));
-      const jeton = await this.jetons.signerIntermediaire('enrolement-totp', u.id);
-      return {
-        etape: 'ENROLEMENT_TOTP_REQUIS',
-        jetonIntermediaire: jeton,
-        expireDans: DUREE_INTERMEDIAIRE,
-        enrolement: { jetonIntermediaire: jeton, ...(await enrolement(secret, u.email)) },
-      };
+    if (u.totpActiveLe) {
+      return { etape: { etape: 'TOTP_REQUIS', jetonIntermediaire: await this.jetons.signerIntermediaire('etape-totp', u.id), expireDans: DUREE_INTERMEDIAIRE } };
     }
-    return { etape: 'TOTP_REQUIS', jetonIntermediaire: await this.jetons.signerIntermediaire('etape-totp', u.id), expireDans: DUREE_INTERMEDIAIRE };
+    // Exigée mais pas encore activée (première connexion, réinitialisation, banque qui vient de l'exiger)
+    if (totpExige(u)) return { etape: await this.etapeEnrolement(u) };
+    // Étape 19 : facultative et non activée, le mot de passe suffit
+    return this.sessionSansTotp(u, maintenant, appel);
+  }
+
+  /** Nouveau secret à activer avec un premier code (activerTotp). */
+  private async etapeEnrolement(u: UtilisateurAuth): Promise<S<'EtapeConnexion'>> {
+    const secret = nouveauSecret();
+    await this.bd.enSysteme((tx) => tx.utilisateur.update({ where: { id: u.id }, data: { totpSecretChiffre: chiffrer(this.config.cleTotp, secret) } }));
+    const jeton = await this.jetons.signerIntermediaire('enrolement-totp', u.id);
+    return {
+      etape: 'ENROLEMENT_TOTP_REQUIS',
+      jetonIntermediaire: jeton,
+      expireDans: DUREE_INTERMEDIAIRE,
+      enrolement: { jetonIntermediaire: jeton, ...(await enrolement(secret, u.email)) },
+    };
+  }
+
+  /** Session ouverte sur le seul mot de passe (étape 19) ; une invitation acceptée devient un compte actif. */
+  private async sessionSansTotp(u: UtilisateurAuth, maintenant: Date, appel: Appel): Promise<ResultatConnexion> {
+    if (u.statut === 'INVITE') {
+      await this.bd.enSysteme((tx) => tx.utilisateur.update({ where: { id: u.id }, data: { statut: 'ACTIF' } }));
+    }
+    const session = await this.ouvrirSession({ ...u, statut: 'ACTIF' }, maintenant, appel, 'auth.connexion', { doubleAuthentification: false });
+    return { etape: { etape: 'SESSION_OUVERTE', session: session.corps }, session };
   }
 
   async validerCodeTotp(entree: { jetonIntermediaire: string; code: string }, appel: Appel): Promise<SessionOuverte> {
@@ -110,9 +141,8 @@ export class ServiceAuth {
   //  Invitation et enrôlement TOTP
   // =========================================================================
 
-  async accepterInvitation(entree: { jeton: string; motDePasse: string }, appel: Appel): Promise<S<'EnrolementTotp'>> {
+  async accepterInvitation(entree: { jeton: string; motDePasse: string }, appel: Appel): Promise<ResultatConnexion> {
     const maintenant = this.horloge();
-    const secret = nouveauSecret();
     const u = await this.bd.enSysteme(async (tx) => {
       const jeton = await tx.jetonUtilisateur.findUnique({ where: { jetonHash: empreinte(entree.jeton) } });
       if (!jeton || jeton.type !== 'INVITATION' || jeton.utiliseLe || jeton.expireLe <= maintenant) {
@@ -124,13 +154,15 @@ export class ServiceAuth {
       exigerRobustesse(entree.motDePasse, u);
       await tx.utilisateur.update({
         where: { id: u.id },
-        data: { motDePasseHash: await hacherMotDePasse(entree.motDePasse), totpSecretChiffre: chiffrer(this.config.cleTotp, secret), totpActiveLe: null },
+        data: { motDePasseHash: await hacherMotDePasse(entree.motDePasse), totpSecretChiffre: null, totpActiveLe: null },
       });
       await tx.jetonUtilisateur.update({ where: { id: jeton.id }, data: { utiliseLe: maintenant } });
       await journaliser(tx, { tenantId: u.tenantId, acteur: this.personnel(u, ''), action: 'personnel.invitation_acceptee', entite: 'utilisateur', entiteId: u.id, trace: traceDe(appel) });
       return u;
     });
-    return { jetonIntermediaire: await this.jetons.signerIntermediaire('enrolement-totp', u.id), ...(await enrolement(secret, u.email)) };
+    // Étape 19 : l'activation de la double authentification suit seulement si la banque l'exige
+    if (totpExige(u)) return { etape: await this.etapeEnrolement(u) };
+    return this.sessionSansTotp(u, maintenant, appel);
   }
 
   async activerTotp(entree: { jetonIntermediaire: string; code: string }, appel: Appel): Promise<SessionOuverte> {
@@ -149,7 +181,7 @@ export class ServiceAuth {
       await tx.utilisateur.update({ where: { id: u.id }, data: { totpActiveLe: maintenant, statut: 'ACTIF' } });
       await journaliser(tx, { tenantId: u.tenantId, acteur: this.personnel(u, ''), action: 'auth.totp_active', entite: 'utilisateur', entiteId: u.id, trace: traceDe(appel) });
     });
-    return this.ouvrirSession({ ...u, statut: 'ACTIF' }, maintenant, appel, 'auth.connexion');
+    return this.ouvrirSession({ ...u, statut: 'ACTIF', totpActiveLe: maintenant }, maintenant, appel, 'auth.connexion');
   }
 
   // =========================================================================
@@ -178,6 +210,8 @@ export class ServiceAuth {
       if (s.expireLe <= maintenant) return jetonInvalide('Session expirée : reconnectez-vous');
       const u = await this.charger(tx, { id: s.utilisateurId });
       if (!u || u.statut !== 'ACTIF' || u.banque?.suspendueLe) return jetonInvalide('Session fermée : reconnectez-vous');
+      // Étape 19 : une session ouverte sans code ne survit pas à une banque qui exige maintenant la double authentification
+      if (!u.totpActiveLe && totpExige(u)) return jetonInvalide('Votre banque exige maintenant la double authentification : reconnectez-vous pour l\'activer');
       await tx.sessionUtilisateur.update({ where: { id: s.id }, data: { remplaceLe: maintenant } });
       const nouveau = randomBytes(32).toString('base64url');
       await tx.sessionUtilisateur.create({
@@ -244,6 +278,59 @@ export class ServiceAuth {
   }
 
   // =========================================================================
+  //  Mon compte : double authentification (étape 19)
+  // =========================================================================
+
+  /** Nouveau secret à scanner ; il ne protège le compte qu'après confirmerTotp. */
+  async preparerTotp(personnel: Personnel): Promise<S<'EnrolementCompte'>> {
+    const u = await this.bd.enSysteme((tx) => this.charger(tx, { id: personnel.id }));
+    if (!u) throw jetonInvalide();
+    if (u.totpActiveLe) throw new Probleme(409, 'DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE', 'La double authentification est déjà activée sur votre compte');
+    const secret = nouveauSecret();
+    await this.bd.enSysteme((tx) => tx.utilisateur.update({ where: { id: u.id }, data: { totpSecretChiffre: chiffrer(this.config.cleTotp, secret) } }));
+    return enrolement(secret, u.email);
+  }
+
+  async confirmerTotp(personnel: Personnel, code: string, appel: Appel): Promise<S<'Moi'>> {
+    const maintenant = this.horloge();
+    const u = await this.bd.enSysteme((tx) => this.charger(tx, { id: personnel.id }));
+    if (!u) throw jetonInvalide();
+    if (u.totpActiveLe) throw new Probleme(409, 'DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE', 'La double authentification est déjà activée sur votre compte');
+    if (!u.totpSecretChiffre) throw new Probleme(409, 'DOUBLE_AUTHENTIFICATION_NON_PREPAREE', 'Affichez d\'abord le QR code, puis saisissez le code de l\'application');
+    this.exigerNonVerrouille(u, maintenant);
+    await this.verifierCode(u, code, maintenant, appel);
+    await this.bd.enSysteme(async (tx) => {
+      await tx.utilisateur.update({ where: { id: u.id }, data: { totpActiveLe: maintenant, echecsConnexion: 0 } });
+      await journaliser(tx, { tenantId: u.tenantId, acteur: personnel, action: 'auth.totp_active', entite: 'utilisateur', entiteId: u.id, trace: traceDe(appel) });
+    });
+    return moiDe({ ...u, totpActiveLe: maintenant });
+  }
+
+  /** Avec un code valide ; refusé si la banque l'exige. Les autres sessions de la personne sont fermées. */
+  async desactiverTotp(personnel: Personnel, code: string, appel: Appel): Promise<S<'Moi'>> {
+    const maintenant = this.horloge();
+    const u = await this.bd.enSysteme((tx) => this.charger(tx, { id: personnel.id }));
+    if (!u) throw jetonInvalide();
+    if (!u.totpActiveLe || !u.totpSecretChiffre) throw new Probleme(409, 'DOUBLE_AUTHENTIFICATION_INACTIVE', 'La double authentification n\'est pas activée sur votre compte');
+    if (totpExige(u)) {
+      throw new Probleme(422, 'DOUBLE_AUTHENTIFICATION_OBLIGATOIRE', 'Votre banque exige la double authentification : elle ne peut pas être désactivée');
+    }
+    this.exigerNonVerrouille(u, maintenant);
+    await this.verifierCode(u, code, maintenant, appel);
+    await this.bd.enSysteme(async (tx) => {
+      await tx.utilisateur.update({ where: { id: u.id }, data: { totpSecretChiffre: null, totpActiveLe: null, echecsConnexion: 0 } });
+      const fermees = await tx.sessionUtilisateur.updateMany({
+        where: { utilisateurId: u.id, revoqueLe: null, famille: { not: personnel.session } }, data: { revoqueLe: maintenant },
+      });
+      await journaliser(tx, {
+        tenantId: u.tenantId, acteur: personnel, action: 'auth.totp_desactive', entite: 'utilisateur', entiteId: u.id,
+        donnees: { autresSessionsFermees: fermees.count }, trace: traceDe(appel),
+      });
+    });
+    return moiDe({ ...u, totpActiveLe: null });
+  }
+
+  // =========================================================================
   //  Outils
   // =========================================================================
 
@@ -292,7 +379,7 @@ export class ServiceAuth {
     await this.redis.client.set(`intermediaire:${jti}`, '1', 'EX', DUREE_INTERMEDIAIRE + 60).catch(() => undefined);
   }
 
-  private async ouvrirSession(u: UtilisateurAuth, maintenant: Date, appel: Appel, action: string): Promise<SessionOuverte> {
+  private async ouvrirSession(u: UtilisateurAuth, maintenant: Date, appel: Appel, action: string, donnees?: Record<string, unknown>): Promise<SessionOuverte> {
     const refreshToken = randomBytes(32).toString('base64url');
     const famille = randomUUID();
     const expireLe = new Date(maintenant.getTime() + DUREE_SESSION_HEURES * 3_600_000);
@@ -304,7 +391,7 @@ export class ServiceAuth {
         },
       });
       await tx.utilisateur.update({ where: { id: u.id }, data: { echecsConnexion: 0, verrouilleJusquA: null, derniereConnexionLe: maintenant } });
-      await journaliser(tx, { tenantId: u.tenantId, acteur: this.personnel(u, famille), action, entite: 'utilisateur', entiteId: u.id, trace: traceDe(appel) });
+      await journaliser(tx, { tenantId: u.tenantId, acteur: this.personnel(u, famille), action, entite: 'utilisateur', entiteId: u.id, donnees, trace: traceDe(appel) });
     });
     return { corps: await this.corpsSession(u, famille), refreshToken, expireLe };
   }
@@ -335,10 +422,10 @@ interface UtilisateurAuth {
   totpActiveLe: Date | null;
   echecsConnexion: number;
   verrouilleJusquA: Date | null;
-  banque: { id: string; nom: string; slug: string; fuseauHoraire: string; suspendueLe: Date | null } | null;
+  banque: { id: string; nom: string; slug: string; fuseauHoraire: string; suspendueLe: Date | null; doubleAuthentificationObligatoire: boolean } | null;
 }
 
-export function moiDe(u: Pick<UtilisateurAuth, 'id' | 'email' | 'nom' | 'prenom' | 'role' | 'banque'>): S<'Moi'> {
+export function moiDe(u: Pick<UtilisateurAuth, 'id' | 'email' | 'nom' | 'prenom' | 'role' | 'banque' | 'totpActiveLe'>): S<'Moi'> {
   return {
     id: u.id,
     email: u.email,
@@ -346,6 +433,8 @@ export function moiDe(u: Pick<UtilisateurAuth, 'id' | 'email' | 'nom' | 'prenom'
     prenom: u.prenom,
     role: u.role,
     banque: u.banque ? { id: u.banque.id, nom: u.banque.nom, slug: u.banque.slug, fuseauHoraire: u.banque.fuseauHoraire } : null,
+    totpActif: u.totpActiveLe !== null,
+    totpObligatoire: totpExige(u),
   };
 }
 

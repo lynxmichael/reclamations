@@ -1,0 +1,69 @@
+{
+  "description": "Fournisseurs candidats du banc d'essai (étape 18, décision I6). Tarifs et politiques relevés le 02/10/2026 sur les pages publiques des fournisseurs : à reconfirmer à la signature. Chaque modèle et chaque tarif se remplacent par les variables BANC_<FOURNISSEUR>_MODELE, BANC_<FOURNISSEUR>_PRIX_ENTREE et BANC_<FOURNISSEUR>_PRIX_SORTIE.",
+  "hypotheseMensuelle": { "tours": 3000, "brouillons": 300, "commentaire": "Volume d'une banque moyenne par mois : tours de l'assistant du portail et brouillons demandés par les agents." },
+  "ponderation": { "donnees": 30, "interdits": 25, "qualite": 20, "cout": 15, "temps": 10 },
+  "grilleDonnees": {
+    "description": "Critères notés de 0 à 2 d'après les documents publics ; total ramené sur 100. Proposé à l'étape 18, à valider (et à revoir sur les contrats signés).",
+    "criteres": {
+      "entrainement": "2 : jamais utilisé pour entraîner sans accord explicite ; 1 : exclu par défaut sur l'API mais réglage ou conditions à vérifier ; 0 : utilisé par défaut",
+      "conservation": "2 : rien de conservé par défaut ; 1 : 30 jours au plus par défaut, conservation nulle (ZDR) possible par contrat ; 0 : plus de 30 jours",
+      "lieu": "2 : traitement en Côte d'Ivoire ou dans l'UEMOA ; 1 : région choisie par contrat (Union européenne, États-Unis) ; 0 : traitement mondial, sans choix. Aucun candidat n'héberge en Côte d'Ivoire : le transfert hors du pays relève de l'ARTCI dans tous les cas",
+      "contrat": "2 : accord de traitement des données (DPA) standard avec clauses de transfert ; 1 : sur demande ; 0 : aucun",
+      "certifications": "2 : SOC 2 Type II et ISO 27001 ; 1 : l'une des deux ; 0 : aucune"
+    }
+  },
+  "candidats": [
+    {
+      "fournisseur": "anthropic",
+      "nom": "Anthropic",
+      "modele": "claude-haiku-4-5",
+      "libelleModele": "Claude Haiku 4.5",
+      "prixEntree": 1,
+      "prixSortie": 5,
+      "sourcesTarif": ["https://platform.claude.com/docs/en/about-claude/pricing"],
+      "donnees": {
+        "entrainement": { "note": 2, "constat": "Les données de l'API ne servent pas à l'entraînement sans autorisation." },
+        "conservation": { "note": 1, "constat": "Contenu non conservé par défaut, sauf pour certains modèles (30 jours) ; conservation nulle (ZDR) sur contrat." },
+        "lieu": { "note": 0, "constat": "Traitement « global » ; le choix des États-Unis (inference_geo, +10 %) n'existe qu'à partir des modèles 4.6, pas pour Haiku 4.5." },
+        "contrat": { "note": 2, "constat": "DPA intégré aux conditions commerciales, avec clauses de transfert." },
+        "certifications": { "note": 2, "constat": "SOC 2 Type II, ISO 27001 (centre de confiance)." }
+      },
+      "sourcesDonnees": ["https://www.anthropic.com/legal/commercial-terms", "https://privacy.claude.com", "https://trust.anthropic.com"]
+    },
+    {
+      "fournisseur": "openai",
+      "nom": "OpenAI",
+      "modele": "gpt-6-luna",
+      "libelleModele": "GPT-6 Luna (à reconfirmer)",
+      "prixEntree": 0.05,
+      "prixSortie": 0.25,
+      "remarqueTarif": "Deux pages d'OpenAI se contredisent (gpt-6-luna à 0,05 / 0,25 $ sur developers.openai.com ; « GPT-5.6 Luna » à 0,20 / 1,20 $ sur openai.com) : à reconfirmer avant l'essai.",
+      "sourcesTarif": ["https://developers.openai.com/api/docs/pricing", "https://openai.com/api/pricing/"],
+      "donnees": {
+        "entrainement": { "note": 2, "constat": "Les données de l'API ne servent pas à l'entraînement par défaut (partage sur accord)." },
+        "conservation": { "note": 1, "constat": "Journaux de surveillance des abus conservés 30 jours ; conservation nulle (ZDR) sur approbation." },
+        "lieu": { "note": 1, "constat": "Résidence des données par région, dont l'Europe (+10 %)." },
+        "contrat": { "note": 2, "constat": "DPA standard avec clauses de transfert." },
+        "certifications": { "note": 2, "constat": "SOC 2 Type II, ISO 27001 (centre de confiance)." }
+      },
+      "sourcesDonnees": ["https://openai.com/enterprise-privacy/", "https://platform.openai.com/docs/guides/your-data", "https://trust.openai.com"]
+    },
+    {
+      "fournisseur": "mistral",
+      "nom": "Mistral AI",
+      "modele": "mistral-small-latest",
+      "libelleModele": "Mistral Small 4",
+      "prixEntree": 0.15,
+      "prixSortie": 0.6,
+      "sourcesTarif": ["https://mistral.ai/pricing"],
+      "donnees": {
+        "entrainement": { "note": 1, "constat": "Politique de confidentialité : entraînement possible sur intérêt légitime, avec un réglage de refus dans le compte ; l'API payante serait exclue (sources tierces) : à vérifier au contrat." },
+        "conservation": { "note": 1, "constat": "Entrées et sorties conservées 30 jours glissants, sauf conservation nulle (ZDR)." },
+        "lieu": { "note": 1, "constat": "Hébergement dans l'Union européenne par défaut." },
+        "contrat": { "note": 2, "constat": "DPA disponible." },
+        "certifications": { "note": 1, "constat": "Certifications annoncées à reconfirmer sur le centre de confiance." }
+      },
+      "sourcesDonnees": ["https://mistral.ai/terms", "https://trust.mistral.ai"]
+    }
+  ]
+}

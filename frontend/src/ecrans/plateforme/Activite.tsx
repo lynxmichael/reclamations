@@ -1,7 +1,8 @@
 /**
  * Activité de toutes les banques (lireIndicateursPlateforme) et facturation des SMS du mois
  * (lireFacturationSms). Métadonnées seulement : volumes, taux, compteurs. Étape 15 : totaux des
- * enquêtes de satisfaction par banque, jamais les commentaires des clients.
+ * enquêtes de satisfaction par banque, jamais les commentaires des clients. Étape 18 : usage de
+ * l'assistant IA par banque (lireConsommationIa), d'après un journal qui ne garde aucun message.
  */
 import type { ReactNode } from 'react';
 import { CalendarDays, ChevronDown, Download } from 'lucide-react';
@@ -17,12 +18,17 @@ const STATUTS = ['Ouverte', 'En cours', 'En attente client', 'Résolue', 'Clôtu
 export function Activite({
   indicateurs,
   sms,
+  ia,
   choixMois,
   surExporterSms,
+  surExporterIa,
   chargement,
 }: {
   indicateurs: S<'IndicateursPlateforme'>;
   sms: S<'FacturationSms'>;
+  /** Étape 18 : usage de l'assistant IA du mois */
+  ia?: S<'ConsommationIa'>;
+  surExporterIa?: () => void;
   /** Étape 9 : le choix du mois (sinon, celui de la maquette) */
   choixMois?: ReactNode;
   surExporterSms?: () => void;
@@ -154,6 +160,8 @@ export function Activite({
         </table>
         <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">Un long SMS, ou un SMS avec certains accents (ê, â, ô…), est découpé en plusieurs segments, chacun facturé.</p>
       </Panneau>
+
+      {ia && <ConsommationIa ia={ia} surExporter={surExporterIa} />}
       </div>
     </div>
   );
@@ -206,5 +214,56 @@ export function Alertes({
         Une alerte urgente donne la banque, le numéro, la catégorie et l'heure. Le détail reste visible seulement par le personnel de la banque.
       </p>
     </div>
+  );
+}
+
+const dollars = (n: number) => `${n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} $`;
+
+/** Usage de l'assistant IA (étape 18) : les banques qui l'ont, ou qui s'en sont servies ce mois-là. */
+function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExporter?: () => void }) {
+  const lignes = ia.banques.filter((b) => b.assistantIa || b.tours + b.suggestions > 0);
+  return (
+    <Panneau
+      titre={`Assistant IA de ${nomMois(ia.mois)}`}
+      sansMarge
+      action={surExporter && <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter l'usage en CSV</Bouton>}
+    >
+      <table className="w-full text-left text-[15px]">
+        <thead>
+          <tr className="border-b border-trait text-[13px] text-encre-3">
+            <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Banque</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Tours du portail</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Brouillons</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Par l'IA</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Par les règles</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Jetons</th>
+            <th scope="col" className="py-2.5 pr-5 pl-3 text-right font-semibold">Coût</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.length === 0 && (
+            <tr><td colSpan={7} className="px-5 py-6 text-center text-encre-3">Aucune banque n'a l'assistant IA ce mois-ci.</td></tr>
+          )}
+          {lignes.map((b) => (
+            <tr key={b.banque.id} className="border-b border-trait last:border-0">
+              <td className="py-3 pr-3 pl-5 font-semibold">
+                {b.banque.nom}
+                {!b.assistantIa && <span className="ml-2 text-sm font-normal text-encre-3">(fermé depuis)</span>}
+              </td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.tours)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.suggestions)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.parIa)}</td>
+              <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.regles)}</td>
+              <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.jetonsEntree + b.jetonsSortie)}</td>
+              <td className="chiffres py-3 pr-5 pl-3 text-right font-semibold">{dollars(b.coutUsd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
+        Fournisseur configuré : {ia.fournisseur.nom === 'regles' ? 'aucun (règles seules, rien n\'est envoyé)' : `${ia.fournisseur.nom}${ia.fournisseur.modele ? `, ${ia.fournisseur.modele}` : ''}`}.
+        {' '}« Par les règles » : sans fournisseur, plafond du jour atteint, délai dépassé ou réponse hors format. Le journal ne garde aucun message, seulement les volumes.
+      </p>
+    </Panneau>
   );
 }

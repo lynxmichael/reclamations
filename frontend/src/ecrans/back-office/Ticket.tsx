@@ -6,8 +6,9 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowUpRight, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, MessagesSquare, Phone, QrCode, SendHorizontal, Sparkles, UserRound, X,
+  ArrowUpRight, Bot, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, MessagesSquare, Phone, QrCode, SendHorizontal, Sparkles, TriangleAlert, UserRound, X,
 } from 'lucide-react';
+import { LIBELLE_INTERDIT, verifierInterdits } from '@domaine/ia/interdits';
 import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Liste, Panneau, Texte, cx } from '../../ui/composants';
@@ -34,6 +35,8 @@ export interface ActionsFiche {
   cloturer?: (motif: S<'MotifClotureForcee'>, precision: string) => Issue;
   /** Chat web (étape 17) : la conversation dans la boîte de réception */
   ouvrirConversation?: (conversationId: string) => void;
+  /** Assistant IA (étape 18) : un brouillon de réponse, que l'agent relit et envoie lui-même (suggererReponse) */
+  suggerer?: () => Promise<S<'SuggestionReponse'> | null>;
   /** Une action est en cours : ses boutons attendent */
   occupe?: boolean;
 }
@@ -67,7 +70,49 @@ function Message({ m, nomClient }: { m: S<'ReclamationDetail'>['messages'][numbe
   );
 }
 
-function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; actions?: ActionsFiche; suggestion?: string }) {
+/**
+ * Brouillon de l'assistant IA (étape 18) : d'où il vient, ce qu'il suggère (catégorie, urgence), à titre
+ * indicatif. Les interdits sont revérifiés à chaque frappe (domaine/ia/interdits, comme l'API) : l'agent
+ * les voit disparaître en corrigeant. Rien n'est bloqué : l'agent décide (décision I4).
+ */
+function AideIa({ s, texte, r, actions }: { s: S<'SuggestionReponse'>; texte: string; r: S<'ReclamationDetail'>; actions?: ActionsFiche }) {
+  const alertes = verifierInterdits(texte);
+  return (
+    <div className="mb-3 rounded-lg border border-marque/25 bg-marque-doux/60 px-3.5 py-3 text-sm" data-testid="aide-ia">
+      <p className="flex items-center gap-1.5 font-semibold text-marque-texte">
+        <Sparkles aria-hidden size={15} />
+        {s.source === 'IA' ? 'Brouillon proposé par l\'assistant IA' : 'Brouillon type (assistant IA indisponible)'} : relisez-le, corrigez-le, puis envoyez-le vous-même.
+      </p>
+      {alertes.length > 0 ? (
+        <ul className="mt-2 flex flex-col gap-1" aria-label="À corriger avant l'envoi">
+          {alertes.map((a) => (
+            <li key={a.code} className="flex items-start gap-1.5 font-semibold text-urgent">
+              <TriangleAlert aria-hidden size={15} className="mt-0.5 shrink-0" />
+              <span>Le texte {LIBELLE_INTERDIT[a.code]} : « {a.extrait} ». À corriger avant l'envoi.</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1.5 text-encre-2">Aucune promesse, aucun statut annoncé, aucun conseil, aucune demande de code.</p>
+      )}
+      {(s.categorie || s.urgente) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-encre-2">
+          {s.categorie && <span>Catégorie qui conviendrait mieux : <strong className="text-encre">{s.categorie.nom}</strong></span>}
+          {s.urgente && (
+            <span className="inline-flex items-center gap-2">
+              <span className="font-semibold text-urgent">Paraît urgente</span>
+              {r.operationsPossibles.includes('CHANGER_PRIORITE') && r.priorite !== 'URGENTE' && (
+                <Bouton taille="petit" icone={<Flame aria-hidden size={14} />} onClick={actions?.priorite} disabled={actions?.occupe}>Passer en urgent</Bouton>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Redaction({ r, actions, suggestion, suggestionIa }: { r: S<'ReclamationDetail'>; actions?: ActionsFiche; suggestion?: string; suggestionIa?: S<'SuggestionReponse'> }) {
   const peutRepondre = r.operationsPossibles.includes('REPONDRE_AU_CLIENT');
   const peutNoter = r.operationsPossibles.includes('NOTE_INTERNE');
   // Depuis « Ouverte », répondre prend la réclamation en charge (S1) : la question reste possible ensuite
@@ -75,16 +120,32 @@ function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; acti
   // Onglet choisi ; sans choix, la réponse quand elle devient possible (après une assignation)
   const [choix, setMode] = useState<'reponse' | 'note' | null>(null);
   const mode = peutRepondre ? (choix ?? 'reponse') : 'note';
-  const [texte, setTexte] = useState(suggestion ?? '');
+  const [ia, setIa] = useState<S<'SuggestionReponse'> | null>(suggestionIa ?? null);
+  const [texte, setTexte] = useState(suggestionIa?.brouillon ?? suggestion ?? '');
   const [attendre, setAttendre] = useState(false);
   const [fichiers, setFichiers] = useState<File[]>([]);
+  const [prepare, setPrepare] = useState(false);
+  const suggerer = async () => {
+    if (!actions?.suggerer) return;
+    setPrepare(true);
+    try {
+      const s = await actions.suggerer();
+      if (s) {
+        setIa(s);
+        setTexte(s.brouillon);
+      }
+    } finally {
+      setPrepare(false);
+    }
+  };
   if (!peutRepondre && !peutNoter) return null;
   const note = mode === 'note';
   // Répondre depuis « Ouverte » prend en charge : il faut d'abord un agent assigné
   const attendAgent = !peutRepondre && r.statut === 'OUVERTE' && !r.agent;
   return (
     <div className={cx('rounded-xl border', note ? 'border-attente/35 bg-attente-doux/50' : 'border-trait-fort bg-surface')}>
-      <div role="tablist" className="flex gap-1 border-b border-inherit px-3 pt-2">
+      <div className="flex items-end gap-2 border-b border-inherit pr-3">
+      <div role="tablist" className="flex gap-1 px-3 pt-2">
         {peutRepondre && (
           <button type="button" role="tab" aria-selected={!note} onClick={() => setMode('reponse')} className={cx('-mb-px border-b-[3px] px-2.5 py-2 text-[15px] font-semibold', !note ? 'border-marque text-encre' : 'border-transparent text-encre-3')}>
             Répondre au client
@@ -97,7 +158,14 @@ function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; acti
           </button>
         )}
       </div>
+        {!note && actions?.suggerer && (
+          <Bouton taille="petit" variante="discret" className="mb-1.5 ml-auto" icone={<Sparkles aria-hidden size={15} />} onClick={() => void suggerer()} disabled={prepare || actions.occupe}>
+            {prepare ? 'Rédaction…' : 'Suggérer une réponse'}
+          </Bouton>
+        )}
+      </div>
       <div className="p-4">
+        {!note && ia && <AideIa s={ia} texte={texte} r={r} actions={actions} />}
         <label htmlFor="redaction" className="sr-only">{note ? 'Note interne' : 'Réponse au client'}</label>
         <Texte
           id="redaction"
@@ -134,6 +202,7 @@ function Redaction({ r, actions, suggestion }: { r: S<'ReclamationDetail'>; acti
               setTexte('');
               setAttendre(false);
               setFichiers([]);
+              setIa(null);
             }}
           >
             {actions?.occupe ? 'Envoi…' : note ? 'Ajouter la note' : 'Envoyer au client'}
@@ -261,8 +330,8 @@ export function Ticket({
   delaiClotureJours: number;
   seuil: number;
   actions?: ActionsFiche;
-  /** Textes proposés (démo) : réponse au client, réponse finale */
-  suggestions?: { reponse?: string; resolution?: string };
+  /** Textes proposés (démo) : réponse au client, réponse finale ; brouillon de l'assistant IA (maquettes, étape 18) */
+  suggestions?: { reponse?: string; resolution?: string; ia?: S<'SuggestionReponse'> };
   /** Fenêtres de dialogue au-dessus de tout l'écran (application), plutôt que du cadre (démo) */
   ecran?: boolean;
 }) {
@@ -313,6 +382,12 @@ export function Ticket({
               </span>
             )}
             <span className="text-[15px] text-encre-2">{r.categorie.nom}</span>
+            {r.depotAssistant && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-marque-doux px-2 py-0.5 text-[13px] font-semibold text-marque-texte" title="Le client a préparé sa réclamation avec l'assistant automatique du portail, puis l'a relue et envoyée">
+                <Bot aria-hidden size={14} />
+                Déposée avec l'assistant
+              </span>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -366,7 +441,7 @@ export function Ticket({
             <ol className="flex flex-col gap-3">
               {r.messages.map((m) => <Message key={m.id} m={m} nomClient={r.client.nom} />)}
             </ol>
-            <Redaction key={`${r.id}-${r.statut}-${r.messages.length}`} r={r} actions={actions} suggestion={suggestions?.reponse} />
+            <Redaction key={`${r.id}-${r.statut}-${r.messages.length}`} r={r} actions={actions} suggestion={suggestions?.reponse} suggestionIa={suggestions?.ia} />
           </section>
         </div>
 

@@ -165,6 +165,84 @@ describe('tableau de bord de la banque (lireIndicateurs)', () => {
   });
 });
 
+describe('activité des agences (étape 19)', () => {
+  type Ligne = {
+    agence: { id: string; nom: string; active: boolean } | null; total: number; resolues: number; urgentes: number;
+    delaiPremiereReponseMoyenMinutes: number | null; delaiResolutionMoyenMinutes: number | null;
+    tauxRespectSla: number | null; tauxResolutionPremierContact: number | null;
+    charge: Record<string, number>; parCategorie: unknown[]; agents: { cle: string; libelle: string; total: number }[];
+    pointsDepot: { libelle: string; canal: string; total: number }[]; groupe: unknown; satisfaction: unknown;
+  };
+  const lire = async (jeton: string, requete: Record<string, string> = {}) => {
+    const r = await client.appeler('lireIndicateursAgences', { jeton, requete });
+    expect(r.statut, JSON.stringify(r.corps)).toBe(200);
+    return r.corps.agences as Ligne[];
+  };
+
+  it('une ligne par agence, aux définitions du tableau de bord : le scénario du fichier est à l\'agence du Plateau', async () => {
+    const lignes = await lire(jt.fatou, { categorieId: categorie, du: debutTest.toISOString() });
+    const plateau = lignes.find((l) => l.agence?.nom === 'Plateau')!;
+    expect(plateau).toMatchObject({ total: 5, resolues: 4, urgentes: 0, tauxRespectSla: 1, tauxResolutionPremierContact: 0.25 });
+    expect(plateau.charge).toEqual({ aTraiter: 1, enAttenteClient: 0, enAlerte: 0, enRetard: 0 });
+    expect(plateau.parCategorie).toEqual([{ cle: categorie, libelle: '=Reporting e2e', total: 5 }]);
+    expect(plateau.agents).toEqual([{ cle: j.alpha.comptes.aya.id, libelle: 'Aya Konan', total: 4 }]);
+    expect(plateau.pointsDepot).toContainEqual(expect.objectContaining({ libelle: 'Hall d\'accueil', canal: 'QR_CODE', total: 5 }));
+    // Les autres agences actives figurent, sans activité ; aucune ligne sans agence ici
+    const autres = lignes.filter((l) => l.agence && l.agence.nom !== 'Plateau');
+    expect(autres.map((l) => l.agence!.nom)).toEqual(expect.arrayContaining(['Bouaké Commerce', 'Cocody Angré']));
+    expect(autres.every((l) => l.total === 0 && l.tauxRespectSla === null && l.delaiResolutionMoyenMinutes === null)).toBe(true);
+    expect(lignes.some((l) => l.agence === null)).toBe(false);
+    expect(lignes[0]).toBe(plateau);
+
+    // Mêmes chiffres que le tableau de bord filtré sur l'agence
+    const tb = (await client.appeler('lireIndicateurs', { jeton: jt.fatou, requete: { categorieId: categorie, du: debutTest.toISOString(), agenceId: plateau.agence!.id } })).corps;
+    expect(plateau).toMatchObject({
+      total: tb.total, delaiPremiereReponseMoyenMinutes: tb.delaiPremiereReponseMoyenMinutes, delaiResolutionMoyenMinutes: tb.delaiResolutionMoyenMinutes,
+      tauxRespectSla: tb.tauxRespectSla, tauxResolutionPremierContact: tb.tauxResolutionPremierContact, charge: tb.charge,
+    });
+  });
+
+  it('toute la banque : les lignes font le tableau de bord ; le lien web compte à l\'agence choisie par le client, sinon sans agence', async () => {
+    // Une catégorie à part : les réclamations du scénario du fichier restent cinq pour les tests suivants
+    const autre = (await client.appeler('creerCategorie', { jeton: jt.fatou, corps: { nom: 'Agences e2e', delaiCibleMinutes: 480 } })).corps.id as string;
+    const lien = async (agenceId?: string) => {
+      const r = await client.appeler('deposerReclamation', {
+        ip: nouvelleIp(), chemin: { code: j.alpha.points.lien },
+        corps: { categorieId: autre, ...(agenceId ? { agenceId } : {}), description: 'Dépôt par le site web', nom: 'Client Lien', telephone: `0701000${compteur++}`, consentement: true, versionPolitique: '2026-09' },
+      });
+      expect(r.statut).toBe(201);
+    };
+    await lien(j.alpha.agences['Bouaké Commerce']);
+    await lien();
+    const lignes = await lire(jt.serge, { categorieId: autre, du: debutTest.toISOString() });
+    const bouake = lignes.find((l) => l.agence?.nom === 'Bouaké Commerce')!;
+    expect(bouake.total).toBe(1);
+    expect(bouake.pointsDepot).toContainEqual(expect.objectContaining({ libelle: 'Site web, page Contact', canal: 'LIEN_WEB', total: 1 }));
+    const sans = lignes[lignes.length - 1]!;
+    expect(sans.agence).toBeNull();
+    expect(sans).toMatchObject({ total: 1, groupe: null });
+    expect(sans.pointsDepot).toEqual([expect.objectContaining({ libelle: 'Site web, page Contact', total: 1 })]);
+
+    // Sans filtre (le mois en cours) : la somme des agences fait la banque, la charge aussi
+    const toutes = await lire(jt.fatou);
+    const banque = (await client.appeler('lireIndicateurs', { jeton: jt.fatou })).corps;
+    const somme = (f: (l: Ligne) => number) => toutes.reduce((n, l) => n + f(l), 0);
+    expect(somme((l) => l.total)).toBe(banque.total);
+    for (const cle of ['aTraiter', 'enAttenteClient', 'enAlerte', 'enRetard']) expect(somme((l) => l.charge[cle]!)).toBe(banque.charge[cle]);
+    // Les points de dépôt font le total de chaque ligne
+    for (const l of toutes) expect(l.pointsDepot.reduce((n, p) => n + p.total, 0)).toBe(l.total);
+    // Filtre par canal
+    const qr = await lire(jt.fatou, { categorieId: categorie, du: debutTest.toISOString(), canal: 'QR_CODE' });
+    expect(qr.find((l) => l.agence?.nom === 'Plateau')!.total).toBe(5);
+    expect(qr.some((l) => l.agence === null)).toBe(false);
+  });
+
+  it('réservée aux superviseurs et à l\'Admin Entreprise : un agent reçoit 403', async () => {
+    expect((await client.appeler('lireIndicateursAgences', { jeton: jt.aya })).statut).toBe(403);
+    expect((await client.appeler('lireIndicateursAgences', { jeton: jt.sa })).statut).toBe(403);
+  });
+});
+
 describe('export CSV (critère 11)', () => {
   const lire = (octets: Buffer) => {
     const texte = octets.toString('utf8');

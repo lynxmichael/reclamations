@@ -52,7 +52,7 @@ export class SessionPersonnel {
     if (!(await this.renouveler())) this.changer({ statut: 'deconnecte', motif: null });
   }
 
-  /** Après validerCodeTotp ou activerTotp. */
+  /** Après validerCodeTotp, activerTotp, ou une connexion sans code (étape 19). */
   ouvrir(session: S<'SessionPersonnel'>): void {
     this.jeton = session.jetonAcces;
     this.expireLe = Date.now() + session.expireDans * 1000;
@@ -61,6 +61,11 @@ export class SessionPersonnel {
     if (this.etat.statut !== 'connecte' || this.etat.moi.id !== session.utilisateur.id || JSON.stringify(this.etat.moi) !== JSON.stringify(session.utilisateur)) {
       this.changer({ statut: 'connecte', moi: session.utilisateur });
     }
+  }
+
+  /** Profil changé pendant la session (étape 19 : double authentification activée ou désactivée). */
+  actualiser(moi: S<'Moi'>): void {
+    if (this.etat.statut === 'connecte' && this.etat.moi.id === moi.id) this.changer({ statut: 'connecte', moi });
   }
 
   /** Nouveau jeton d'accès par le refresh token ; un seul renouvellement à la fois. */

@@ -18,7 +18,7 @@ import { filtresReclamations } from '../reclamations/reclamations.controller.js'
 import { BOM, ligne, type Cellule } from './csv.js';
 import {
   CANAUX, MODES_CLOTURE, MOTIFS_CLOTURE, PRIORITES, STATUTS,
-  facturationSms, filtresDe, indicateursBanque, indicateursPlateforme, periodeDe, regroupementDe,
+  facturationSms, filtresDe, indicateursAgences, indicateursBanque, indicateursPlateforme, periodeDe, regroupementDe,
 } from './indicateurs.js';
 
 /** Lignes d'un export au plus (contrat : 400 EXPORT_TROP_VOLUMINEUX au-delà) */
@@ -113,6 +113,19 @@ export class ServiceReporting {
     });
   }
 
+  /** Activité des agences (étape 19) : superviseurs et Admin Entreprise, toute la banque. */
+  agences(appel: Appel, q: Record<string, unknown>) {
+    const moi = personnelBanque(appel);
+    const maintenant = this.horloge();
+    return this.bd.enBanque(moi.tenantId, async (tx) => {
+      const { fuseauHoraire, enqueteSatisfaction } = await tx.banque.findUniqueOrThrow({
+        where: { id: moi.tenantId }, select: { fuseauHoraire: true, enqueteSatisfaction: true },
+      });
+      const { agenceId: _agence, ...filtres } = filtresDe(q, periodeDe(q, fuseauHoraire, maintenant));
+      return indicateursAgences(tx, filtres, maintenant, enqueteSatisfaction);
+    });
+  }
+
   /**
    * Export CSV diffusé par lots de 1 000 lignes (un agent n'exporte que ses réclamations : mêmes
    * règles que sa file, étape 11), du plus récent au plus ancien (curseur sur la
@@ -187,6 +200,11 @@ export class ReportingControleur {
   @Operation('lireIndicateurs')
   indicateurs(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
     return this.service.indicateurs(a, e.requete);
+  }
+
+  @Operation('lireIndicateursAgences')
+  agences(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
+    return this.service.agences(a, e.requete);
   }
 
   @Operation('exporterReclamations')

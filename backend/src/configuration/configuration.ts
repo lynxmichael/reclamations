@@ -39,7 +39,39 @@ export interface Configuration {
   readonly validerReponses: boolean;
   /** Difficulté de base de l'anti-robot du portail (ANTI_ROBOT_MAXIMUM, étape 11) */
   readonly antiRobotMaximum: number;
+  /** Assistant IA (étape 18) : règles seules, ou fournisseur derrière un adaptateur remplaçable (décision I6) */
+  readonly ia: ConfigurationIa;
 }
+
+export type NomFournisseurIa = 'anthropic' | 'openai' | 'mistral';
+export const FOURNISSEURS_IA: readonly NomFournisseurIa[] = ['anthropic', 'openai', 'mistral'];
+
+/** Adresse de l'API de chaque fournisseur (modifiable par IA_URL : passerelle, région) */
+export const URL_IA_PAR_DEFAUT: Record<NomFournisseurIa, string> = {
+  anthropic: 'https://api.anthropic.com/v1/messages',
+  openai: 'https://api.openai.com/v1/chat/completions',
+  mistral: 'https://api.mistral.ai/v1/chat/completions',
+};
+
+export interface ConfigurationFournisseurIa {
+  readonly fournisseur: NomFournisseurIa;
+  readonly modele: string;
+  readonly cle: string;
+  readonly url: string;
+  /** Au-delà, la réponse vient des règles */
+  readonly delaiMs: number;
+  /** Tarif en dollars par million de jetons, pour le coût de chaque appel */
+  readonly prixEntree: number;
+  readonly prixSortie: number;
+}
+
+export type ConfigurationIa = (
+  | { readonly fournisseur: 'regles' }
+  | ConfigurationFournisseurIa
+) & {
+  /** Appels au fournisseur par banque et par jour (UTC) ; au-delà, les règles prennent le relais */
+  readonly plafondJour: number;
+};
 
 export type ConfigurationSms =
   | { readonly mode: 'journal' }
@@ -128,6 +160,7 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
     sms: lireSms(env, production, erreurs),
     validerReponses: booleen('VALIDER_REPONSES', !production),
     antiRobotMaximum,
+    ia: lireIa(env, production, erreurs),
   };
   if (erreurs.length) throw new ErreurConfiguration(erreurs);
   return config;
@@ -157,6 +190,51 @@ function lireSms(env: NodeJS.ProcessEnv, production: boolean, erreurs: string[])
   if (cle.length < 16) erreurs.push('SMS_CLE est obligatoire avec SMS_MODE=http (16 caractères au moins)');
   if (!/^[A-Za-z0-9 ]{1,11}$/.test(expediteur)) erreurs.push('SMS_EXPEDITEUR : 11 caractères au plus, lettres sans accent, chiffres et espaces');
   return { mode, url, cle, expediteur };
+}
+
+/**
+ * IA_FOURNISSEUR=regles (par défaut : aucun envoi), anthropic, openai ou mistral. Avec un fournisseur :
+ * IA_MODELE et IA_CLE obligatoires ; IA_URL (https en production), IA_DELAI_MS (8000),
+ * IA_PRIX_ENTREE et IA_PRIX_SORTIE (dollars par million de jetons, 0 par défaut). Toujours :
+ * IA_PLAFOND_JOUR (2000 appels par banque et par jour).
+ */
+function lireIa(env: NodeJS.ProcessEnv, production: boolean, erreurs: string[]): ConfigurationIa {
+  const entier = (nom: string, defaut: number, min: number, max: number) => {
+    const v = Number(env[nom]?.trim() || defaut);
+    if (!Number.isInteger(v) || v < min || v > max) erreurs.push(`${nom} doit être un entier entre ${min} et ${max}`);
+    return v;
+  };
+  const prix = (nom: string) => {
+    const v = Number(env[nom]?.trim() || 0);
+    if (!Number.isFinite(v) || v < 0 || v > 1000) erreurs.push(`${nom} : tarif en dollars par million de jetons, entre 0 et 1000`);
+    return v;
+  };
+  const plafondJour = entier('IA_PLAFOND_JOUR', 2000, 1, 1_000_000);
+  const fournisseur = env.IA_FOURNISSEUR?.trim().toLowerCase() || 'regles';
+  if (fournisseur === 'regles') return { fournisseur, plafondJour };
+  if (!FOURNISSEURS_IA.includes(fournisseur as NomFournisseurIa)) {
+    erreurs.push(`IA_FOURNISSEUR doit valoir regles, ${FOURNISSEURS_IA.join(', ')}`);
+    return { fournisseur: 'regles', plafondJour };
+  }
+  const nom = fournisseur as NomFournisseurIa;
+  const modele = env.IA_MODELE?.trim() ?? '';
+  if (!modele) erreurs.push(`IA_MODELE est obligatoire avec IA_FOURNISSEUR=${nom} (nom du modèle chez le fournisseur)`);
+  const cle = env.IA_CLE?.trim() ?? '';
+  if (cle.length < 16) erreurs.push(`IA_CLE est obligatoire avec IA_FOURNISSEUR=${nom} (clé d'API du fournisseur)`);
+  const url = env.IA_URL?.trim() || URL_IA_PAR_DEFAUT[nom];
+  let adresse: URL | null = null;
+  try {
+    adresse = new URL(url);
+  } catch {
+    erreurs.push('IA_URL invalide');
+  }
+  if (adresse && production && adresse.protocol !== 'https:') erreurs.push('IA_URL doit être en https en production');
+  return {
+    fournisseur: nom, modele, cle, url, plafondJour,
+    delaiMs: entier('IA_DELAI_MS', 8000, 1000, 30_000),
+    prixEntree: prix('IA_PRIX_ENTREE'),
+    prixSortie: prix('IA_PRIX_SORTIE'),
+  };
 }
 
 function lireVersion(): string {

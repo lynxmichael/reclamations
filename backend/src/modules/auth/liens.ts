@@ -34,10 +34,13 @@ export function lienReinitialisation(config: Configuration, jeton: string): stri
   return `${config.urlConsole}/mot-de-passe#jeton=${jeton}`;
 }
 
-/** E-mail d'invitation (boîte d'envoi, contexte système). Son contenu est masqué après l'envoi. */
+/**
+ * E-mail d'invitation (boîte d'envoi, contexte système). Son contenu est masqué après l'envoi.
+ * Étape 19 : la double authentification n'y est annoncée que si elle sera exigée.
+ */
 export async function envoyerInvitation(
   tx: ClientTransaction, config: Configuration,
-  u: { id: string; tenantId: string | null; email: string; prenom: string }, nomBanque: string | null, jeton: string,
+  u: { id: string; tenantId: string | null; email: string; prenom: string }, nomBanque: string | null, jeton: string, totpExige: boolean,
 ): Promise<void> {
   const lien = lienInvitation(config, jeton);
   await tx.notification.create({
@@ -49,7 +52,8 @@ export async function envoyerInvitation(
       destination: u.email,
       sujet: nomBanque ? `Invitation — réclamations ${nomBanque}` : 'Invitation — console de la plateforme de réclamations',
       contenu: `Bonjour ${u.prenom},\n\nVous êtes invité(e) à rejoindre ${nomBanque ? `l'espace réclamations de ${nomBanque}` : 'la console de la plateforme'}.\n`
-        + `Choisissez votre mot de passe et activez la double authentification : ${lien}\n\nCe lien est valable ${DUREE_INVITATION_JOURS} jours.`,
+        + `${totpExige ? 'Choisissez votre mot de passe et activez la double authentification' : 'Choisissez votre mot de passe'} : ${lien}\n\n`
+        + `Ce lien est valable ${DUREE_INVITATION_JOURS} jours.`,
     },
   });
 }

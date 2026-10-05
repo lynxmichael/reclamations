@@ -5,7 +5,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { contexte, transactionEn } from '../../src/infrastructure/base-de-donnees/index.js';
-import { codeCourant } from '../../src/infrastructure/securite/totp.js';
 import { ClientApi, connecter, demarrerApi, fermerOutils, jeu, nouvelleIp, type ApiDeTest } from './environnement.js';
 
 let api: ApiDeTest;
@@ -61,12 +60,16 @@ describe('plans et banques', () => {
     const lien = await bd.enSysteme((tx) => tx.notification.findFirstOrThrow({ where: { destinataireUtilisateurId: admin.id, modele: 'personnel.invitation' } }));
     expect(lien.contenu).toContain('https://console.reclamations.example/invitation#jeton=');
 
-    // L'administrateur invité active son compte et règle sa banque
+    // L'administrateur invité active son compte et règle sa banque. Étape 19 : une nouvelle banque laisse
+    // la double authentification facultative, son Admin Entreprise décide ; le mot de passe ouvre la session
+    expect(lien.contenu).not.toContain('double authentification');
+    expect(r.corps.doubleAuthentificationObligatoire).toBe(false);
     const jeton = /#jeton=([A-Za-z0-9_-]+)/.exec(lien.contenu)![1];
     const e = await client.appeler('accepterInvitation', { corps: { jeton, motDePasse: 'Plateau-Lagune-2026' } });
-    const s = await client.appeler('activerTotp', { corps: { jetonIntermediaire: e.corps.jetonIntermediaire, code: codeCourant(e.corps.secret) } });
-    expect(s.corps.utilisateur.banque.slug).toBe('lagune');
-    expect((await client.appeler('creerCategorie', { jeton: s.corps.jetonAcces, corps: { nom: 'Carte', delaiCibleMinutes: 480 } })).statut).toBe(201);
+    expect(e.corps.etape).toBe('SESSION_OUVERTE');
+    const s = e.corps.session;
+    expect(s.utilisateur.banque.slug).toBe('lagune');
+    expect((await client.appeler('creerCategorie', { jeton: s.jetonAcces, corps: { nom: 'Carte', delaiCibleMinutes: 480 } })).statut).toBe(201);
   });
 
   it('adresse, préfixe ou e-mail déjà pris : 409 ; plan inconnu ou fuseau invalide : 400', async () => {

@@ -21,6 +21,11 @@ export class ParametrageControleur {
     return this.service.modifierApparence(a, e.corps);
   }
 
+  @Operation('modifierSecuriteBanque')
+  securite(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
+    return this.service.modifierSecurite(a, e.corps as { doubleAuthentificationObligatoire: boolean });
+  }
+
   @Operation('televerserLogo')
   logo(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
     return this.service.televerserLogo(a, e.fichiers);

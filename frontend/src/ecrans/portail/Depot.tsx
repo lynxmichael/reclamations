@@ -3,7 +3,7 @@
  * Données : lireFormulaireDepot. Envoi : deposerReclamation (multipart, Idempotency-Key).
  */
 import { useState, type FormEvent } from 'react';
-import { CircleAlert, MapPin } from 'lucide-react';
+import { Bot, CircleAlert, MapPin } from 'lucide-react';
 import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Bouton, Champ, Liste, Saisie, Texte, cx } from '../../ui/composants';
@@ -31,6 +31,7 @@ export function Depot({
   surEnvoyer,
   occupe,
   lienPolitique,
+  assistant,
 }: {
   formulaire: S<'FormulaireDepot'>;
   saisie: SaisieDepot;
@@ -41,6 +42,8 @@ export function Depot({
   occupe?: boolean;
   /** Adresse de la politique de données (par défaut celle que donne l'API) */
   lienPolitique?: string;
+  /** Étape 18 : formulaire préparé avec l'assistant (préremplie), ou assistant disponible sur ce portail */
+  assistant?: { readonly prepare: boolean; readonly surRetour?: () => void };
 }) {
   const [categorieId, setCategorieId] = useState(saisie.categorieId);
   const [fichiers, setFichiers] = useState(saisie.fichiers);
@@ -84,6 +87,20 @@ export function Depot({
           <h1 className="text-[26px] leading-tight font-bold tracking-tight">Déposer une réclamation</h1>
           <p className="mt-2 text-[15px] leading-relaxed text-encre-2">Un conseiller l'étudie et vous répond par SMS ou par e-mail.</p>
         </div>
+
+        {assistant && (
+          <div className="flex gap-3 rounded-xl border border-marque/30 bg-marque-doux px-4 py-3 text-[15px] leading-relaxed">
+            <Bot aria-hidden size={20} className="mt-0.5 shrink-0 text-marque-texte" />
+            <div>
+              {assistant.prepare && <p>Préparée avec l'assistant : vérifiez la catégorie et la description, ajoutez vos coordonnées, puis envoyez.</p>}
+              {assistant.surRetour && (
+                <button type="button" onClick={assistant.surRetour} className="font-semibold text-marque-texte underline underline-offset-2">
+                  {assistant.prepare ? 'Revenir à l\'assistant' : 'Être aidé par l\'assistant automatique'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {erreur && (
           <div role="alert" className="flex gap-3 rounded-xl border border-urgent/30 bg-urgent-doux p-4 text-[15px]">

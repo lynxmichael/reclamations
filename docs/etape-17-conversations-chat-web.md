@@ -1,7 +1,7 @@
 # Étape 17 — Conversations et chat web
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 02/10/2026 · **Statut : en attente de validation** (décisions U1 à U13).
+Version du 02/10/2026 · **Statut : validé le 02/10/2026** (décisions U1 à U13 retenues telles que proposées).
 
 C'est la troisième fonction de la phase 2, cadrée à l'étape 14 (décisions I1 et I8). Elle pose **le modèle de conversation commun à tous les canaux** : une conversation par réclamation, que l'assistant (étape 18), WhatsApp et le SMS entrant (étape 19) reprendront. Elle ouvre le premier canal : **le chat web**, intégré au portail de la banque. Le client, identifié comme aujourd'hui par son lien de suivi et son code, écrit à la banque et voit les réponses arriver sans recharger la page. Les agents répondent depuis une **boîte de réception**.
 

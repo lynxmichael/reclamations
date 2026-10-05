@@ -2,7 +2,8 @@
  * Portail client (<slug>.<domaine>), pensé d'abord pour le téléphone. Les écrans sont ceux de
  * l'étape 6 ; chaque page les alimente avec l'API :
  *
- *   /d/{code}                 dépôt depuis un QR code ou un lien web (lireFormulaireDepot, deposerReclamation)
+ *   /d/{code}                 dépôt depuis un QR code ou un lien web (lireFormulaireDepot, deposerReclamation) ;
+ *                             assistant automatique d'abord quand la banque l'a (converserAvecAssistant, étape 18)
  *   /suivi/{jeton}            suivi public, puis code à usage unique (lireSuivi, demanderCodeOtp, verifierCodeOtp)
  *   /suivi/{jeton}/avis       enquête de satisfaction après la clôture (lireAvis, donnerAvis, étape 15)
  *
@@ -21,6 +22,7 @@ import { ErreurApi, enregistrer, messageErreur } from '../../api/client';
 import { useSessionClientOuverte, type SessionClient } from '../../api/session-client';
 import type { S } from '../../api/types';
 import { Accuse } from '../../ecrans/portail/Accuse';
+import { Assistant, type EchangeVu } from '../../ecrans/portail/Assistant';
 import { Avis } from '../../ecrans/portail/Avis';
 import { CadrePortail } from '../../ecrans/portail/CadrePortail';
 import { CodeOtp } from '../../ecrans/portail/CodeOtp';
@@ -66,9 +68,15 @@ export function PageDepot({ session }: { session: SessionClient }) {
   const [saisie, setSaisie] = useState<SaisieDepot>(SAISIE_VIDE);
   const [version, setVersion] = useState(0);
   const [erreur, setErreur] = useState<S<'Probleme'> | null>(null);
-  const [accuse, setAccuse] = useState<{ accuse: S<'AccuseDepot'>; envoiPar: string } | null>(null);
+  const [accuse, setAccuse] = useState<{ accuse: S<'AccuseDepot'>; envoiPar: string; transfert: boolean } | null>(null);
   const cle = useRef(nouvelleCle());
   const navigate = useNavigate();
+  // Assistant automatique (étape 18) : le fil est gardé ici, l'API ne garde rien entre deux tours
+  const [mode, setMode] = useState<'assistant' | 'formulaire' | null>(null);
+  const [fil, setFil] = useState<EchangeVu[]>([]);
+  const [tour, setTour] = useState<S<'ReponseAssistant'> | null>(null);
+  const [erreurAssistant, setErreurAssistant] = useState<string | null>(null);
+  const [via, setVia] = useState<{ categorieProposeeId: string | null; transfert: boolean } | null>(null);
   // Défi anti-robot résolu en arrière-plan pendant la saisie (étape 11)
   const antiRobot = useAntiRobot(appeler);
   useTitre(formulaire.data ? `Réclamation — ${formulaire.data.banque.nom}` : null);
@@ -90,12 +98,13 @@ export function PageDepot({ session }: { session: SessionClient }) {
           versionPolitique: formulaire.data!.politiqueDonnees.version,
           jetonAntiRobot,
           fichiers: v.fichiers,
+          ...(via ? { viaAssistant: true, ...(via.categorieProposeeId ? { categorieProposeeId: via.categorieProposeeId } : {}) } : {}),
         },
       })),
     onSuccess: (a, v) => {
       cle.current = nouvelleCle();
       setErreur(null);
-      setAccuse({ accuse: a, envoiPar: envoiPar(v.telephone, v.email) });
+      setAccuse({ accuse: a, envoiPar: envoiPar(v.telephone, v.email), transfert: !!via?.transfert });
       window.scrollTo({ top: 0 });
     },
     onError: (e, v) => {
@@ -108,6 +117,39 @@ export function PageDepot({ session }: { session: SessionClient }) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
   });
+
+  const conversation = useMutation({
+    mutationFn: (echanges: EchangeVu[]) => appeler('converserAvecAssistant', {
+      chemin: { code },
+      corps: { echanges: echanges.slice(-30).map((e) => (e.auteur === 'CLIENT' ? { auteur: 'CLIENT' as const, texte: e.texte } : { auteur: 'ASSISTANT' as const, ...(e.code ? { code: e.code } : {}) })) },
+    }),
+    onMutate: () => setErreurAssistant(null),
+    onSuccess: (r) => {
+      setFil((f) => [...f, ...r.messages.map((m) => ({ auteur: 'ASSISTANT' as const, texte: m.texte, code: m.code }))]);
+      setTour(r);
+    },
+    onError: (e) => {
+      // Assistant refermé entre-temps : le formulaire, comme avant
+      if (e instanceof ErreurApi && e.code === 'FONCTION_NON_OUVERTE') setMode('formulaire');
+      else setErreurAssistant(`${messageErreur(e)} Vous pouvez aussi remplir le formulaire.`);
+    },
+  });
+  const avecAssistant = mode === 'assistant' || (mode === null && !!formulaire.data?.assistant);
+  // Ouverture de l'assistant : il se présente une fois (sans message du client, rien n'est envoyé à l'IA)
+  const presente = useRef(false);
+  const { mutate: converser } = conversation;
+  useEffect(() => {
+    if (avecAssistant && fil.length === 0 && !presente.current) {
+      presente.current = true;
+      converser([]);
+    }
+  }, [avecAssistant, fil.length, converser]);
+  const ecrire = (texte: string) => {
+    const suite = [...fil, { auteur: 'CLIENT' as const, texte }];
+    setFil(suite);
+    setTour(null);
+    conversation.mutate(suite);
+  };
 
   if (formulaire.isPending) return <Chargement pleinEcran />;
   if (formulaire.isError) {
@@ -127,11 +169,43 @@ export function PageDepot({ session }: { session: SessionClient }) {
           banque={f.banque}
           accuse={accuse.accuse}
           envoiPar={accuse.envoiPar}
+          conseiller={accuse.transfert}
           surSuivre={() => navigate(`/suivi/${encodeURIComponent(accuse.accuse.jetonSuivi)}`)}
           surAutre={() => {
             setAccuse(null);
             setSaisie(SAISIE_VIDE);
+            setVia(null);
+            setFil([]);
+            setTour(null);
+            setMode(null);
+            presente.current = false;
             setVersion((n) => n + 1);
+          }}
+        />
+      ) : avecAssistant ? (
+        <Assistant
+          banque={f.banque}
+          agence={f.agence?.nom}
+          fil={fil}
+          suggestions={conversation.isPending ? [] : tour?.suggestions ?? []}
+          proposition={tour?.proposition ?? null}
+          categorie={f.categories.find((c) => c.id === tour?.proposition?.categorieId)?.nom}
+          occupe={conversation.isPending}
+          erreur={erreurAssistant}
+          surEnvoyer={ecrire}
+          surProposition={() => {
+            const p = tour?.proposition;
+            if (!p) return;
+            setSaisie({ ...SAISIE_VIDE, categorieId: p.categorieId ?? '', description: p.description });
+            setVia({ categorieProposeeId: p.categorieId, transfert: p.motif === 'TRANSFERT' });
+            setErreur(null);
+            setMode('formulaire');
+            setVersion((n) => n + 1);
+            window.scrollTo({ top: 0 });
+          }}
+          surFormulaire={() => {
+            setMode('formulaire');
+            window.scrollTo({ top: 0 });
           }}
         />
       ) : (
@@ -143,6 +217,7 @@ export function PageDepot({ session }: { session: SessionClient }) {
           occupe={envoi.isPending}
           lienPolitique={lienPolitique(f.politiqueDonnees.url, code)}
           surEnvoyer={(v) => envoi.mutate(v)}
+          assistant={f.assistant ? { prepare: !!via, surRetour: () => setMode('assistant') } : undefined}
         />
       )}
     </LienPolitique.Provider>

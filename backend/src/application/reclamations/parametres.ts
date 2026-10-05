@@ -19,6 +19,8 @@ export interface ParametresBanque {
     readonly escaladeAdmin: { readonly pourcent: number | null; readonly urgentPourcent: number | null } | null;
     /** Chat web du portail et boîte de réception (étape 17), ouverts par Makor */
     readonly chatWeb: boolean;
+    /** Assistant IA (étape 18) : portail et brouillons pour les agents, ouverts par Makor (exige le chat) */
+    readonly assistantIa: boolean;
     readonly suspendueLe: Date | null;
     readonly plafondTicketsMois: number | null;
   };
@@ -46,6 +48,7 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
         ? { pourcent: banque.seuilEscaladeAdminPourcent, urgentPourcent: banque.seuilEscaladeAdminUrgentPourcent }
         : null,
       chatWeb: banque.chatWeb,
+      assistantIa: banque.assistantIa && banque.chatWeb,
       suspendueLe: banque.suspendueLe,
       plafondTicketsMois: banque.plan.plafondTicketsMois,
     },

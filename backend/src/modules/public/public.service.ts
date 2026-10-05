@@ -31,6 +31,18 @@ export const ESSAIS_OTP = 5;
 
 const CHAMPS_BANQUE = { id: true, nom: true, slug: true, logoCle: true, couleurPrimaire: true, couleurSecondaire: true, suspendueLe: true } as const;
 
+/** Point de dépôt par son code public : lecture ciblée, toutes banques (aussi pour l'assistant, étape 18). */
+export async function pointPublic(bd: BaseDonnees, code: string) {
+  const p = await bd.enSysteme((tx) => tx.pointDepot.findUnique({
+    where: { code },
+    select: { id: true, tenantId: true, canal: true, actif: true, agence: { select: { id: true, nom: true, active: true } }, banque: { select: CHAMPS_BANQUE } },
+  }));
+  if (!p) throw introuvable('Ce QR code ou ce lien n\'existe pas');
+  if (p.banque.suspendueLe) throw new Probleme(403, 'BANQUE_SUSPENDUE', 'Le portail de cette banque est momentanément fermé');
+  if (!p.actif) throw new Probleme(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code ou ce lien n\'est plus actif');
+  return p;
+}
+
 @Injectable()
 export class ServicePublic {
   constructor(
@@ -45,25 +57,19 @@ export class ServicePublic {
     @Inject(HORLOGE) private readonly horloge: Horloge,
   ) {}
 
-  /** Point de dépôt par son code public : lecture ciblée, toutes banques. */
-  private async point(code: string) {
-    const p = await this.bd.enSysteme((tx) => tx.pointDepot.findUnique({
-      where: { code },
-      select: { id: true, tenantId: true, canal: true, actif: true, agence: { select: { id: true, nom: true, active: true } }, banque: { select: CHAMPS_BANQUE } },
-    }));
-    if (!p) throw introuvable('Ce QR code ou ce lien n\'existe pas');
-    if (p.banque.suspendueLe) throw new Probleme(403, 'BANQUE_SUSPENDUE', 'Le portail de cette banque est momentanément fermé');
-    if (!p.actif) throw new Probleme(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code ou ce lien n\'est plus actif');
-    return p;
+  private point(code: string) {
+    return pointPublic(this.bd, code);
   }
 
   async formulaire(code: string): Promise<S<'FormulaireDepot'>> {
     const p = await this.point(code);
-    const [categories, agences] = await this.bd.enBanque(p.tenantId, (tx) => enSerie([
+    const [categories, agences, banque] = await this.bd.enBanque(p.tenantId, (tx) => enSerie([
       () => tx.categorie.findMany({ where: { active: true }, orderBy: [{ ordre: 'asc' }, { nom: 'asc' }], select: { id: true, nom: true, description: true } }),
       () => (p.agence ? Promise.resolve([]) : tx.agence.findMany({ where: { active: true }, orderBy: { nom: 'asc' }, select: { id: true, nom: true } })),
+      () => tx.banque.findUniqueOrThrow({ where: { id: p.tenantId }, select: { assistantIa: true, chatWeb: true } }),
     ]));
     return {
+      assistant: banque.assistantIa && banque.chatWeb,
       banque: banquePublique(p.banque),
       canal: p.canal,
       agence: p.agence ? { id: p.agence.id, nom: p.agence.nom } : null,
@@ -80,7 +86,10 @@ export class ServicePublic {
   }
 
   async deposer(code: string, corps: Record<string, unknown>, recus: readonly FichierRecu[], cleIdempotence: string | undefined, appel: Appel): Promise<S<'AccuseDepot'>> {
-    const d = corps as { categorieId: string; agenceId?: string; description: string; nom: string; email?: string; telephone?: string; versionPolitique: string; jetonAntiRobot: string };
+    const d = corps as {
+      categorieId: string; agenceId?: string; description: string; nom: string; email?: string; telephone?: string; versionPolitique: string; jetonAntiRobot: string;
+      viaAssistant?: boolean; categorieProposeeId?: string;
+    };
     // Anti-robot (étape 11) : vérifié avant tout accès à la base, consommé seulement au dépôt réel
     // (un formulaire à corriger garde son jeton ; un renvoi avec la même clé ne le redemande pas)
     const defi = this.antiRobot.verifier(d.jetonAntiRobot);
@@ -130,6 +139,8 @@ export class ServicePublic {
         client: { nom: d.nom, email, telephone },
         consentementVersion: d.versionPolitique.slice(0, 20),
         fichiers,
+        // Préparée avec l'assistant (étape 18) : noté seulement si la banque a l'assistant
+        assistant: d.viaAssistant ? { categorieProposeeId: d.categorieProposeeId ?? null } : null,
       }, traceDe(appel)));
       return { numero: accuse.numero, lienSuivi: accuse.lienSuivi, jetonSuivi: accuse.jetonSuivi } satisfies S<'AccuseDepot'>;
     });

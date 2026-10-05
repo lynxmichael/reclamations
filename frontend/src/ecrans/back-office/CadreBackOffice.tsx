@@ -2,10 +2,12 @@
  * Cadre du back-office de la banque. La navigation suit le rôle (x-roles du contrat) :
  * l'agent ne voit que ses réclamations ; le superviseur ajoute le tableau de bord, les QR codes
  * et son équipe ; l'Admin Entreprise paramètre la banque et consulte le journal d'audit.
+ * Étape 19 : l'activité des agences (superviseurs et Admin Entreprise) ; « Mon compte » depuis le
+ * nom de la personne connectée, en haut à droite ; un bandeau au-dessus de la page.
  */
 import type { ReactNode } from 'react';
 import {
-  Bell, Building2, CalendarClock, CalendarOff, ChartColumn, Inbox, ListChecks, LogOut, MessagesSquare, QrCode, ScrollText, Search, Users, Waypoints,
+  Bell, Bot, Building2, CalendarClock, CalendarOff, ChartColumn, Inbox, ListChecks, LogOut, MessagesSquare, QrCode, ScrollText, Search, Store, Users, Waypoints,
 } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, LogoBanque, Pastille, cx } from '../../ui/composants';
@@ -14,7 +16,8 @@ import { ROLE } from '../../ui/libelles';
 import { styleMarque } from '../../ui/marque';
 
 export type PageBackOffice =
-  | 'reclamations' | 'conversations' | 'tableau' | 'categories' | 'points' | 'horaires' | 'banque' | 'attribution' | 'personnel' | 'absences' | 'audit';
+  | 'reclamations' | 'conversations' | 'tableau' | 'agences' | 'categories' | 'points' | 'horaires' | 'banque' | 'attribution' | 'assistant' | 'personnel' | 'absences' | 'audit'
+  | 'compte';
 
 const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle: string; icone: typeof Inbox; roles: S<'RoleUtilisateur'>[] }[] }[] = [
   {
@@ -24,6 +27,8 @@ const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle:
       // Étape 17 : seulement si Makor a ouvert le chat web à la banque (pages offertes)
       { cle: 'conversations', libelle: 'Conversations', icone: MessagesSquare, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
       { cle: 'tableau', libelle: 'Tableau de bord', icone: ChartColumn, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      // Étape 19 : ce que fait chaque agence
+      { cle: 'agences', libelle: 'Activité des agences', icone: Store, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
     ],
   },
   {
@@ -35,6 +40,8 @@ const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle:
       { cle: 'banque', libelle: 'Banque et apparence', icone: Building2, roles: ['ADMIN_ENTREPRISE'] },
       // Étape 16 : seulement si Makor a ouvert l'attribution automatique à la banque (pages offertes)
       { cle: 'attribution', libelle: 'Attribution et escalade', icone: Waypoints, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      // Étape 18 : seulement si Makor a ouvert l'assistant IA à la banque (pages offertes)
+      { cle: 'assistant', libelle: 'Assistant IA', icone: Bot, roles: ['ADMIN_ENTREPRISE'] },
     ],
   },
   {
@@ -66,6 +73,7 @@ export function CadreBackOffice({
   surRechercher,
   rechercheInitiale,
   surDeconnexion,
+  bandeau,
 }: {
   banque: S<'BanquePublique'>;
   moi: S<'Moi'>;
@@ -91,6 +99,8 @@ export function CadreBackOffice({
   surRechercher?: (texte: string) => void;
   rechercheInitiale?: string;
   surDeconnexion?: () => void;
+  /** Étape 19 : message au-dessus de la page (double authentification à activer) */
+  bandeau?: ReactNode;
 }) {
   const nom = `${moi.prenom} ${moi.nom}`;
   return (
@@ -181,11 +191,26 @@ export function CadreBackOffice({
               )}
             </button>
             <div className="ml-2 flex items-center gap-2.5 border-l border-trait pl-4">
-              <Avatar nom={nom} taille={34} ton="marque" />
-              <div className="leading-tight">
-                <div className="text-[15px] font-semibold">{nom}</div>
-                <div className="text-[13px] text-encre-3">{ROLE[moi.role]}</div>
-              </div>
+              {/* Étape 19 : « Mon compte », depuis le nom de la personne connectée */}
+              <a
+                href={lienDe ? lienDe('compte') : '#compte'}
+                data-visite="menu-compte"
+                title="Mon compte"
+                aria-current={page === 'compte' ? 'page' : undefined}
+                onClick={(e) => {
+                  if (surNaviguer && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                    e.preventDefault();
+                    surNaviguer('compte');
+                  }
+                }}
+                className="-my-1 flex items-center gap-2.5 rounded-lg py-1 pr-2 pl-1 hover:bg-fond"
+              >
+                <Avatar nom={nom} taille={34} ton="marque" />
+                <span className="leading-tight">
+                  <span className="block text-[15px] font-semibold">{nom}</span>
+                  <span className="block text-[13px] text-encre-3">{ROLE[moi.role]} · Mon compte</span>
+                </span>
+              </a>
               {surDeconnexion && (
                 <button type="button" onClick={surDeconnexion} aria-label="Se déconnecter" title="Se déconnecter" className="ml-1 rounded-lg p-2 text-encre-3 hover:bg-fond hover:text-encre">
                   <LogOut size={18} />
@@ -197,7 +222,10 @@ export function CadreBackOffice({
             <PanneauNotifications notifications={notifications} maintenant={maintenant} surOuvrir={surOuvrirNotification} surToutLire={surToutLire} />
           )}
         </header>
-        <main className="min-w-0 flex-1 px-8 py-7">{children}</main>
+        <main className="min-w-0 flex-1 px-8 py-7">
+          {bandeau}
+          {children}
+        </main>
       </div>
     </div>
   );

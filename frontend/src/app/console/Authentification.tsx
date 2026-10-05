@@ -2,6 +2,9 @@
  * Entrée dans la console : connexion en deux étapes, première connexion (invitation), mot de passe
  * oublié. Les jetons d'invitation et de réinitialisation arrivent après « # » dans le lien reçu
  * par e-mail : lus une fois, puis retirés de l'adresse.
+ *
+ * Étape 19 : quand la double authentification est facultative et non activée, le mot de passe
+ * ouvre la session (SESSION_OUVERTE), à la connexion comme à l'invitation.
  */
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
@@ -42,26 +45,27 @@ export function PageConnexion({ session }: { session: SessionPersonnel }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const location = useLocation();
-  const [etape, setEtape] = useState<S<'EtapeTotp'> | null>(null);
+  const [etape, setEtape] = useState<S<'EtapeConnexion'> | null>(null);
   const [erreur, setErreur] = useState<S<'Probleme'> | null>(null);
   const [email, setEmail] = useState<string | undefined>(undefined);
   useTitre('Connexion');
   const information = (location.state as { information?: string } | null)?.information ?? (params.get('expiree') ? 'Votre session a expiré. Reconnectez-vous pour continuer.' : null);
 
-  const connexion = useMutation({
-    mutationFn: (v: { email: string; motDePasse: string }) => session.appeler('connexion', { corps: v }),
-    onSuccess: (e) => {
-      setErreur(null);
-      setEtape(e);
-    },
-    onError: (e) => setErreur(probleme(e)),
-  });
   const ouvrir = (s: S<'SessionPersonnel'>) => {
     session.ouvrir(s);
     navigate(retourSur(params), { replace: true });
   };
+  const connexion = useMutation({
+    mutationFn: (v: { email: string; motDePasse: string }) => session.appeler('connexion', { corps: v }),
+    onSuccess: (e) => {
+      setErreur(null);
+      if (e.etape === 'SESSION_OUVERTE' && e.session) ouvrir(e.session);
+      else setEtape(e);
+    },
+    onError: (e) => setErreur(probleme(e)),
+  });
   const totp = useMutation({
-    mutationFn: (code: string) => session.appeler('validerCodeTotp', { corps: { jetonIntermediaire: etape!.jetonIntermediaire, code } }),
+    mutationFn: (code: string) => session.appeler('validerCodeTotp', { corps: { jetonIntermediaire: etape!.jetonIntermediaire!, code } }),
     onSuccess: ouvrir,
     onError: (e) => {
       // Étape de 5 minutes dépassée : on recommence depuis le mot de passe
@@ -137,7 +141,11 @@ export function PageInvitation({ session }: { session: SessionPersonnel }) {
     mutationFn: (motDePasse: string) => session.appeler('accepterInvitation', { corps: { jeton: jeton!, motDePasse } }),
     onSuccess: (e) => {
       setErreur(null);
-      setEnrolement(e);
+      // Étape 19 : double authentification facultative, la session s'ouvre ; exigée, son activation suit
+      if (e.etape === 'SESSION_OUVERTE' && e.session) {
+        session.ouvrir(e.session);
+        navigate('/', { replace: true });
+      } else if (e.enrolement) setEnrolement(e.enrolement);
     },
     onError: (e) => setErreur(probleme(e)),
   });
@@ -166,9 +174,8 @@ export function PageInvitation({ session }: { session: SessionPersonnel }) {
   if (enrolement) return <Activation banque={null} enrolement={enrolement} erreur={erreur} occupe={activation.isPending} surActiver={(c) => activation.mutate(c)} />;
   return (
     <DefinitionMotDePasse
-      etape
       titre="Bienvenue"
-      explication="Choisissez votre mot de passe. Vous activerez ensuite la double authentification avec votre téléphone."
+      explication="Choisissez votre mot de passe. Si votre banque l'exige, vous activerez ensuite la double authentification avec votre téléphone."
       erreur={erreur}
       occupe={acceptation.isPending}
       surDefinir={(m) => acceptation.mutate(m)}

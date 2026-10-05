@@ -11,6 +11,7 @@ import { InterceptionContrat } from './infrastructure/contrat/contrat.intercepto
 import { FiltreErreurs } from './infrastructure/contrat/filtre-erreurs.js';
 import { monterDocumentation } from './infrastructure/contrat/documentation.js';
 import { monterVerificationTls } from './infrastructure/tls.js';
+import { AssistantModule } from './modules/assistant/assistant.controller.js';
 import { AttributionModule } from './modules/attribution/attribution.controller.js';
 import { ConversationsModule } from './modules/conversations/conversations.controller.js';
 import { AuditModule } from './modules/audit/audit.controller.js';
@@ -46,6 +47,7 @@ export class AppModule {
         ParametrageModule,
         AttributionModule,
         ConversationsModule,
+        AssistantModule,
         PersonnelModule,
         AuditModule,
         PlateformeModule,

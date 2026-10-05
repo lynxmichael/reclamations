@@ -97,6 +97,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/points-depot/{code}/assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Un tour de l'assistant automatique du portail
+         * @description Sans état côté serveur : le portail renvoie à chaque tour les derniers échanges (textes du client,
+         *     codes des messages de l'assistant). Sans message du client, l'assistant se présente comme tel et
+         *     dit comment joindre une personne (décision I3).
+         *     L'IA ne fait que trier le dernier message (intention, question fréquente, catégorie), après
+         *     masquage des numéros de carte et de compte, IBAN, téléphones, e-mails et codes (décision I5).
+         *     Ce que lit le client vient des textes fixes de l'assistant et des réponses validées par la
+         *     banque (décision I4) : il ne promet rien, ne change aucun statut et ne dépose rien lui-même.
+         *     Une `proposition` prépare le dépôt, que le client relit, complète et envoie avec
+         *     `deposerReclamation`. Sans fournisseur d'IA, s'il ne répond pas ou si le plafond quotidien de la
+         *     banque est atteint, des règles de mots-clés prennent le relais. Assistant fermé : 403
+         *     FONCTION_NON_OUVERTE. Limité à 40 tours par 10 minutes et par adresse IP.
+         */
+        post: operations["converserAvecAssistant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/suivi/{jetonSuivi}": {
         parameters: {
             query?: never;
@@ -374,7 +404,10 @@ export interface paths {
         put?: never;
         /**
          * Première étape de connexion (e-mail et mot de passe)
-         * @description Renvoie toujours une étape TOTP : la double authentification est obligatoire pour tout le personnel.
+         * @description Étape 19 : la double authentification est exigée du Super Admin, du personnel d'une banque qui l'a
+         *     rendue obligatoire, et de toute personne qui l'a activée sur son compte (`TOTP_REQUIS`, ou
+         *     `ENROLEMENT_TOTP_REQUIS` si elle n'est pas encore activée). Sinon, le mot de passe suffit :
+         *     `SESSION_OUVERTE`, la session est ouverte et le refresh token posé en cookie `rt`, comme après le code.
          *     Après 5 échecs, le compte est verrouillé 15 minutes. 10 échecs par 15 minutes et par adresse IP (les connexions réussies ne comptent pas : le personnel d'une agence partage souvent la même adresse publique).
          */
         post: operations["connexion"];
@@ -413,7 +446,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Accepter une invitation (choix du mot de passe, puis enrôlement TOTP) */
+        /**
+         * Accepter une invitation (choix du mot de passe)
+         * @description Si la banque exige la double authentification (étape 19), son activation suit
+         *     (`ENROLEMENT_TOTP_REQUIS`, puis `activerTotp`). Sinon, le compte est actif et la session s'ouvre
+         *     (`SESSION_OUVERTE`, cookie `rt`) ; la personne pourra l'activer depuis « Mon compte ».
+         */
         post: operations["accepterInvitation"];
         delete?: never;
         options?: never;
@@ -523,6 +561,68 @@ export interface paths {
         get: operations["lireMoi"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/moi/totp/preparation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mon compte — préparer l'activation de la double authentification
+         * @description Étape 19. Nouveau secret, à scanner avec une application d'authentification ; il ne protège le
+         *     compte qu'après `confirmerTotp`. Un nouvel appel remplace le secret préparé.
+         */
+        post: operations["preparerTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/moi/totp/activation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mon compte — activer la double authentification avec un premier code
+         * @description Le code à 6 chiffres affiché par l'application prouve que le secret préparé est enregistré.
+         */
+        post: operations["confirmerTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/moi/totp/desactivation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mon compte — désactiver la double authentification
+         * @description Avec un code valide de l'application. Refusé (422 `DOUBLE_AUTHENTIFICATION_OBLIGATOIRE`) si la
+         *     banque l'exige. Les autres sessions de la personne sont fermées.
+         */
+        post: operations["desactiverTotp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -668,6 +768,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/banque/reclamations/{id}/suggestion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Brouillon de réponse proposé à l'agent
+         * @description « L'IA propose, l'humain décide » (décision I4) : rien n'est envoyé au client ni modifié. L'agent
+         *     relit, corrige et envoie lui-même avec `repondreAuClient`. Le brouillon est vérifié : chaque
+         *     interdit (promesse de remboursement ou de délai, statut annoncé, conseil financier, demande de
+         *     code) est signalé dans `alertes`. Une catégorie plus juste et l'urgence sont suggérées, à titre
+         *     indicatif. Seuls partent, masqués, la description et les derniers messages publics : jamais le
+         *     nom ni les coordonnées du client, ni les notes internes, ni les pièces jointes (décision I5).
+         *     Réclamation clôturée : 409 RECLAMATION_CLOTUREE. Assistant fermé : 403 FONCTION_NON_OUVERTE.
+         *     Limité à 30 brouillons par 10 minutes et par utilisateur.
+         */
+        post: operations["suggererReponse"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/banque/reclamations/{id}/resolution": {
         parameters: {
             query?: never;
@@ -784,6 +911,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/banque/indicateurs/agences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Activité de chaque agence sur une période (étape 19)
+         * @description Une ligne par agence : réclamations déposées pendant la période (par défaut, du début du mois
+         *     courant à maintenant), mêmes définitions que `lireIndicateurs` ; `charge` à cet instant.
+         *     Une ligne sans agence, en dernier, regroupe les dépôts par lien web où le client n'a pas indiqué
+         *     d'agence. Une agence inactive sans réclamation de la période ni en cours n'apparaît pas.
+         */
+        get: operations["lireIndicateursAgences"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/banque/notifications": {
         parameters: {
             query?: never;
@@ -871,6 +1021,29 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/banque/parametres/securite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Rendre la double authentification obligatoire ou facultative (étape 19)
+         * @description Obligatoire : l'Admin Entreprise doit l'avoir activée sur son propre compte (422
+         *     `DOUBLE_AUTHENTIFICATION_A_ACTIVER` sinon) ; les sessions du personnel qui ne l'a pas activée sont
+         *     fermées, et chacun l'active à sa prochaine connexion. Facultative : rien ne change pour ceux qui
+         *     l'ont activée ; les autres se connectent avec leur mot de passe.
+         */
+        patch: operations["modifierSecuriteBanque"];
         trace?: never;
     };
     "/banque/categories": {
@@ -1227,6 +1400,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/banque/assistant/reponses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Base de réponses de l'assistant
+         * @description Écrite et validée par l'Admin Entreprise (décision I4) ; l'assistant du portail n'en montre que
+         *     les réponses actives. Chaque réponse porte les interdits qu'elle contient, à titre d'avertissement.
+         *     Assistant fermé : 403 FONCTION_NON_OUVERTE.
+         */
+        get: operations["listerReponsesAssistant"];
+        put?: never;
+        /** Ajouter une réponse validée */
+        post: operations["creerReponseAssistant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/assistant/reponses/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Supprimer une réponse */
+        delete: operations["supprimerReponseAssistant"];
+        options?: never;
+        head?: never;
+        /** Modifier, activer ou retirer une réponse */
+        patch: operations["modifierReponseAssistant"];
+        trace?: never;
+    };
     "/banque/utilisateurs": {
         parameters: {
             query?: never;
@@ -1334,7 +1548,8 @@ export interface paths {
         put?: never;
         /**
          * Réinitialiser la double authentification (téléphone perdu)
-         * @description L'utilisateur réactivera le TOTP à sa prochaine connexion ; ses sessions sont révoquées.
+         * @description Ses sessions sont révoquées. Il réactivera la double authentification à sa prochaine connexion si la
+         *     banque l'exige, sinon quand il le souhaite, depuis « Mon compte » (étape 19).
          */
         post: operations["reinitialiserTotp"];
         delete?: never;
@@ -1527,6 +1742,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plateforme/consommation-ia": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage de l'assistant IA par banque sur un mois (facturation)
+         * @description Mois civil en temps universel, d'après le journal des appels, qui ne contient aucun message
+         *     (décision I5). `tours` : tours de l'assistant du portail ; `suggestions` : brouillons demandés
+         *     par les agents ; `parIa` : réponses venues du fournisseur ; `regles` : réponses venues des règles
+         *     (pas de fournisseur, plafond atteint, erreur ou délai dépassé). Le coût est celui du tarif
+         *     configuré au moment de chaque appel. Figurent les banques existant à la fin du mois et celles qui ont des appels ce mois-là.
+         */
+        get: operations["lireConsommationIa"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plateforme/journal-audit": {
         parameters: {
             query?: never;
@@ -1665,7 +1904,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "ERREUR_INTERNE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "CHAT_WEB_REQUIS" | "RECLAMATION_CLOTUREE" | "DOUBLE_AUTHENTIFICATION_OBLIGATOIRE" | "DOUBLE_AUTHENTIFICATION_A_ACTIVER" | "DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE" | "DOUBLE_AUTHENTIFICATION_INACTIVE" | "DOUBLE_AUTHENTIFICATION_NON_PREPAREE" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -1763,6 +2002,8 @@ export interface components {
             couleurSecondaire: components["schemas"]["Couleur"];
         };
         FormulaireDepot: {
+            /** @description Assistant automatique ouvert sur ce portail (étape 18) */
+            assistant: boolean;
             banque: components["schemas"]["BanquePublique"];
             canal: components["schemas"]["CanalDepot"];
             /** @description Agence du QR code ; vide pour un lien web */
@@ -1852,6 +2093,13 @@ export interface components {
             versionPolitique: string;
             jetonAntiRobot: components["schemas"]["JetonAntiRobot"];
             fichiers?: components["schemas"]["Fichiers"];
+            /** @description Préparée avec l'assistant du portail (étape 18) : noté dans la chronologie */
+            viaAssistant?: boolean;
+            /**
+             * Format: uuid
+             * @description Catégorie proposée par l'assistant, que le client a pu changer
+             */
+            categorieProposeeId?: string;
         } | unknown | unknown;
         AccuseDepot: {
             /** @example ALP-2026-000042 */
@@ -2031,22 +2279,41 @@ export interface components {
             email: string;
             motDePasse: string;
         };
-        EtapeTotp: {
-            /**
-             * @description ENROLEMENT_TOTP_REQUIS après une réinitialisation du TOTP par l'Admin Entreprise
-             * @enum {string}
-             */
-            etape: "TOTP_REQUIS" | "ENROLEMENT_TOTP_REQUIS";
-            /** @description Valable 5 minutes, pour la seconde étape seulement */
-            jetonIntermediaire: string;
+        /**
+         * @description Suite de la connexion (étape 19). `TOTP_REQUIS` : code de l'application attendu (`validerCodeTotp`).
+         *     `ENROLEMENT_TOTP_REQUIS` : double authentification exigée mais pas encore activée (première
+         *     connexion, réinitialisation, banque qui vient de l'exiger) ; `enrolement` à activer (`activerTotp`).
+         *     `SESSION_OUVERTE` : double authentification facultative et non activée ; la session est ouverte
+         *     (`session`) et le refresh token posé en cookie.
+         */
+        EtapeConnexion: {
+            /** @enum {string} */
+            etape: "TOTP_REQUIS" | "ENROLEMENT_TOTP_REQUIS" | "SESSION_OUVERTE";
+            /** @description Valable 5 minutes, pour la seconde étape seulement ; absent si SESSION_OUVERTE */
+            jetonIntermediaire?: string;
             /** @example 300 */
-            expireDans: number;
+            expireDans?: number;
             /** @description Présent quand etape = ENROLEMENT_TOTP_REQUIS */
             enrolement?: components["schemas"]["EnrolementTotp"];
+            /** @description Présent quand etape = SESSION_OUVERTE */
+            session?: components["schemas"]["SessionPersonnel"];
         };
         CodeTotp: {
             jetonIntermediaire: string;
             code: string;
+        };
+        CodeVerification: {
+            /** @description Code à 6 chiffres de l'application d'authentification */
+            code: string;
+        };
+        /** @description Secret à enregistrer dans l'application d'authentification (« Mon compte », étape 19) */
+        EnrolementCompte: {
+            /** @example otpauth://totp/Reclamations:agent@alpha.ci?secret=…&issuer=Reclamations */
+            otpauthUrl: string;
+            /** @description Secret en base32, pour une saisie manuelle */
+            secret: string;
+            /** @description Image PNG en data: URL */
+            qrCodeDataUrl: string;
         };
         DefinitionMotDePasse: {
             /** @description Jeton reçu par e-mail (invitation ou réinitialisation) */
@@ -2070,6 +2337,10 @@ export interface components {
             nom: string;
             prenom: string;
             role: components["schemas"]["RoleUtilisateur"];
+            /** @description Double authentification activée sur ce compte (étape 19) */
+            totpActif: boolean;
+            /** @description Exigée : toujours pour le Super Admin, et pour le personnel d'une banque qui l'a rendue obligatoire */
+            totpObligatoire: boolean;
             /** @description Vide pour un Super Admin */
             banque: {
                 /** Format: uuid */
@@ -2183,6 +2454,8 @@ export interface components {
             date: components["schemas"]["Horodatage"];
         };
         ReclamationDetail: {
+            /** @description Déposée avec l'assistant automatique du portail (étape 18) */
+            depotAssistant: boolean;
             /** @description Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque */
             conversation: components["schemas"]["ConversationTicket"] | null;
             /** @description Mode suggestion (étape 16) : l'agent proposé, pour le superviseur, tant que la réclamation n'est pas assignée */
@@ -2391,6 +2664,61 @@ export interface components {
             enRetard: number;
         };
         /**
+         * @description Activité des agences (étape 19) : mêmes définitions que le tableau de bord (§6.6), réclamations
+         *     déposées pendant la période, délais en minutes ouvrées, charge à cet instant.
+         */
+        IndicateursAgences: {
+            du: components["schemas"]["Horodatage"];
+            au: components["schemas"]["Horodatage"];
+            agences: components["schemas"]["ActiviteAgence"][];
+        };
+        ActiviteAgence: {
+            /** @description Vide pour les dépôts par lien web sans agence indiquée */
+            agence: {
+                /** Format: uuid */
+                id: string;
+                code: string;
+                nom: string;
+                ville: string | null;
+                active: boolean;
+            } | null;
+            /** @description Groupe d'agents qui reçoit les réclamations de l'agence (attribution automatique, étape 16) */
+            groupe: components["schemas"]["ReferenceNommee"] | null;
+            /** @description Réclamations déposées pendant la période */
+            total: number;
+            urgentes: number;
+            /** @description Résolues et non rouvertes depuis */
+            resolues: number;
+            delaiPremiereReponseMoyenMinutes: number | null;
+            delaiResolutionMoyenMinutes: number | null;
+            tauxRespectSla: number | null;
+            tauxResolutionPremierContact: number | null;
+            charge: components["schemas"]["Charge"];
+            /** @description Enquêtes ouvertes pendant la période ; vide si la banque ne les a pas activées et n'en a aucune */
+            satisfaction: {
+                enquetes: number;
+                reponses: number;
+                tauxSatisfaits: number | null;
+                nps: number | null;
+            } | null;
+            /** @description Les trois catégories les plus fréquentes */
+            parCategorie: components["schemas"]["Volume"][];
+            /** @description Agents assignés aux réclamations de la période, du plus grand nombre au plus petit (5 au plus) */
+            agents: components["schemas"]["Volume"][];
+            /**
+             * @description QR codes et liens web de l'agence, et liens web par lesquels des clients l'ont choisie, avec les
+             *     réclamations reçues par chacun pendant la période (leur somme fait `total`)
+             */
+            pointsDepot: {
+                /** Format: uuid */
+                id: string;
+                libelle: string;
+                canal: components["schemas"]["CanalDepot"];
+                actif: boolean;
+                total: number;
+            }[];
+        };
+        /**
          * @description Pas d'une série dans le temps, calculé dans le fuseau de la banque (semaine du lundi)
          * @enum {string}
          */
@@ -2438,6 +2766,10 @@ export interface components {
             modeAttribution: components["schemas"]["ModeAttribution"];
             /** @description Chat web du portail et boîte de réception (étape 17), ouverts par Makor */
             chatWeb: boolean;
+            /** @description Assistant du portail et brouillons pour les agents (étape 18), ouverts par Makor */
+            assistantIa: boolean;
+            /** @description Double authentification exigée de tout le personnel (étape 19), réglée par l'Admin Entreprise */
+            doubleAuthentificationObligatoire: boolean;
             couleurPrimaire: components["schemas"]["Couleur"];
             couleurSecondaire: components["schemas"]["Couleur"];
             /** Format: uri-reference */
@@ -2456,6 +2788,9 @@ export interface components {
                 agents: number;
                 ticketsCeMois: number;
             };
+        };
+        ModificationSecurite: {
+            doubleAuthentificationObligatoire: boolean;
         };
         ModificationApparence: {
             couleurPrimaire?: components["schemas"]["Couleur"];
@@ -2808,6 +3143,9 @@ export interface components {
             enqueteSatisfaction: boolean;
             attributionAutomatique: boolean;
             chatWeb: boolean;
+            assistantIa: boolean;
+            /** @description Réglée par l'Admin Entreprise de la banque (étape 19) */
+            doubleAuthentificationObligatoire: boolean;
             suspendueLe: components["schemas"]["HorodatageFacultatif"];
             motifSuspension: string | null;
             creeLe: components["schemas"]["Horodatage"];
@@ -2845,6 +3183,8 @@ export interface components {
             attributionAutomatique?: boolean;
             /** @description Chat web du portail et boîte de réception (étape 17) ; fermé, l'espace client garde son fil de messages simple */
             chatWeb?: boolean;
+            /** @description Assistant IA (étape 18) ; exige le chat web (sinon 422 CHAT_WEB_REQUIS) ; fermer le chat ferme aussi l'assistant */
+            assistantIa?: boolean;
         };
         IndicateursPlateforme: {
             du: components["schemas"]["Horodatage"];
@@ -2875,6 +3215,122 @@ export interface components {
                 /** @description Segments facturés par la passerelle */
                 segments: number;
                 echecs: number;
+            }[];
+        };
+        /**
+         * @description Nature d'un message de l'assistant : PRESENTATION (il se présente), SALUTATION, FAQ (réponse de la
+         *     base de la banque), FAQ_SUITE (relance), PRECISER (demande de précisions), PROPOSER_DEPOT,
+         *     TRANSFERT (passe la main à un conseiller), FIN, HORS_SUJET, INCOMPRIS, CODE_SECRET (rappel de ne
+         *     jamais communiquer un code)
+         * @enum {string}
+         */
+        CodeMessageAssistant: "PRESENTATION" | "SALUTATION" | "FAQ" | "FAQ_SUITE" | "PRECISER" | "PROPOSER_DEPOT" | "TRANSFERT" | "FIN" | "HORS_SUJET" | "INCOMPRIS" | "CODE_SECRET";
+        /** @description Un tour de la conversation. Pour l'assistant, seul le code compte ; le texte peut être omis. */
+        EchangeAssistant: {
+            /** @enum {string} */
+            auteur: "CLIENT" | "ASSISTANT";
+            texte?: string;
+            code?: components["schemas"]["CodeMessageAssistant"];
+        };
+        TourAssistant: {
+            /** @description Les échanges depuis l'ouverture, du plus ancien au plus récent ; seuls les derniers sont lus */
+            echanges: components["schemas"]["EchangeAssistant"][];
+        };
+        MessageAssistant: {
+            code: components["schemas"]["CodeMessageAssistant"];
+            texte: string;
+        };
+        ReponseAssistant: {
+            messages: components["schemas"]["MessageAssistant"][];
+            /** @description Réclamation préparée, à relire et compléter par le client avant l'envoi ; vide sinon */
+            proposition: {
+                /**
+                 * @description TRANSFERT : le client a demandé un conseiller
+                 * @enum {string}
+                 */
+                motif: "DEPOT" | "TRANSFERT";
+                /** Format: uuid */
+                categorieId: string | null;
+                /** @description Les mots du client, codes secrets retirés */
+                description: string;
+            } | null;
+            /** @description Réponses proposées en un toucher */
+            suggestions: string[];
+        };
+        /**
+         * @description Ce que l'IA ne doit jamais écrire (décision I4)
+         * @enum {string}
+         */
+        CodeInterdit: "REMBOURSEMENT_PROMIS" | "DELAI_PROMIS" | "STATUT_ANNONCE" | "CONSEIL_FINANCIER" | "CODE_SECRET_DEMANDE";
+        AlerteInterdit: {
+            code: components["schemas"]["CodeInterdit"];
+            /** @example promet un délai */
+            libelle: string;
+            /**
+             * @description Les mots en cause, sans accents ni majuscules
+             * @example sous 48 heures
+             */
+            extrait: string;
+        };
+        SuggestionReponse: {
+            brouillon: string;
+            /** @description Interdits trouvés dans le brouillon ; à corriger avant l'envoi */
+            alertes: components["schemas"]["AlerteInterdit"][];
+            /** @description Catégorie qui conviendrait mieux, à titre indicatif ; vide si l'actuelle convient */
+            categorie: components["schemas"]["ReferenceNommee"] | null;
+            /** @description La réclamation paraît urgente (fraude en cours, carte volée…), à titre indicatif */
+            urgente: boolean;
+            /**
+             * @description REGLES : sans fournisseur d'IA, ou s'il n'a pas répondu
+             * @enum {string}
+             */
+            source: "IA" | "REGLES";
+        };
+        ReponseBanque: {
+            /** Format: uuid */
+            id: string;
+            question: string;
+            reponse: string;
+            active: boolean;
+            ordre: number;
+            /** @description Interdits trouvés dans la réponse ; un avertissement, l'Admin Entreprise décide */
+            alertes: components["schemas"]["AlerteInterdit"][];
+            modifieLe: components["schemas"]["Horodatage"];
+        };
+        EcritureReponseBanque: {
+            /** @example Quels sont les horaires des agences ? */
+            question: string;
+            reponse: string;
+            /** @default true */
+            active: boolean;
+            ordre?: number;
+        };
+        ModificationReponseBanque: {
+            question?: string;
+            reponse?: string;
+            active?: boolean;
+            ordre?: number;
+        };
+        ConsommationIa: {
+            /** @example 2026-10 */
+            mois: string;
+            /** @description Fournisseur configuré aujourd'hui */
+            fournisseur: {
+                /** @example regles */
+                nom: string;
+                modele: string | null;
+            };
+            banques: {
+                banque: components["schemas"]["ReferenceNommee"];
+                assistantIa: boolean;
+                tours: number;
+                suggestions: number;
+                parIa: number;
+                regles: number;
+                jetonsEntree: number;
+                jetonsSortie: number;
+                /** @example 1.2345 */
+                coutUsd: number;
             }[];
         };
     };
@@ -3210,6 +3666,37 @@ export interface operations {
             413: components["responses"]["FichierTropVolumineux"];
             415: components["responses"]["TypeNonSupporte"];
             422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    converserAvecAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Code public du point de dépôt, porté par le QR code ou le lien */
+                code: components["parameters"]["CodePoint"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TourAssistant"];
+            };
+        };
+        responses: {
+            /** @description Réponse de l'assistant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReponseAssistant"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
             429: components["responses"]["TropDeRequetes"];
         };
     };
@@ -3601,13 +4088,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Mot de passe accepté, code TOTP attendu */
+            /** @description Mot de passe accepté ; code TOTP attendu, activation exigée, ou session ouverte */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EtapeTotp"];
+                    "application/json": components["schemas"]["EtapeConnexion"];
                 };
             };
             400: components["responses"]["Invalide"];
@@ -3651,17 +4138,18 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Mot de passe enregistré ; le TOTP doit maintenant être activé */
+            /** @description Mot de passe enregistré ; activation de la double authentification exigée, ou session ouverte */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EnrolementTotp"];
+                    "application/json": components["schemas"]["EtapeConnexion"];
                 };
             };
             400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
         };
     };
     activerTotp: {
@@ -3788,6 +4276,88 @@ export interface operations {
             };
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
+        };
+    };
+    preparerTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Secret préparé */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrolementCompte"];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            409: components["responses"]["Conflit"];
+        };
+    };
+    confirmerTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodeVerification"];
+            };
+        };
+        responses: {
+            /** @description Double authentification activée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Moi"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            409: components["responses"]["Conflit"];
+            423: components["responses"]["Verrouille"];
+        };
+    };
+    desactiverTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodeVerification"];
+            };
+        };
+        responses: {
+            /** @description Double authentification désactivée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Moi"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+            423: components["responses"]["Verrouille"];
         };
     };
     listerReclamations: {
@@ -3983,6 +4553,33 @@ export interface operations {
             422: components["responses"]["RegleMetier"];
         };
     };
+    suggererReponse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Brouillon */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestionReponse"];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     resoudreReclamation: {
         parameters: {
             query?: never;
@@ -4138,6 +4735,36 @@ export interface operations {
             403: components["responses"]["Interdit"];
         };
     };
+    lireIndicateursAgences: {
+        parameters: {
+            query?: {
+                /** @description Début de période (inclus), date de dépôt */
+                du?: components["parameters"]["Du"];
+                /** @description Fin de période (exclue), date de dépôt */
+                au?: components["parameters"]["Au"];
+                categorieId?: components["parameters"]["FiltreCategorie"];
+                canal?: components["parameters"]["FiltreCanal"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activité des agences, de la plus sollicitée à la moins sollicitée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndicateursAgences"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
     listerNotifications: {
         parameters: {
             query?: {
@@ -4263,6 +4890,26 @@ export interface operations {
             403: components["responses"]["Interdit"];
             413: components["responses"]["FichierTropVolumineux"];
             415: components["responses"]["TypeNonSupporte"];
+        };
+    };
+    modifierSecuriteBanque: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModificationSecurite"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Parametres"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            422: components["responses"]["RegleMetier"];
         };
     };
     listerCategories: {
@@ -4941,6 +5588,108 @@ export interface operations {
             404: components["responses"]["Introuvable"];
         };
     };
+    listerReponsesAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Réponses, dans l'ordre d'affichage */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReponseBanque"][];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    creerReponseAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EcritureReponseBanque"];
+            };
+        };
+        responses: {
+            /** @description Réponse ajoutée */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReponseBanque"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    supprimerReponseAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Réponse supprimée */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    modifierReponseAssistant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModificationReponseBanque"];
+            };
+        };
+        responses: {
+            /** @description Réponse modifiée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReponseBanque"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
     listerUtilisateurs: {
         parameters: {
             query?: {
@@ -5250,6 +5999,7 @@ export interface operations {
             403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
             409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
         };
     };
     suspendreBanque: {
@@ -5420,6 +6170,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FacturationSms"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    lireConsommationIa: {
+        parameters: {
+            query: {
+                mois: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Consommation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsommationIa"];
                 };
             };
             400: components["responses"]["Invalide"];

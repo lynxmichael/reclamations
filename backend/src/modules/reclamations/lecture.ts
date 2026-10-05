@@ -172,7 +172,14 @@ export function fiche(
       ? { agent: { id: suggeree.agent.id, nom: suggeree.agent.nom }, groupe: { id: suggeree.groupe.id, nom: suggeree.groupe.nom } }
       : null,
     conversation: chatWeb && t.conversation ? conversationTicket(t.conversation, t.statut, maintenant) : null,
+    depotAssistant: depotAssistant(t.evenements),
   };
+}
+
+/** Déposée avec l'assistant du portail (étape 18) : noté dans l'événement de création. */
+export function depotAssistant(evenements: readonly { type: string; donnees: unknown }[]): boolean {
+  const creation = evenements.find((e) => e.type === 'CREATION');
+  return !!creation && typeof creation.donnees === 'object' && creation.donnees !== null && 'assistant' in creation.donnees;
 }
 
 type LigneConversation = NonNullable<TicketComplet['conversation']>;

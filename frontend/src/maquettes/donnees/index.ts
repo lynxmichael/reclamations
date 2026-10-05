@@ -5,7 +5,8 @@
 import type { Schemas } from '../../api/types';
 import { ALPHA, HORIZON } from './commun';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './auth';
-import { ABSENCES, AGENCES, CATEGORIES, GROUPES, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi } from './parametrage';
+import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './agences';
+import { ABSENCES, AGENCES, CATEGORIES, GROUPES, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi } from './parametrage';
 import { ALERTES, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './plateforme';
 import { ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos } from './portail';
 import {
@@ -37,8 +38,12 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'ma réclamation résolue', schema: 'ReclamationClient', valeur: MA_RECLAMATION_RESOLUE },
   { nom: 'ma réclamation, chat ouvert (étape 17)', schema: 'ReclamationClient', valeur: maReclamationChat(true) },
   { nom: 'ma réclamation, chat fermé le soir', schema: 'ReclamationClient', valeur: maReclamationChat(false) },
-  { nom: 'étape TOTP', schema: 'EtapeTotp', valeur: ETAPE_TOTP },
+  { nom: 'étape TOTP', schema: 'EtapeConnexion', valeur: ETAPE_TOTP },
   { nom: 'enrôlement TOTP', schema: 'EnrolementTotp', valeur: ENROLEMENT },
+  { nom: 'étape d\'activation exigée (étape 19)', schema: 'EtapeConnexion', valeur: { etape: 'ENROLEMENT_TOTP_REQUIS', jetonIntermediaire: ENROLEMENT.jetonIntermediaire, expireDans: 300, enrolement: ENROLEMENT } },
+  { nom: 'session ouverte sans code (étape 19)', schema: 'EtapeConnexion', valeur: { etape: 'SESSION_OUVERTE', session: { jetonAcces: 'eyJhbGciOiJFUzI1NiJ9.acces', expireDans: 900, utilisateur: moi(IBRAHIM, 'AGENT', false) } } },
+  { nom: 'Mon compte : activation préparée (étape 19)', schema: 'EnrolementCompte', valeur: ENROLEMENT_COMPTE },
+  { nom: 'profil sans double authentification (étape 19)', schema: 'Moi', valeur: moi(IBRAHIM, 'AGENT', false) },
   { nom: 'erreur de connexion', schema: 'Probleme', valeur: ERREUR_CONNEXION },
   { nom: 'profil du superviseur', schema: 'Moi', valeur: moi(SERGE, 'SUPERVISEUR') },
   { nom: 'files du superviseur', schema: 'PageReclamations', valeur: PAGE_SUPERVISEUR },
@@ -54,6 +59,7 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'conversation (Admin Entreprise)', schema: 'ConversationDetail', valeur: CONVERSATION_42.ADMIN_ENTREPRISE },
   { nom: "notifications de l'agent", schema: 'PageNotifications', valeur: NOTIFICATIONS_AGENT },
   { nom: 'indicateurs', schema: 'Indicateurs', valeur: INDICATEURS },
+  { nom: 'activité des agences (étape 19)', schema: 'IndicateursAgences', valeur: INDICATEURS_AGENCES },
   { nom: 'paramètres de la banque', schema: 'ParametresBanque', valeur: PARAMETRES },
   { nom: 'catégories', schema: 'Categorie', liste: true, valeur: CATEGORIES },
   { nom: 'agences', schema: 'Agence', liste: true, valeur: AGENCES },

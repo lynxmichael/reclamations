@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import type { S } from '../api/types';
 import { Accuse } from '../ecrans/portail/Accuse';
+import { Assistant } from '../ecrans/portail/Assistant';
 import { Avis } from '../ecrans/portail/Avis';
 import { CodeOtp } from '../ecrans/portail/CodeOtp';
 import { Depot, fichierExemple } from '../ecrans/portail/Depot';
@@ -13,25 +14,30 @@ import { MesReclamations } from '../ecrans/portail/MesReclamations';
 import { Suivi } from '../ecrans/portail/Suivi';
 import { Activation, CodeTotp, Connexion } from '../ecrans/connexion/Connexion';
 import { Absences } from '../ecrans/back-office/Absences';
+import { Agences } from '../ecrans/back-office/Agences';
 import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
 import { CadreBackOffice, type PageBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
+import { BandeauDoubleAuthentification, Compte } from '../ecrans/back-office/Compte';
 import { Conversations } from '../ecrans/back-office/Conversations';
 import { Files } from '../ecrans/back-office/Files';
 import { Horaires } from '../ecrans/back-office/Horaires';
 import { Personnel } from '../ecrans/back-office/Personnel';
 import { PointsDepot } from '../ecrans/back-office/PointsDepot';
+import { ReponsesAssistant } from '../ecrans/back-office/ReponsesAssistant';
 import { TableauDeBord } from '../ecrans/back-office/TableauDeBord';
 import { Ticket, type Fenetre } from '../ecrans/back-office/Ticket';
 import { Activite, Alertes } from '../ecrans/plateforme/Activite';
 import { Banques } from '../ecrans/plateforme/Banques';
 import { CadreConsole, type PageConsole } from '../ecrans/plateforme/Console';
 import { ALPHA, DOMAINE, MAINTENANT } from './donnees/commun';
+import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './donnees/agences';
+import { CONSOMMATION_IA, REPONSES_BANQUE, SUGGESTION_42, conversationAssistant } from './donnees/assistant';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './donnees/auth';
 import {
-  ABSENCES, AGENCES, AGENTS_DES_GROUPES, AYA, CATEGORIES, FATOU, GROUPES as GROUPES_AGENTS, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi,
+  ABSENCES, AGENCES, AGENTS_DES_GROUPES, AYA, CATEGORIES, FATOU, GROUPES as GROUPES_AGENTS, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi,
 } from './donnees/parametrage';
 import { ALERTES, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './donnees/plateforme';
 import {
@@ -46,7 +52,7 @@ export type Groupe = 'portail' | 'connexion' | 'back-office' | 'plateforme';
 
 export const GROUPES: { cle: Groupe; titre: string; resume: string; parcours?: boolean }[] = [
   { cle: 'portail', titre: 'Portail client', resume: 'Sur téléphone, aux couleurs de la banque, du QR code à la clôture.', parcours: true },
-  { cle: 'connexion', titre: 'Connexion du personnel', resume: 'Mot de passe puis code TOTP, activation à la première connexion.', parcours: true },
+  { cle: 'connexion', titre: 'Connexion du personnel', resume: 'Mot de passe, puis code TOTP quand la double authentification est active ou exigée par la banque.', parcours: true },
   { cle: 'back-office', titre: 'Back-office de la banque', resume: 'Agents, superviseurs et Admin Entreprise, sur ordinateur.' },
   { cle: 'plateforme', titre: 'Console de la plateforme', resume: 'Super Admin de Makor Telecoms : banques, activité, alertes.' },
 ];
@@ -109,9 +115,10 @@ const VU_PAR = (options: (keyof typeof PROFILS)[]): Variante => ({
 const aTraiter = (u: S<'Moi'>) => (u.role === 'AGENT' ? PAGE_AGENT.compteurs.assignees : PAGE_SUPERVISEUR.compteurs.recues);
 const MINUTES_PAR_JOUR = 450; // 08:00–12:00 et 14:00–17:30
 
-function backOffice(u: S<'Moi'>, page: PageBackOffice, contenu: ReactNode, notificationsOuvertes = false) {
+function backOffice(u: S<'Moi'>, page: PageBackOffice, contenu: ReactNode, notificationsOuvertes = false, bandeau?: ReactNode) {
   return (
     <CadreBackOffice
+      bandeau={bandeau}
       banque={ALPHA}
       moi={u}
       page={page}
@@ -174,6 +181,51 @@ export const ECRANS: Ecran[] = [
           }}
         />
       ),
+  },
+  {
+    id: 'assistant',
+    groupe: 'portail',
+    titre: 'Assistant automatique',
+    format: 'mobile',
+    adresse: (b) => site(b, '/d/7K3QX9P2MA'),
+    operations: ['lireFormulaireDepot', 'converserAvecAssistant'],
+    roles: 'Client, sans compte, quand Makor a ouvert l\'assistant IA à la banque (étape 18, phase 2).',
+    notes: [
+      'L\'assistant se présente comme automatique et rappelle comment joindre une personne : « conseiller » transfère toujours, même sans IA (décision I3).',
+      'Ce que lit le client vient de textes fixes et des réponses écrites par la banque : l\'IA ne fait que trier le message. Elle ne promet rien, ne change aucun statut, ne conseille pas (décision I4).',
+      'Avant tout envoi à l\'IA, numéros de carte et de compte, IBAN, téléphones, e-mails et codes sont remplacés par des étiquettes (décision I5). Un code écrit en clair déclenche une mise en garde et n\'entre pas dans la réclamation.',
+      'La proposition ouvre le formulaire prérempli : le client relit, ajoute ses coordonnées, accepte la politique de données et envoie lui-même.',
+      'Sans fournisseur d\'IA, s\'il ne répond pas ou au-delà du plafond du jour, des règles de mots-clés répondent : le client ne voit pas la différence, sinon une compréhension moins fine.',
+      'Variante « Conseiller, le soir » : la banque est fermée, l\'assistant donne l\'heure de reprise.',
+    ],
+    variantes: [{
+      cle: 'etat',
+      libelle: 'Conversation',
+      options: [
+        { valeur: 'faq', libelle: 'Question fréquente' },
+        { valeur: 'depot', libelle: 'Réclamation préparée' },
+        { valeur: 'conseiller', libelle: 'Conseiller, le soir' },
+      ],
+    }],
+    marque: true,
+    rendu: ({ v, banque }) => {
+      const { fil, dernier } = v.etat === 'conseiller'
+        ? conversationAssistant(banque.nom, ['Mon salaire de septembre n\'est pas arrivé', 'je veux parler à un conseiller'], false, 'demain à 8 h')
+        : v.etat === 'depot'
+          ? conversationAssistant(banque.nom, ['bjr', 'Le GAB de l\'agence a avalé ma carte hier soir vers 21h, je n\'ai pas pu la récupérer'])
+          : conversationAssistant(banque.nom, ['Bonsoir, vous ouvrez à quelle heure le matin ?']);
+      return (
+        <Assistant
+          key={v.etat}
+          banque={banque}
+          agence="Plateau"
+          fil={fil}
+          suggestions={dernier.suggestions}
+          proposition={dernier.proposition}
+          categorie={CATEGORIES.find((c) => c.id === dernier.proposition?.categorieId)?.nom}
+        />
+      );
+    },
   },
   {
     id: 'accuse',
@@ -328,8 +380,12 @@ export const ECRANS: Ecran[] = [
     format: 'bureau',
     adresse: (b) => site(b, '/back-office/connexion/code'),
     operations: ['validerCodeTotp'],
-    roles: 'Tout le personnel, à chaque connexion.',
-    notes: ['Seconde étape obligatoire (décision C6). Le jeton intermédiaire expire après 5 minutes.', 'En cas de téléphone perdu, l\'Admin Entreprise réinitialise le TOTP depuis l\'écran Personnel.'],
+    roles: 'Le personnel dont la double authentification est active, à chaque connexion ; le Super Admin toujours.',
+    notes: [
+      'Seconde étape quand la personne a activé la double authentification (étape 19 : facultative par défaut, exigée si l\'Admin Entreprise l\'a décidé). Le jeton intermédiaire expire après 5 minutes.',
+      'Sans double authentification, la connexion s\'ouvre directement après le mot de passe (SESSION_OUVERTE).',
+      'En cas de téléphone perdu, l\'Admin Entreprise réinitialise le TOTP depuis l\'écran Personnel.',
+    ],
     marque: true,
     rendu: ({ banque }) => <CodeTotp banque={banque} etape={ETAPE_TOTP} />,
   },
@@ -340,9 +396,9 @@ export const ECRANS: Ecran[] = [
     format: 'bureau',
     adresse: (b) => site(b, '/back-office/invitation'),
     operations: ['accepterInvitation', 'activerTotp'],
-    roles: 'Une personne invitée, depuis le lien de son e-mail d\'invitation.',
+    roles: 'Une personne invitée, depuis le lien de son e-mail d\'invitation, quand sa banque exige la double authentification.',
     notes: [
-      'Étape 1 : choix du mot de passe (12 caractères au moins, refusé s\'il est trop courant). Étape 2 ici : activation du TOTP.',
+      'Étape 1 : choix du mot de passe (12 caractères au moins, refusé s\'il est trop courant). Étape 2 ici, seulement si la banque exige la double authentification : activation du TOTP. Sinon, la console s\'ouvre et la personne l\'active quand elle veut depuis « Mon compte » (étape 19).',
       'Le QR code encode l\'adresse otpauth:// ; la clé est aussi donnée en clair, par groupes de 4, pour une saisie manuelle.',
     ],
     marque: true,
@@ -447,6 +503,35 @@ export const ECRANS: Ecran[] = [
       ),
   },
   {
+    id: 'ticket-brouillon',
+    groupe: 'back-office',
+    titre: 'Fiche, brouillon de l\'assistant IA',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/reclamations/ALP-2026-002442'),
+    operations: ['lireReclamation', 'suggererReponse', 'repondreAuClient', 'changerPriorite'],
+    roles: 'Agent assigné et superviseurs, quand Makor a ouvert l\'assistant IA à la banque (étape 18).',
+    notes: [
+      '« Suggérer une réponse » remplit la zone de réponse avec un brouillon : rien ne part, rien ne change sur la réclamation. L\'agent relit, corrige et envoie lui-même (décision I4).',
+      'Les interdits sont signalés en rouge et revérifiés à chaque frappe : ici, « vous serez remboursé sous 48 heures » promet un remboursement et un délai. Corriger le texte fait disparaître l\'alerte.',
+      'Une catégorie plus juste et l\'urgence peuvent être suggérées, à titre indicatif ; « Passer en urgent » reste l\'action habituelle.',
+      'Seuls partent, masqués, la description et les derniers messages publics : ni nom, ni coordonnées, ni notes internes, ni pièces jointes (décision I5).',
+      'Sans IA (ou si elle ne répond pas), un brouillon type sûr, avec la réponse validée de la banque qui s\'applique.',
+    ],
+    rendu: () =>
+      backOffice(
+        AGENT,
+        'reclamations',
+        <Ticket
+          r={{ ...FICHE_42.AGENT, depotAssistant: true }}
+          agents={AGENTS_ASSIGNABLES}
+          delaiClotureJours={PARAMETRES.delaiClotureAutoJours}
+          seuil={PARAMETRES.seuilAlerteSlaPourcent}
+          suggestions={{ ia: SUGGESTION_42 }}
+          actions={{ suggerer: async () => SUGGESTION_42 }}
+        />,
+      ),
+  },
+  {
     id: 'conversations',
     groupe: 'back-office',
     titre: 'Boîte de réception',
@@ -493,6 +578,25 @@ export const ECRANS: Ecran[] = [
       'Satisfaction des clients (étape 15) : taux de réponse, satisfaits (notes 4 et 5), note moyenne, NPS, par agent et derniers commentaires ; seulement si la banque a des enquêtes.',
     ],
     rendu: () => backOffice(SUPERVISEUR, 'tableau', <TableauDeBord indicateurs={INDICATEURS} />),
+  },
+  {
+    id: 'agences',
+    groupe: 'back-office',
+    titre: 'Activité des agences',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/agences'),
+    operations: ['lireIndicateursAgences'],
+    roles: 'Admin Entreprise et superviseur : toutes les agences de la banque (étape 19).',
+    notes: [
+      'Une ligne par agence sur la période : réclamations, urgentes, résolues, délais en temps ouvré, respect du SLA, charge en ce moment, satisfaction.',
+      'En tête, des repères : agences sollicitées, la plus sollicitée, le meilleur respect du SLA, celles qui ont des réclamations en retard.',
+      'Le détail d\'une agence : ses catégories les plus fréquentes, ses agents les plus sollicités et chacun de ses QR codes avec son volume ; liens vers le tableau de bord et les réclamations de l\'agence.',
+      'Les dépôts par lien web sans agence forment la dernière ligne, « Sans agence » : la somme des lignes est le total du tableau de bord.',
+      'Mêmes filtres que le tableau de bord (période, catégorie, canal) et export CSV.',
+    ],
+    variantes: [{ cle: 'detail', libelle: 'Détail', options: [{ valeur: 'plateau', libelle: 'Plateau déplié' }, { valeur: 'aucun', libelle: 'Liste' }] }],
+    rendu: ({ v }) =>
+      backOffice(ADMIN, 'agences', <Agences key={v.detail} indicateurs={INDICATEURS_AGENCES} ouverte={v.detail === 'plateau' ? AGENCES[0]!.id : null} />),
   },
   {
     id: 'categories',
@@ -578,24 +682,53 @@ export const ECRANS: Ecran[] = [
     },
   },
   {
+    id: 'reponses-assistant',
+    groupe: 'back-office',
+    titre: 'Assistant IA : base de réponses',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/parametrage/assistant'),
+    operations: ['listerReponsesAssistant', 'creerReponseAssistant', 'modifierReponseAssistant', 'supprimerReponseAssistant'],
+    roles: 'Admin Entreprise, quand Makor a ouvert l\'assistant IA à la banque (étape 18).',
+    notes: [
+      'La banque écrit et valide chaque réponse ; l\'assistant la montre telle quelle quand la question du client y correspond (décision I4).',
+      'Les interdits sont signalés à la saisie, comme dans l\'API : un avertissement, la banque décide. Ici, une ancienne réponse qui promettait un délai a été retirée.',
+      'Une réponse retirée n\'est plus utilisée, sans être perdue. Chaque création, modification ou suppression va au journal d\'audit.',
+    ],
+    variantes: [{ cle: 'edition', libelle: 'Panneau', options: [{ valeur: 'liste', libelle: 'Liste' }, { valeur: 'edition', libelle: 'Modifier une réponse' }] }],
+    rendu: ({ v }) =>
+      backOffice(ADMIN, 'assistant', <ReponsesAssistant key={v.edition} reponses={REPONSES_BANQUE} enEdition={v.edition === 'edition' ? REPONSES_BANQUE.at(-1)!.id : null} />),
+  },
+  {
     id: 'personnel',
     groupe: 'back-office',
     titre: 'Personnel',
     format: 'bureau',
     adresse: () => site(ALPHA, '/back-office/personnel'),
-    operations: ['listerUtilisateurs', 'inviterUtilisateur', 'modifierUtilisateur', 'desactiverUtilisateur', 'renvoyerInvitation', 'reinitialiserTotp'],
+    operations: ['listerUtilisateurs', 'inviterUtilisateur', 'modifierUtilisateur', 'desactiverUtilisateur', 'renvoyerInvitation', 'reinitialiserTotp', 'modifierSecuriteBanque'],
     roles: 'Admin Entreprise (gère) ; superviseur (consulte).',
     notes: [
       'Le plan limite les agents et superviseurs non désactivés : l\'invitation est refusée au-delà (PLAFOND_AGENTS_ATTEINT).',
       'Un compte verrouillé (5 échecs) l\'est pour 15 minutes ; l\'heure de fin est affichée.',
+      'Double authentification (étape 19) : facultative par défaut, chacun l\'active depuis « Mon compte ». L\'Admin Entreprise peut l\'exiger de tout le personnel, après avoir activé la sienne (DOUBLE_AUTHENTIFICATION_A_ACTIVER) : les sessions de ceux qui ne l\'ont pas activée sont fermées, et chacun l\'active à sa prochaine connexion.',
+      'Chaque personne montre l\'état de sa double authentification ; ici, Ibrahim Coulibaly ne l\'a pas activée.',
     ],
-    variantes: [VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR'])],
+    variantes: [
+      VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR']),
+      { cle: 'regle', libelle: 'Double authentification', options: [{ valeur: 'facultative', libelle: 'Facultative' }, { valeur: 'exigee', libelle: 'Exigée' }] },
+    ],
     rendu: ({ v }) => {
       const u = PROFILS[v.role as keyof typeof PROFILS];
       return backOffice(
         u,
         'personnel',
-        <Personnel page={PAGE_PERSONNEL} plan={PARAMETRES.plan} consommation={PARAMETRES.consommation} modifiable={u.role === 'ADMIN_ENTREPRISE'} maintenant={MAINTENANT} />,
+        <Personnel
+          page={PAGE_PERSONNEL}
+          plan={PARAMETRES.plan}
+          consommation={PARAMETRES.consommation}
+          modifiable={u.role === 'ADMIN_ENTREPRISE'}
+          maintenant={MAINTENANT}
+          totpObligatoire={v.regle === 'exigee'}
+        />,
       );
     },
   },
@@ -627,6 +760,42 @@ export const ECRANS: Ecran[] = [
     ],
     rendu: () => backOffice(ADMIN, 'audit', <Audit journal={JOURNAL} verification={VERIFICATION_CHAINE} />),
   },
+  {
+    id: 'compte',
+    groupe: 'back-office',
+    titre: 'Mon compte',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/compte'),
+    operations: ['lireMoi', 'preparerTotp', 'confirmerTotp', 'desactiverTotp'],
+    roles: 'Tout le personnel de la banque, pour son propre compte (étape 19).',
+    notes: [
+      'Tant que la double authentification n\'est pas active, un bandeau le rappelle en haut de chaque page ; « Plus tard » le masque jusqu\'à la prochaine connexion.',
+      'Activation : un nouveau secret, un QR code à scanner, puis un premier code pour confirmer. Le secret ne sert qu\'une fois confirmé.',
+      'Désactivation : avec un code de l\'application, et seulement si la banque ne l\'exige pas. Les autres sessions de la personne sont fermées.',
+      'Chaque activation et désactivation va au journal d\'audit de la banque.',
+    ],
+    variantes: [{
+      cle: 'etat',
+      libelle: 'État',
+      options: [
+        { valeur: 'inactive', libelle: 'Non activée' },
+        { valeur: 'activation', libelle: 'Activation' },
+        { valeur: 'active', libelle: 'Activée' },
+        { valeur: 'exigee', libelle: 'Exigée par la banque' },
+      ],
+    }],
+    rendu: ({ v }) => {
+      const active = v.etat === 'active' || v.etat === 'exigee';
+      const u = { ...moi(IBRAHIM, 'AGENT', active), totpObligatoire: v.etat === 'exigee' };
+      return backOffice(
+        u,
+        'compte',
+        <Compte key={v.etat} moi={u} banque={ALPHA.nom} enrolement={v.etat === 'activation' ? ENROLEMENT_COMPTE : undefined} />,
+        false,
+        v.etat === 'inactive' ? <BandeauDoubleAuthentification /> : undefined,
+      );
+    },
+  },
 
   /* ------------------------------------------------------------------ Console de la plateforme */
   {
@@ -650,14 +819,15 @@ export const ECRANS: Ecran[] = [
     titre: 'Activité et SMS',
     format: 'bureau',
     adresse: () => console_('/activite'),
-    operations: ['lireIndicateursPlateforme', 'lireFacturationSms'],
+    operations: ['lireIndicateursPlateforme', 'lireFacturationSms', 'lireConsommationIa'],
     roles: 'Super Admin.',
     notes: [
       'Métadonnées seulement : volumes, taux, compteurs de SMS. Aucun texte ni client (arbitrage 4, droits par colonne de l\'étape 3).',
       'Les segments facturés servent à refacturer les SMS à chaque banque.',
       'Satisfaction (étape 15) : totaux par banque (enquêtes, réponses, satisfaits, NPS), jamais les commentaires des clients.',
+      'Assistant IA (étape 18) : tours du portail, brouillons, réponses par l\'IA ou par les règles, jetons et coût, d\'après un journal qui ne garde aucun message (décisions I2 et I5).',
     ],
-    rendu: () => consoleSA('activite', <Activite indicateurs={INDICATEURS_PLATEFORME} sms={FACTURATION_SMS} />),
+    rendu: () => consoleSA('activite', <Activite indicateurs={INDICATEURS_PLATEFORME} sms={FACTURATION_SMS} ia={CONSOMMATION_IA} />),
   },
   {
     id: 'alertes',

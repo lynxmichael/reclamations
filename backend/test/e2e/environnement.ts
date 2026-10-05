@@ -31,10 +31,12 @@ export function redisE2E(): string {
   return u.toString();
 }
 
-export function configurationE2E(): Configuration {
+export function configurationE2E(env: Record<string, string> = {}): Configuration {
   const urls = urlsE2E();
   return lireConfiguration({
     ...process.env,
+    // Assistant IA (étape 18) : règles seules, sauf pour les tests qui simulent un fournisseur
+    IA_FOURNISSEUR: 'regles',
     APP_DATABASE_URL: urls.application,
     REDIS_URL: redisE2E(),
     COOKIE_SECURE: 'false',
@@ -47,6 +49,7 @@ export function configurationE2E(): Configuration {
     URL_CONSOLE: '',
     // Défis anti-robot faciles : les tests en résolvent des centaines (le test dédié le vérifie)
     ANTI_ROBOT_MAXIMUM: '2000',
+    ...env,
   });
 }
 
@@ -59,8 +62,8 @@ export interface ApiDeTest {
   fermer(): Promise<void>;
 }
 
-export async function demarrerApi(o: { horloge?: Horloge } = {}): Promise<ApiDeTest> {
-  const config = configurationE2E();
+export async function demarrerApi(o: { horloge?: Horloge; env?: Record<string, string> } = {}): Promise<ApiDeTest> {
+  const config = configurationE2E(o.env);
   const app = await creerApplication({ configuration: config, horloge: o.horloge, journaux: 'erreurs' });
   await app.listen(0, '127.0.0.1');
   const adresse = app.getHttpServer().address() as { port: number };

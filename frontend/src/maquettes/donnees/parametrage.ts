@@ -71,6 +71,8 @@ export const PARAMETRES: S<'ParametresBanque'> = {
   attributionAutomatique: true,
   modeAttribution: 'SUGGESTION',
   chatWeb: true,
+  assistantIa: true,
+  doubleAuthentificationObligatoire: false,
   couleurPrimaire: ALPHA.couleurPrimaire,
   couleurSecondaire: ALPHA.couleurSecondaire,
   logoUrl: null,
@@ -124,7 +126,7 @@ export const PERSONNEL: S<'Utilisateur'>[] = [
   utilisateur(AYA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 07:58') }),
   utilisateur(MAMADOU, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('24/09 17:20'), verrouilleJusquA: t('25/09 15:22') }),
   utilisateur(ADJOUA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 08:20') }),
-  utilisateur(IBRAHIM, 'AGENT', { superviseur: ref(MARIAM), derniereConnexionLe: t('25/09 08:03') }),
+  utilisateur(IBRAHIM, 'AGENT', { superviseur: ref(MARIAM), derniereConnexionLe: t('25/09 08:03'), totpActif: false }),
   utilisateur(ESTELLE, 'AGENT', { superviseur: ref(MARIAM), statut: 'INVITE', totpActif: false }),
   utilisateur(JEAN_MARC, 'AGENT', { superviseur: ref(MARIAM), statut: 'DESACTIVE', derniereConnexionLe: t('31/08 17:02') }),
 ];
@@ -136,8 +138,12 @@ export const PAGE_PERSONNEL: S<'PageUtilisateurs'> = {
 
 const banqueDe = { id: id('banque', 1), nom: ALPHA.nom, slug: ALPHA.slug, fuseauHoraire: FUSEAU };
 
-export function moi(p: { id: string; prenom: string; nom: string }, role: S<'RoleUtilisateur'>): S<'Moi'> {
-  return { id: p.id, email: email(p), prenom: p.prenom, nom: p.nom, role, banque: role === 'SUPER_ADMIN' ? null : banqueDe };
+export function moi(p: { id: string; prenom: string; nom: string }, role: S<'RoleUtilisateur'>, totpActif = true): S<'Moi'> {
+  return {
+    id: p.id, email: email(p), prenom: p.prenom, nom: p.nom, role, banque: role === 'SUPER_ADMIN' ? null : banqueDe,
+    // Étape 19 : la Banque Alpha laisse la double authentification facultative ; le Super Admin l'a toujours
+    totpActif, totpObligatoire: role === 'SUPER_ADMIN',
+  };
 }
 
 /* ------------------------------------------------------------------ Attribution (étape 16) */

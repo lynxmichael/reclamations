@@ -27,7 +27,7 @@ async function principal() {
         select: { id: true, tenantId: true, email: true, prenom: true },
       });
       const j = await nouveauJeton(tx, u.id, 'INVITATION', new Date());
-      await envoyerInvitation(tx, config, u, null, j);
+      await envoyerInvitation(tx, config, u, null, j, true);
       await journaliser(tx, { tenantId: null, acteur: 'SYSTEME', action: 'plateforme.super_admin_invite', entite: 'utilisateur', entiteId: u.id, donnees: { origine: 'script' } });
       return j;
     });

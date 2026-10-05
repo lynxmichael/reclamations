@@ -47,6 +47,15 @@ x-application: &application
     SMS_EXPEDITEUR: ${SMS_EXPEDITEUR:-Reclamation}
     # Difficulté de base de l'anti-robot du portail (étape 11)
     ANTI_ROBOT_MAXIMUM: ${ANTI_ROBOT_MAXIMUM:-100000}
+    # Assistant IA (étape 18) : regles = aucun envoi ; anthropic, openai ou mistral d'après le banc d'essai
+    IA_FOURNISSEUR: ${IA_FOURNISSEUR:-regles}
+    IA_MODELE: ${IA_MODELE:-}
+    IA_CLE: ${IA_CLE:-}
+    IA_URL: ${IA_URL:-}
+    IA_DELAI_MS: ${IA_DELAI_MS:-8000}
+    IA_PRIX_ENTREE: ${IA_PRIX_ENTREE:-0}
+    IA_PRIX_SORTIE: ${IA_PRIX_SORTIE:-0}
+    IA_PLAFOND_JOUR: ${IA_PLAFOND_JOUR:-2000}
   logging: *journaux
   networks: [interne]
 

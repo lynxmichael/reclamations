@@ -9,6 +9,7 @@ import type { PageBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import type { ActionsConversations, FiltreConversations } from '../ecrans/back-office/Conversations';
 import type { ActionsFiche } from '../ecrans/back-office/Ticket';
 import { fichierExemple, type SaisieDepot } from '../ecrans/portail/Depot';
+import type { EchangeVu } from '../ecrans/portail/Assistant';
 import { CATEGORIES } from '../maquettes/donnees/parametrage';
 import { CLIENT_DEMO, creerDemo, debutDemo } from './historique';
 import { ErreurDemo, PERSONNES, type Envoi, type Moteur } from './moteur';
@@ -17,7 +18,9 @@ import { enregistrerProspect, versBanque, type Prospect } from './prospect';
 export const POINT_QR = '7K3QX9P2MA';
 
 export type EcranClient =
-  | { e: 'depot'; erreur: S<'Probleme'> | null; saisie: SaisieDepot; version: number }
+  | { e: 'depot'; erreur: S<'Probleme'> | null; saisie: SaisieDepot; version: number; via?: boolean }
+  /** Assistant automatique du portail (étape 18), par les règles dans la démo */
+  | { e: 'assistant'; fil: EchangeVu[]; tour: S<'ReponseAssistant'> }
   | { e: 'accuse'; accuse: S<'AccuseDepot'> }
   | { e: 'suivi'; jeton: string }
   | { e: 'code'; jeton: string; otp: S<'OtpEnvoye'>; saisi: string; erreur: string | null }
@@ -151,6 +154,7 @@ export function useDemo(prospectInitial: Prospect) {
           email: v.email,
           consentement: v.consentement,
           fichiers: v.fichiers.map((f) => ({ nom: f.name, taille: f.size, type: f.type || 'image/jpeg' })),
+          viaAssistant: client.e === 'depot' && !!client.via,
         });
         const t = moteur.ticket(accuse.numero);
         setClientId(t.clientId); // le téléphone de la démo appartient au client qui vient de déposer
@@ -177,6 +181,24 @@ export function useDemo(prospectInitial: Prospect) {
       setClient({ e: 'suivi', jeton: j });
     },
     nouveauDepot: () => setClient({ e: 'depot', erreur: null, saisie: SAISIE_EXEMPLE, version: Date.now() }),
+    /** Étape 18 : l'assistant se présente ; chaque message du client reçoit sa réponse (règles) */
+    assistant: () => {
+      const tour = moteur.converserAvecAssistant(POINT_QR, []);
+      setClient({ e: 'assistant', fil: tour.messages.map((m) => ({ auteur: 'ASSISTANT', texte: m.texte, code: m.code })), tour });
+    },
+    ecrireAssistant: (texte: string) => {
+      if (client.e !== 'assistant') return;
+      avancer(DUREE.lecture);
+      const fil: EchangeVu[] = [...client.fil, { auteur: 'CLIENT', texte }];
+      const tour = moteur.converserAvecAssistant(POINT_QR, fil);
+      setClient({ e: 'assistant', fil: [...fil, ...tour.messages.map((m) => ({ auteur: 'ASSISTANT' as const, texte: m.texte, code: m.code }))], tour });
+    },
+    /** La proposition de l'assistant ouvre le formulaire prérempli ; le client relit et envoie */
+    accepterProposition: () => {
+      if (client.e !== 'assistant' || !client.tour.proposition) return;
+      const p = client.tour.proposition;
+      setClient({ e: 'depot', erreur: null, saisie: { ...SAISIE_EXEMPLE, categorieId: p.categorieId ?? '', description: p.description, fichiers: [] }, version: Date.now(), via: true });
+    },
     demanderCode: (jeton: string, canal?: 'EMAIL') => {
       avancer(DUREE.lecture);
       const otp = tenter(() => moteur.demanderCode(jeton, canal));
@@ -344,6 +366,8 @@ export function useDemo(prospectInitial: Prospect) {
     return {
       retour: actionsBanque.fermerFiche,
       ouvrirConversation: (conversationId) => setBanque((b) => ({ ...b, page: 'conversations', ficheId: null, conversationId, filtre: 'toutes', notifs: false })),
+      // Assistant IA (étape 18) : brouillon par les règles dans la démo
+      suggerer: moteur.assistantActif ? async () => tenter(() => moteur.suggererReponse(utilisateur, id)) ?? null : undefined,
       prendreEnCharge: () => {
         avancer(DUREE.prise);
         tenter(() => moteur.prendreEnCharge(utilisateur, id), 'Réclamation prise en charge : le client est prévenu par SMS.');

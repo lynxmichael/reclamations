@@ -229,6 +229,20 @@ const CRITERES_PHASE_2 = [
     ['backend/src/domaine/conversation', /./],
     ['verifications'],
   ]],
+  ['Étape 18 — Assistant IA de première ligne : ouvert banque par banque par le Super Admin, avec le chat web ; sur le portail, l\'assistant se présente comme automatique, répond aux questions fréquentes avec les réponses écrites par la banque, prépare la réclamation que le client relit et envoie lui-même, et passe la main à un conseiller dès que le client l\'écrit ; il ne promet ni remboursement ni délai, n\'annonce aucun statut, ne conseille pas et ne demande aucun code ; les données personnelles sont masquées avant tout envoi à l\'IA ; sans IA, ou si elle échoue, des règles répondent ; l\'agent obtient un brouillon vérifié qu\'il envoie lui-même ; chaque appel est journalisé sans contenu, avec un plafond quotidien par banque, et l\'usage du mois est visible par Makor ; le fournisseur se choisit par un banc d\'essai pondéré.', [
+    [e2e('assistant'), /./],
+    [nav('11-assistant'), /./],
+    ['backend/src/domaine/ia', /./],
+    ['backend/src/infrastructure/ia', /./],
+    ['backend/scripts/banc-ia', /./],
+    ['verifications'],
+  ]],
+  ['Étape 19 — Activité des agences et double authentification au choix de la banque : l\'Admin Entreprise et les superviseurs voient chaque agence de la banque sur la période (réclamations, urgentes, résolues, délais, respect du SLA, charge en ce moment, satisfaction, catégories, agents, QR codes), les lignes faisant le total du tableau de bord, et ouvrent son tableau de bord ou ses réclamations ; la double authentification est facultative par défaut, chacun l\'active ou la désactive depuis « Mon compte » avec un code ; l\'Admin Entreprise, l\'ayant activée lui-même, peut l\'exiger de tout le personnel (sessions sans code fermées, activation à la connexion) puis la rendre facultative ; le Super Admin la garde toujours.', [
+    [e2e('authentification'), /étape 19|facultative|Mon compte|rendre obligatoire/],
+    [e2e('reporting'), /activité des agences/],
+    [nav('12-agences-securite'), /./],
+    ['verifications'],
+  ]],
 ];
 
 // ---- Exécution ------------------------------------------------------------------------------------------------
@@ -325,7 +339,7 @@ if (mesures.length) {
 }
 
 L.push('## Critères de la phase 2', '');
-L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14).`, '');
+L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14), et l'étape 19 ajoutée à la demande du client (activité des agences, double authentification au choix de la banque).`, '');
 tableauCriteres(criteresPhase2);
 L.push('## Suites', '');
 L.push('| Suite | Résultat | Tests | Durée |', '|---|---|---:|---:|');
