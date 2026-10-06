@@ -10,7 +10,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Prisma, StatutReclamation } from '../../generated/prisma/client.js';
 import { etat } from '../../application/reclamations/cycle-de-vie.js';
 import { lectureBanque } from '../../application/reclamations/conversations.js';
-import { chargerParametres } from '../../application/reclamations/parametres.js';
+import { chargerParametres, type ParametresBanque } from '../../application/reclamations/parametres.js';
 import { clientEnLigne, extrait, nonLueParLaBanque, reponseDue, type EtatConversation } from '../../domaine/conversation.js';
 import { verifierOperation } from '../../domaine/reclamation/machine.js';
 import { BaseDonnees, type ClientTransaction } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
@@ -19,7 +19,7 @@ import { acteurDe, personnelBanque, type Appel, type Personnel } from '../../inf
 import { introuvable, Probleme } from '../../infrastructure/contrat/probleme.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { pageDe, pagination, type S } from '../commun.js';
-import { INCLUSION_MESSAGE, iso, messagePersonnel, nomComplet, operationsPossibles } from '../reclamations/lecture.js';
+import { INCLUSION_MESSAGE, iso, messagePersonnel, nomComplet, operationsPossibles, reponseVers } from '../reclamations/lecture.js';
 
 type Moi = Personnel & { tenantId: string };
 type Where = Prisma.ConversationWhereInput;
@@ -50,14 +50,14 @@ export class ServiceConversations {
   ) {}
 
   /** Transaction de la banque de l'appelant, le chat devant être ouvert par Makor. */
-  private dans<T>(appel: Appel, travail: (tx: ClientTransaction, moi: Moi) => Promise<T>): Promise<T> {
+  private dans<T>(appel: Appel, travail: (tx: ClientTransaction, moi: Moi, p: ParametresBanque) => Promise<T>): Promise<T> {
     const moi = personnelBanque(appel);
     return this.bd.enBanque(moi.tenantId, async (tx) => {
       const p = await chargerParametres(tx, moi.tenantId);
       if (!p.banque.chatWeb) {
         throw new Probleme(403, 'FONCTION_NON_OUVERTE', 'Le chat web n\'est pas ouvert à votre banque : adressez-vous à Makor');
       }
-      return travail(tx, moi);
+      return travail(tx, moi, p);
     });
   }
 
@@ -132,7 +132,7 @@ export class ServiceConversations {
 
   lire(appel: Appel, id: string): Promise<S<'ConversationDetail'>> {
     const maintenant = this.horloge();
-    return this.dans(appel, async (tx) => {
+    return this.dans(appel, async (tx, _moi, p) => {
       const c = await this.charger(tx, appel, id);
       const r = c.reclamation;
       const messages = await tx.commentaire.findMany({
@@ -151,6 +151,8 @@ export class ServiceConversations {
         messages: messages.map(messagePersonnel),
         ...drapeaux(c, r.statut, maintenant),
         luParLeClientLe: iso(c.luClientLe),
+        // Étape 20 : WhatsApp dans les 24 h, SMS, sinon le suivi
+        reponseVers: reponseVers(c, p.banque, maintenant),
         operationsPossibles: operationsPossibles(etat(r), acteurDe(appel)),
       };
     });
@@ -165,6 +167,7 @@ export class ServiceConversations {
   }
 }
 
-function drapeaux(c: EtatConversation, statut: StatutReclamation, maintenant: Date) {
-  return { aRepondre: reponseDue(c, statut), nonLue: nonLueParLaBanque(c), clientEnLigne: clientEnLigne(c, maintenant) };
+/** « En ligne » : le client a le chat du portail à l'écran (jamais sur WhatsApp ni par SMS, étape 20). */
+function drapeaux(c: EtatConversation & { canal: string }, statut: StatutReclamation, maintenant: Date) {
+  return { aRepondre: reponseDue(c, statut), nonLue: nonLueParLaBanque(c), clientEnLigne: c.canal === 'WEB' && clientEnLigne(c, maintenant) };
 }

@@ -9,6 +9,7 @@ import { Avatar, BadgeStatut, Bouton, Onglets, cx } from '../../ui/composants';
 import { ChoixFiltre } from '../../ui/Filtre';
 import { nombre, relatif } from '../../ui/format';
 import { JaugeLigne } from '../../ui/JaugeSla';
+import { IconeCanal } from '../../ui/Canaux';
 import { CANAL, STATUT } from '../../ui/libelles';
 
 export type File = 'recues' | 'assignees' | 'urgentes' | 'en-retard' | 'escaladees' | 'toutes';
@@ -246,7 +247,7 @@ export function Files({
                 <td className="px-3 py-3 align-top">
                   <div>{r.categorie.nom}</div>
                   <div className="mt-0.5 flex items-center gap-1 text-sm text-encre-3">
-                    {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={13} /> : <Globe aria-hidden size={13} />}
+                    {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={13} /> : r.canal === 'LIEN_WEB' ? <Globe aria-hidden size={13} /> : <IconeCanal canal={r.canal} taille={13} />}
                     {r.agence ? r.agence.nom : CANAL[r.canal]}
                   </div>
                 </td>

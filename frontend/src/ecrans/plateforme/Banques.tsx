@@ -1,13 +1,16 @@
 /**
  * Banques clientes (listerBanques, modifierBanque, suspendreBanque, reactiverBanque) et création
  * d'une banque avec son premier Admin Entreprise en une seule opération (creerBanque, décision C13).
+ * Étape 20 : raccordement du numéro WhatsApp (inscription intégrée de Meta) et du numéro SMS de la
+ * banque (raccorderCanal), puis ouverture des deux canaux avec le chat web.
  */
 import { useState } from 'react';
-import { CirclePause, Info, Plus } from 'lucide-react';
+import { CirclePause, Info, Link2, Plus } from 'lucide-react';
+import { IconeCanal } from '../../ui/Canaux';
 import type { S } from '../../api/types';
 import { Dialogue } from '../../ui/Dialogue';
 import { Bouton, Champ, Liste, LogoBanque, Saisie, Texte, cx } from '../../ui/composants';
-import { date, nombre } from '../../ui/format';
+import { date, nombre, telephone } from '../../ui/format';
 
 type Issue = void | boolean | Promise<boolean>;
 
@@ -16,9 +19,14 @@ export interface ActionsBanques {
   modifier: (id: string, v: S<'ModificationBanque'>) => Issue;
   suspendre: (id: string, motif: string) => Issue;
   reactiver: (id: string) => Issue;
+  /** Étape 20 : numéro WhatsApp ou SMS de la banque */
+  raccorder?: (id: string, canal: 'WHATSAPP' | 'SMS', v: S<'RaccordementCanal'>) => Issue;
   occupe?: boolean;
   erreurs?: Record<string, string>;
 }
+
+/** Maquettes : la fiche s'affiche, ses boutons ne font rien */
+const SANS_ACTION: ActionsBanques = { creer: () => false, modifier: () => false, suspendre: () => false, reactiver: () => false };
 
 const FUSEAUX = ['Africa/Abidjan', 'Africa/Dakar', 'Africa/Lagos', 'Africa/Douala', 'Africa/Kinshasa', 'Africa/Casablanca', 'Europe/Paris'];
 
@@ -45,16 +53,19 @@ export function Banques({
   creation,
   actions,
   adresse = (slug) => `${slug}.reclamations.example`,
+  ouverteInitiale = null,
 }: {
   page: S<'PageBanques'>;
   plans: S<'Plan'>[];
   creation?: boolean;
+  /** Maquettes : la fiche d'une banque déjà ouverte */
+  ouverteInitiale?: string | null;
   actions?: ActionsBanques;
   /** Adresse du portail d'une banque */
   adresse?: (slug: string) => string;
 }) {
   const [nouvelle, setNouvelle] = useState(!!creation);
-  const [ouverte, setOuverte] = useState<string | null>(null);
+  const [ouverte, setOuverte] = useState<string | null>(ouverteInitiale);
   const plan = (id: string) => plans.find((p) => p.id === id);
   const banque = page.donnees.find((b) => b.id === ouverte) ?? null;
   return (
@@ -104,6 +115,8 @@ export function Banques({
                     {b.attributionAutomatique && <div>Attribution et escalade automatiques</div>}
                     {b.chatWeb && <div>Chat web et boîte de réception</div>}
                     {b.assistantIa && <div>Assistant IA</div>}
+                    {b.whatsapp && b.raccordements.whatsapp && <div className="flex items-center gap-1"><IconeCanal canal="WHATSAPP" taille={13} />WhatsApp <span className="chiffres">{telephone(b.raccordements.whatsapp.numero)}</span></div>}
+                    {b.smsEntrant && b.raccordements.sms && <div className="flex items-center gap-1"><IconeCanal canal="SMS" taille={13} />SMS entrant <span className="chiffres">{telephone(b.raccordements.sms.numero)}</span></div>}
                   </td>
                   <td className="px-3 py-3.5">
                     {b.suspendueLe ? (
@@ -134,7 +147,7 @@ export function Banques({
       </div>
 
       {nouvelle && <NouvelleBanque plans={plans.filter((p) => p.actif)} actions={actions} adresse={adresse} surFermer={() => setNouvelle(false)} />}
-      {banque && actions && <FicheBanque key={banque.id} b={banque} plans={plans} actions={actions} surFermer={() => setOuverte(null)} />}
+      {banque && <FicheBanque key={banque.id} b={banque} plans={plans} actions={actions ?? SANS_ACTION} surFermer={() => setOuverte(null)} />}
     </div>
   );
 }
@@ -241,11 +254,14 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
   const [attribution, setAttribution] = useState(b.attributionAutomatique);
   const [chat, setChat] = useState(b.chatWeb);
   const [assistant, setAssistant] = useState(b.assistantIa);
+  const [whatsapp, setWhatsapp] = useState(b.whatsapp);
+  const [smsEntrant, setSmsEntrant] = useState(b.smsEntrant);
   const [motif, setMotif] = useState('');
   const e = actions.erreurs ?? {};
   const valide = nom.trim().length >= 2 && Number(seuil) >= 1 && Number(seuil) <= 99 && Number(delai) >= 1 && Number(delai) <= 60;
   const enregistrer = async () => {
-    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat, assistantIa: chat && assistant });
+    const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat, assistantIa: chat && assistant,
+      whatsapp: chat && whatsapp && !!b.raccordements.whatsapp, smsEntrant: chat && smsEntrant && !!b.raccordements.sms });
     if (issue !== false) surFermer();
   };
   return (
@@ -332,7 +348,25 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
               </span>
             </span>
           </label>
+          {([
+            ['WHATSAPP', 'WhatsApp Business (phase 2)', whatsapp, setWhatsapp, b.raccordements.whatsapp,
+              'Le client écrit au numéro WhatsApp de la banque : son message entre dans la conversation de sa réclamation, ou une réclamation se prépare avec lui ; les agents répondent depuis la boîte de réception. Messages facturés par Meta à la banque.'],
+            ['SMS', 'SMS entrant (phase 2)', smsEntrant, setSmsEntrant, b.raccordements.sms,
+              'Même chose par SMS, au numéro de réception de la banque ; les réponses partent de ce numéro. Chaque SMS est refacturé à la banque.'],
+          ] as const).map(([canal, titre, coche, cocher, raccorde, aide]) => (
+            <label key={canal} className={cx('flex items-start gap-2.5 text-[15px]', (!chat || !raccorde) && 'opacity-55')}>
+              <input type="checkbox" checked={chat && coche && !!raccorde} disabled={!chat || !raccorde} onChange={(x) => cocher(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+              <span>
+                {titre}
+                <span className="block text-sm text-encre-3">
+                  {!chat ? 'Exige le chat web : les messages entrent dans la boîte de réception.' : !raccorde ? 'Raccordez d\'abord le numéro de la banque, ci-dessous.' : aide}
+                </span>
+              </span>
+            </label>
+          ))}
         </fieldset>
+
+        <Raccordements b={b} actions={actions} />
 
         <fieldset className="flex flex-col gap-3 rounded-xl border border-trait p-4">
           <legend className="px-1 text-[17px] font-bold">{b.suspendueLe ? 'Banque suspendue' : 'Suspendre la banque'}</legend>
@@ -355,5 +389,67 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
         </fieldset>
       </div>
     </Dialogue>
+  );
+}
+
+/**
+ * Numéros WhatsApp et SMS de la banque (étape 20). WhatsApp : les identifiants donnés par l'inscription
+ * intégrée de Meta (le numéro chez Meta, le compte WhatsApp Business) et le jeton d'accès, chiffré par
+ * l'API et jamais réaffiché. SMS : le numéro de réception chez la passerelle de Makor.
+ */
+function Raccordements({ b, actions }: { b: S<'BanquePlateforme'>; actions: ActionsBanques }) {
+  const wa = b.raccordements.whatsapp;
+  const [numeroWa, setNumeroWa] = useState(wa ? telephone(wa.numero) : '');
+  const [identifiant, setIdentifiant] = useState(wa?.identifiant ?? '');
+  const [compte, setCompte] = useState(wa?.compte ?? '');
+  const [jeton, setJeton] = useState('');
+  const [numeroSms, setNumeroSms] = useState(b.raccordements.sms ? telephone(b.raccordements.sms.numero) : '');
+  const [dernier, setDernier] = useState<'WHATSAPP' | 'SMS' | null>(null);
+  const e = actions.erreurs ?? {};
+  const erreur = (canal: 'WHATSAPP' | 'SMS', champ: string) => (dernier === canal ? e[champ] : undefined);
+  const chiffres = (v: string) => v.replace(/\D/g, '');
+  const waValide = numeroWa.trim().length >= 8 && /^\d{5,30}$/.test(identifiant) && /^\d{5,30}$/.test(compte) && (!!wa || jeton.trim().length >= 20);
+  const raccorder = async (canal: 'WHATSAPP' | 'SMS') => {
+    setDernier(canal);
+    const issue = await actions.raccorder?.(b.id, canal, canal === 'WHATSAPP'
+      ? { numero: numeroWa.trim(), identifiant, compte, ...(jeton.trim() ? { jeton: jeton.trim() } : {}) }
+      : { numero: numeroSms.trim() });
+    if (issue !== false) setJeton('');
+  };
+  return (
+    <fieldset className="flex flex-col gap-4 rounded-xl border border-trait p-4" data-testid="raccordements">
+      <legend className="px-1 text-[17px] font-bold">Numéros WhatsApp et SMS</legend>
+      <div className="flex flex-col gap-3">
+        <p className="flex items-center gap-1.5 font-semibold"><IconeCanal canal="WHATSAPP" />WhatsApp {wa && <span className="text-sm font-normal text-resolue">raccordé</span>}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Champ libelle="Numéro de la banque" aide="Ex. +225 27 22 00 00 00" erreur={erreur('WHATSAPP', 'numero')}>
+            {(id, d) => <Saisie id={id} aria-describedby={d} value={numeroWa} onChange={(x) => setNumeroWa(x.target.value)} maxLength={24} className="chiffres" />}
+          </Champ>
+          <Champ libelle="Identifiant du numéro chez Meta" aide="phone_number_id" erreur={erreur('WHATSAPP', 'identifiant')}>
+            {(id, d) => <Saisie id={id} aria-describedby={d} value={identifiant} onChange={(x) => setIdentifiant(chiffres(x.target.value))} maxLength={30} className="chiffres" />}
+          </Champ>
+          <Champ libelle="Compte WhatsApp Business" aide="Identifiant du compte (WABA)" erreur={erreur('WHATSAPP', 'compte')}>
+            {(id, d) => <Saisie id={id} aria-describedby={d} value={compte} onChange={(x) => setCompte(chiffres(x.target.value))} maxLength={30} className="chiffres" />}
+          </Champ>
+          <Champ libelle="Jeton d'accès" facultatif={!!wa} aide={wa ? 'Vide : le jeton actuel est gardé' : 'Donné par l\'inscription intégrée'} erreur={erreur('WHATSAPP', 'jeton')}>
+            {(id, d) => <Saisie id={id} aria-describedby={d} type="password" autoComplete="off" value={jeton} onChange={(x) => setJeton(x.target.value)} maxLength={1000} />}
+          </Champ>
+        </div>
+        <Bouton className="self-start" icone={<Link2 aria-hidden size={16} />} disabled={!waValide || actions.occupe} onClick={() => void raccorder('WHATSAPP')}>
+          {wa ? 'Mettre à jour le raccordement' : 'Raccorder le numéro WhatsApp'}
+        </Bouton>
+      </div>
+      <div className="flex flex-col gap-3 border-t border-trait pt-4">
+        <p className="flex items-center gap-1.5 font-semibold"><IconeCanal canal="SMS" />SMS entrant {b.raccordements.sms && <span className="text-sm font-normal text-resolue">raccordé</span>}</p>
+        <div className="flex items-end gap-3">
+          <Champ libelle="Numéro de réception" aide="Chez la passerelle SMS de Makor" erreur={erreur('SMS', 'numero')} className="flex-1">
+            {(id, d) => <Saisie id={id} aria-describedby={d} value={numeroSms} onChange={(x) => setNumeroSms(x.target.value)} maxLength={24} className="chiffres" />}
+          </Champ>
+          <Bouton icone={<Link2 aria-hidden size={16} />} disabled={numeroSms.trim().length < 8 || actions.occupe} onClick={() => void raccorder('SMS')}>
+            {b.raccordements.sms ? 'Mettre à jour' : 'Raccorder'}
+          </Bouton>
+        </div>
+      </div>
+    </fieldset>
   );
 }

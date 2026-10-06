@@ -1,7 +1,7 @@
 import { Controller, Inject, Module } from '@nestjs/common';
 import { AppelCourant, EntreesValidees, type Appel, type Entrees } from '../../infrastructure/contrat/appel.js';
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
-import { ServicePlateforme } from './plateforme.service.js';
+import { ServicePlateforme, type Raccordement } from './plateforme.service.js';
 
 @Controller()
 export class PlateformeControleur {
@@ -25,6 +25,11 @@ export class PlateformeControleur {
   @Operation('modifierBanque')
   modifierBanque(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
     return this.service.modifierBanque(a, e.chemin.id, e.corps);
+  }
+
+  @Operation('raccorderCanal')
+  raccorderCanal(@AppelCourant() a: Appel, @EntreesValidees() e: Entrees) {
+    return this.service.raccorderCanal(a, e.chemin.id, e.chemin.canal as 'WHATSAPP' | 'SMS', e.corps as unknown as Raccordement);
   }
 
   @Operation('suspendreBanque')

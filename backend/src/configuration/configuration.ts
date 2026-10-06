@@ -4,6 +4,7 @@
  * Une variable manquante ou invalide arrête le démarrage avec un message clair. En production,
  * les secrets de développement (valeurs de .env.example) sont refusés.
  */
+import { hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { MAXIMUM_PAR_DEFAUT } from '../infrastructure/securite/anti-robot.js';
@@ -41,6 +42,23 @@ export interface Configuration {
   readonly antiRobotMaximum: number;
   /** Assistant IA (étape 18) : règles seules, ou fournisseur derrière un adaptateur remplaçable (décision I6) */
   readonly ia: ConfigurationIa;
+  /** WhatsApp Business (étape 20) : application de Makor chez Meta */
+  readonly whatsapp: ConfigurationWhatsapp;
+  /** Secret partagé avec la passerelle SMS pour signer les SMS reçus (étape 20) ; vide : SMS entrant refusé */
+  readonly smsEntrantSecret: string | null;
+  /** Clé AES-256-GCM des jetons WhatsApp des banques, dérivée de CLE_CHIFFREMENT_TOTP */
+  readonly cleCanaux: Buffer;
+}
+
+export interface ConfigurationWhatsapp {
+  /** meta : envoi par l'API de Meta ; journal : écrit dans le journal du worker (développement) */
+  readonly envoi: 'meta' | 'journal';
+  readonly url: string;
+  readonly version: string;
+  /** Secret de l'application (vérifie la signature des webhooks) ; vide : webhooks refusés */
+  readonly secretApp: string | null;
+  /** Jeton de vérification saisi chez Meta à l'abonnement du webhook */
+  readonly jetonVerification: string | null;
 }
 
 export type NomFournisseurIa = 'anthropic' | 'openai' | 'mistral';
@@ -161,9 +179,56 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
     validerReponses: booleen('VALIDER_REPONSES', !production),
     antiRobotMaximum,
     ia: lireIa(env, production, erreurs),
+    whatsapp: lireWhatsapp(env, production, erreurs),
+    smsEntrantSecret: secretFacultatif(env, 'SMS_ENTRANT_SECRET', production, erreurs),
+    cleCanaux: cleTotp.length === 32 ? cleCanauxDe(cleTotp) : Buffer.alloc(0),
   };
   if (erreurs.length) throw new ErreurConfiguration(erreurs);
   return config;
+}
+
+/** Clé des jetons WhatsApp des banques (étape 20), dérivée de la clé TOTP : un secret de moins à gérer */
+export function cleCanauxDe(cleTotp: Buffer): Buffer {
+  return Buffer.from(hkdfSync('sha256', cleTotp, 'reclamations', 'jetons-canaux', 32));
+}
+
+const SECRETS_CANAUX_DE_DEVELOPPEMENT = ['developpement-whatsapp-secret-0123456789', 'developpement-sms-entrant-0123456789', 'developpement-verification'];
+
+/** Secret facultatif : 16 caractères au moins ; en production, jamais la valeur de développement. */
+function secretFacultatif(env: NodeJS.ProcessEnv, nom: string, production: boolean, erreurs: string[]): string | null {
+  const v = env[nom]?.trim();
+  if (!v) return null;
+  if (v.length < 16) erreurs.push(`${nom} doit faire au moins 16 caractères`);
+  if (production && SECRETS_CANAUX_DE_DEVELOPPEMENT.includes(v)) erreurs.push(`${nom} a la valeur de développement : interdit en production`);
+  return v;
+}
+
+/**
+ * WhatsApp (étape 20) : WHATSAPP_ENVOI=meta (par défaut en production) ou journal ; WHATSAPP_URL
+ * (https://graph.facebook.com), WHATSAPP_VERSION (v26.0), WHATSAPP_SECRET_APP et
+ * WHATSAPP_JETON_VERIFICATION (de l'application de Makor chez Meta).
+ */
+function lireWhatsapp(env: NodeJS.ProcessEnv, production: boolean, erreurs: string[]): ConfigurationWhatsapp {
+  const envoi = env.WHATSAPP_ENVOI?.trim() || (production ? 'meta' : 'journal');
+  if (envoi !== 'meta' && envoi !== 'journal') erreurs.push('WHATSAPP_ENVOI doit valoir meta ou journal');
+  const url = (env.WHATSAPP_URL?.trim() || 'https://graph.facebook.com').replace(/\/+$/, '');
+  try {
+    const adresse = new URL(url);
+    if (production && adresse.protocol !== 'https:') erreurs.push('WHATSAPP_URL doit être en https en production');
+  } catch {
+    erreurs.push('WHATSAPP_URL invalide');
+  }
+  const version = env.WHATSAPP_VERSION?.trim() || 'v26.0';
+  if (!/^v\d{2,3}\.\d$/.test(version)) erreurs.push('WHATSAPP_VERSION : version de l\'API Graph, ex. v26.0');
+  const jeton = env.WHATSAPP_JETON_VERIFICATION?.trim() || null;
+  if (jeton && production && SECRETS_CANAUX_DE_DEVELOPPEMENT.includes(jeton)) erreurs.push('WHATSAPP_JETON_VERIFICATION a la valeur de développement : interdit en production');
+  return {
+    envoi: envoi === 'journal' ? 'journal' : 'meta',
+    url,
+    version,
+    secretApp: secretFacultatif(env, 'WHATSAPP_SECRET_APP', production, erreurs),
+    jetonVerification: jeton,
+  };
 }
 
 /**

@@ -8,7 +8,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { DateTime } from 'luxon';
-import type { MotifClotureForcee, Priorite, StatutReclamation, TypeEvenement } from '../../generated/prisma/enums.js';
+import type { CanalConversation, MotifClotureForcee, Priorite, StatutReclamation, TypeEvenement } from '../../generated/prisma/enums.js';
 import type { Prisma, Reclamation } from '../../generated/prisma/client.js';
 import { normaliserEmail, normaliserTelephone } from '../../domaine/contact.js';
 import { verifierOperation, verifierTransition, type Acteur, type ActionStatut, type EtatTicket } from '../../domaine/reclamation/machine.js';
@@ -20,7 +20,8 @@ import { chargerParametres, type ParametresBanque } from './parametres.js';
 import { ouvrirEnquete } from './satisfaction.js';
 import type { Choix } from '../../domaine/attribution.js';
 import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
-import { messageDuClientDansConversation, reponseDansConversation } from './conversations.js';
+import { SUITE_RESOLUTION } from '../../domaine/canaux.js';
+import { canalDeReponse, messageDuClientDansConversation, ouvrirConversation, reponseDansConversation } from './conversations.js';
 
 export interface OptionsCycleDeVie {
   /** Horloge ; remplacée dans les tests pour simuler le passage du temps */
@@ -145,6 +146,13 @@ export class CycleDeVie {
         : null;
       if (choix) t = await this.attribuer(tx, t, p, maintenant, choix);
 
+      // Étape 20 : déposée sur WhatsApp ou par SMS, la réclamation y a sa conversation, ouverte par ce
+      // message du client ; l'accusé de dépôt et les réponses des agents y partent
+      if ((point.canal === 'WHATSAPP' || point.canal === 'SMS') && p.banque.chatWeb) {
+        const c = await ouvrirConversation(tx, reclamation, maintenant, point.canal);
+        await tx.conversation.update({ where: { id: c.id }, data: { canal: point.canal, dernierMessageClientLe: maintenant, luClientLe: maintenant } });
+      }
+
       const envois = this.envois(tx, t, p, maintenant);
       await envois.client('client.depot');
       if (t.priorite === 'URGENTE') {
@@ -252,19 +260,24 @@ export class CycleDeVie {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierOperation('REPONDRE_AU_CLIENT', etat(t), acteur));
       if (t.statut === 'OUVERTE') t = await this.transition(tx, t, 'PRENDRE_EN_CHARGE', acteur, maintenant, { prisEnChargeLe: maintenant });
-      const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, contenu);
+      // Étape 20 : là où le client a écrit en dernier (WhatsApp dans les 24 h, SMS), la réponse elle-même part
+      const fil = await canalDeReponse(tx, t, p, maintenant);
+      const surFil = fil.canal !== 'WEB' && await this.envois(tx, t, p, maintenant).conversation(fil, contenu.trim(), options.fichiers?.length ?? 0);
+      const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, contenu, surFil ? fil.canal : 'WEB');
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       await this.joindre(tx, t, message.id, options.fichiers, acteur, maintenant, true);
       t = await this.noterPremiereReponse(tx, t, p, maintenant);
-      // Chat web (étape 17) : avis différé si le client a ouvert le chat, envoyé par le worker s'il ne lit pas
-      const { avisDiffere } = await reponseDansConversation(tx, t, p, maintenant);
+      // Chat web (étape 17) : avis différé si le client a ouvert le chat, envoyé par le worker s'il ne lit pas ;
+      // sur WhatsApp ou par SMS, le message tient lieu d'avis (s'il échoue, l'avis part par e-mail ou SMS)
+      const { avisDiffere } = await reponseDansConversation(tx, t, p, maintenant, { avisDonne: surFil });
+      const avise = avisDiffere || surFil;
       if (options.attendreReponse && t.statut === 'EN_COURS') {
         t = await this.transition(tx, t, 'QUESTIONNER_CLIENT', acteur, maintenant, { ...slaEnPause(maintenant, t, p.sla), passeEnAttenteClient: true });
-        if (!avisDiffere) await this.envois(tx, t, p, maintenant).client('client.question');
-      } else if (!avisDiffere) {
+        if (!avise) await this.envois(tx, t, p, maintenant).client('client.question');
+      } else if (!avise) {
         await this.envois(tx, t, p, maintenant).client('client.reponse');
       }
-      await this.auditer(tx, t, acteur, 'reclamation.reponse_client', { attendreReponse: !!options.attendreReponse }, trace);
+      await this.auditer(tx, t, acteur, 'reclamation.reponse_client', { attendreReponse: !!options.attendreReponse, ...(surFil ? { canal: fil.canal } : {}) }, trace);
       return { commentaireId: message.id, statut: t.statut };
     });
   }
@@ -280,20 +293,26 @@ export class CycleDeVie {
     });
   }
 
-  /** Message du client. S'il était attendu, le ticket repart « En cours » et le chrono reprend. */
-  async messageDuClient(tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace, fichiers?: readonly FichierStocke[]) {
+  /**
+   * Message du client. S'il était attendu, le ticket repart « En cours » et le chrono reprend.
+   * `canal` : où il a écrit — le portail, ou WhatsApp et SMS (étape 20), où partira la réponse.
+   */
+  async messageDuClient(
+    tenantId: string, reclamationId: string, acteur: Acteur, contenu: string, trace?: Trace, fichiers?: readonly FichierStocke[],
+    canal: CanalConversation = 'WEB',
+  ) {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierOperation('MESSAGE_DU_CLIENT', etat(t), acteur));
-      const message = await this.commentaire(tx, t, 'MESSAGE_DU_CLIENT', acteur, contenu);
+      const message = await this.commentaire(tx, t, 'MESSAGE_DU_CLIENT', acteur, contenu, canal);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       await this.joindre(tx, t, message.id, fichiers, acteur, maintenant, true);
       if (t.statut === 'EN_ATTENTE_CLIENT') {
         t = await this.transition(tx, t, 'REPRENDRE_SUR_REPONSE', acteur, maintenant, slaALaReprise(maintenant, t, p.sla));
       }
       // Chat web (étape 17) : une rafale de messages n'alerte l'agent qu'une fois
-      const { alerterAgent } = await messageDuClientDansConversation(tx, t, p, maintenant);
+      const { alerterAgent } = await messageDuClientDansConversation(tx, t, p, maintenant, canal);
       if (alerterAgent) await this.envois(tx, t, p, maintenant).personnel('agent.message_client', await agent(tx, t.agentId));
-      await this.auditer(tx, t, acteur, 'reclamation.message_client', {}, trace);
+      await this.auditer(tx, t, acteur, 'reclamation.message_client', canal === 'WEB' ? {} : { canal }, trace);
       return { commentaireId: message.id, statut: t.statut };
     });
   }
@@ -301,21 +320,27 @@ export class CycleDeVie {
   async resoudre(tenantId: string, reclamationId: string, acteur: Acteur, reponseFinale: string, trace?: Trace) {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierTransition('RESOUDRE', etat(t), acteur, maintenant));
-      const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, reponseFinale);
+      // Étape 20 : sur WhatsApp ou par SMS, la réponse finale part dans le fil, avec ce qu'il peut y répondre
+      const fil = await canalDeReponse(tx, t, p, maintenant);
+      const surFil = fil.canal !== 'WEB' && await this.envois(tx, t, p, maintenant).conversation(fil, `${reponseFinale.trim()}\n\n${SUITE_RESOLUTION}`);
+      const message = await this.commentaire(tx, t, 'REPONSE_AU_CLIENT', acteur, reponseFinale, surFil ? fil.canal : 'WEB');
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       t = await this.noterPremiereReponse(tx, t, p, maintenant);
       // La notification de résolution part tout de suite et tient lieu d'avis de la réponse finale
       await reponseDansConversation(tx, t, p, maintenant, { avisDonne: true });
       const champs = slaALaResolution(maintenant, t.creeLe, t, p.sla);
       t = await this.transition(tx, t, 'RESOUDRE', acteur, maintenant, champs, { slaRespecte: champs.slaRespecte });
-      await this.envois(tx, t, p, maintenant).client('client.resolution');
-      await this.auditer(tx, t, acteur, 'reclamation.resolution', { slaRespecte: champs.slaRespecte }, trace);
+      // Le fil a reçu la réponse finale : la notification ne part que par e-mail
+      await this.envois(tx, t, p, maintenant).client('client.resolution', { emailSeul: surFil });
+      await this.auditer(tx, t, acteur, 'reclamation.resolution', { slaRespecte: champs.slaRespecte, ...(surFil ? { canal: fil.canal } : {}) }, trace);
       return { statut: t.statut, slaRespecte: champs.slaRespecte, clotureAutoPrevueLe: champs.clotureAutoPrevueLe };
     });
   }
 
-  async confirmer(tenantId: string, reclamationId: string, acteur: Acteur, trace?: Trace) {
+  /** `canal` : le client a confirmé sur WhatsApp ou par SMS (étape 20) ; le message de clôture y part. */
+  async confirmer(tenantId: string, reclamationId: string, acteur: Acteur, trace?: Trace, canal: CanalConversation = 'WEB') {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
+      if (canal !== 'WEB') await messageDuClientDansConversation(tx, t, p, maintenant, canal);
       t = await this.transition(tx, t, 'CONFIRMER', acteur, maintenant, {
         clotureLe: maintenant, modeCloture: 'CONFIRMATION_CLIENT', clotureAutoPrevueLe: null,
       });
@@ -326,18 +351,22 @@ export class CycleDeVie {
     });
   }
 
-  /** Contestation pendant le délai de clôture : réouverture, le chrono reprend là où il s'était arrêté. */
-  async contester(tenantId: string, reclamationId: string, acteur: Acteur, motif: string, trace?: Trace) {
+  /**
+   * Contestation pendant le délai de clôture : réouverture, le chrono reprend là où il s'était arrêté.
+   * Sur WhatsApp ou par SMS (étape 20), le motif entre dans la conversation, où l'agent répondra.
+   */
+  async contester(tenantId: string, reclamationId: string, acteur: Acteur, motif: string, trace?: Trace, canal: CanalConversation = 'WEB') {
     return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
       exiger(verifierTransition('CONTESTER', etat(t), acteur, maintenant));
-      const message = await this.commentaire(tx, t, 'MESSAGE_DU_CLIENT', acteur, motif);
+      const message = await this.commentaire(tx, t, 'MESSAGE_DU_CLIENT', acteur, motif, canal);
+      if (canal !== 'WEB') await messageDuClientDansConversation(tx, t, p, maintenant, canal);
       await this.evenement(tx, t, 'MESSAGE', acteur, maintenant, { visibleClient: true, donnees: { commentaireId: message.id } });
       t = await this.transition(tx, t, 'CONTESTER', acteur, maintenant, {
         ...slaALaReprise(maintenant, t, p.sla), clotureAutoPrevueLe: null, slaRespecte: null, nbReouvertures: t.nbReouvertures + 1,
       });
       await this.envois(tx, t, p, maintenant).personnel('agent.contestation', await agent(tx, t.agentId));
-      await this.auditer(tx, t, acteur, 'reclamation.contestation', { reouverture: t.nbReouvertures }, trace);
-      return { statut: t.statut, echeanceSlaLe: t.echeanceSlaLe };
+      await this.auditer(tx, t, acteur, 'reclamation.contestation', { reouverture: t.nbReouvertures, ...(canal === 'WEB' ? {} : { canal }) }, trace);
+      return { statut: t.statut, echeanceSlaLe: t.echeanceSlaLe, commentaireId: message.id };
     });
   }
 
@@ -471,12 +500,16 @@ export class CycleDeVie {
     });
   }
 
-  private async commentaire(tx: ClientTransaction, t: Ticket, type: 'NOTE_INTERNE' | 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT', acteur: Acteur, contenu: string) {
+  /** `canal` : où le client a écrit, ou par où la réponse lui est partie (étape 20) ; jamais pour une note. */
+  private async commentaire(
+    tx: ClientTransaction, t: Ticket, type: 'NOTE_INTERNE' | 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT', acteur: Acteur, contenu: string,
+    canal: CanalConversation | null = null,
+  ) {
     const texte = contenu.trim();
     if (!texte) throw new ErreurMetier('MESSAGE_VIDE', 'Le message est vide', 422);
     return tx.commentaire.create({
       data: {
-        tenantId: t.tenantId, reclamationId: t.id, type, contenu: texte,
+        tenantId: t.tenantId, reclamationId: t.id, type, contenu: texte, canal: type === 'NOTE_INTERNE' ? null : canal,
         auteurUtilisateurId: type === 'MESSAGE_DU_CLIENT' ? null : acteur.type === 'UTILISATEUR' ? acteur.id : null,
       },
     });

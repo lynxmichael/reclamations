@@ -10,7 +10,7 @@ export const PLANS: S<'Plan'>[] = [
 
 const plan = (n: number) => ({ id: PLANS[n - 1]!.id, nom: PLANS[n - 1]!.nom });
 
-function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'enqueteSatisfaction' | 'attributionAutomatique' | 'chatWeb' | 'assistantIa' | 'doubleAuthentificationObligatoire' | 'suspendueLe' | 'motifSuspension'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
+function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'enqueteSatisfaction' | 'attributionAutomatique' | 'chatWeb' | 'assistantIa' | 'doubleAuthentificationObligatoire' | 'suspendueLe' | 'motifSuspension' | 'whatsapp' | 'smsEntrant' | 'raccordements'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
   return {
     id: id('banque', n),
     fuseauHoraire: FUSEAU,
@@ -22,6 +22,9 @@ function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire'
     chatWeb: false,
     assistantIa: false,
     doubleAuthentificationObligatoire: false,
+    whatsapp: false,
+    smsEntrant: false,
+    raccordements: { whatsapp: null, sms: null },
     suspendueLe: null,
     motifSuspension: null,
     ...b,
@@ -29,7 +32,10 @@ function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire'
 }
 
 export const BANQUES: S<'BanquePlateforme'>[] = [
-  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, consommation: { agents: 7, ticketsCeMois: 312 } }),
+  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true,
+    whatsapp: true, smsEntrant: true,
+    raccordements: { whatsapp: { numero: '+2252722000000', identifiant: '109876543210987', compte: '209876543210987' }, sms: { numero: '+2252722000001' } },
+    consommation: { agents: 7, ticketsCeMois: 312 } }),
   banque(2, { nom: 'Banque Horizon', slug: 'horizon', prefixeTickets: 'HZN', plan: plan(3), creeLe: '2026-04-14T10:30:00Z', seuilAlerteSlaPourcent: 80, doubleAuthentificationObligatoire: true, consommation: { agents: 23, ticketsCeMois: 1184 } }),
   banque(3, { nom: 'Caisse Lagune', slug: 'lagune', prefixeTickets: 'LAG', plan: plan(1), creeLe: '2026-06-01T08:00:00Z', smsChaqueChangementStatut: false, consommation: { agents: 9, ticketsCeMois: 517 } }),
   banque(4, { nom: 'Banque Savane', slug: 'savane', prefixeTickets: 'SAV', plan: plan(1), creeLe: '2026-07-20T11:15:00Z', delaiClotureAutoJours: 7, suspendueLe: t('18/09 17:00'), motifSuspension: 'Contrat en cours de renouvellement', consommation: { agents: 4, ticketsCeMois: 61 } }),
@@ -67,6 +73,17 @@ export const FACTURATION_SMS: S<'FacturationSms'> = {
     { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, sms: 5210, segments: 5288, echecs: 41 },
     { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, sms: 1034, segments: 1034, echecs: 9 },
     { banque: { id: id('banque', 4), nom: 'Banque Savane' }, sms: 188, segments: 191, echecs: 0 },
+  ],
+};
+
+/** WhatsApp et SMS reçus (étape 20) : totaux par banque, sans numéro ni texte. */
+export const FACTURATION_CANAUX: S<'FacturationCanaux'> = {
+  mois: '2026-09',
+  banques: [
+    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, whatsappEnvoyes: 642, whatsappFactures: 118, whatsappEchecs: 7, whatsappRecus: 931, smsRecus: 214 },
+    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, whatsappEnvoyes: 0, whatsappFactures: 0, whatsappEchecs: 0, whatsappRecus: 0, smsRecus: 0 },
+    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, whatsappEnvoyes: 0, whatsappFactures: 0, whatsappEchecs: 0, whatsappRecus: 0, smsRecus: 0 },
+    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, whatsappEnvoyes: 0, whatsappFactures: 0, whatsappEchecs: 0, whatsappRecus: 0, smsRecus: 0 },
   ],
 };
 

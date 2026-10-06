@@ -8,7 +8,7 @@ import { useRef, useState } from 'react';
 import { CircleCheck, TriangleAlert, Upload } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, Champ, LogoBanque, Panneau, Saisie, cx } from '../../ui/composants';
-import { nombre } from '../../ui/format';
+import { nombre, telephone } from '../../ui/format';
 import { contraste, couleurValide, styleMarque, texteSur } from '../../ui/marque';
 import { MODE_ATTRIBUTION } from '../../ui/libelles';
 
@@ -203,6 +203,9 @@ export function Banque({
               <Reglage libelle="Enquête de satisfaction" valeur={p.enqueteSatisfaction ? 'Oui, à la clôture' : 'Non'} />
               <Reglage libelle="Attribution et escalade automatiques" valeur={p.attributionAutomatique ? `Oui, mode ${MODE_ATTRIBUTION[p.modeAttribution].libelle.toLowerCase()}` : 'Non'} />
               <Reglage libelle="Chat web" valeur={p.chatWeb ? 'Oui, sur le portail' : 'Non'} />
+              <Reglage libelle="Assistant IA" valeur={p.assistantIa ? 'Oui' : 'Non'} />
+              <Reglage libelle="WhatsApp" valeur={p.whatsapp ? telephone(p.whatsapp) : 'Non'} />
+              <Reglage libelle="SMS entrant" valeur={p.smsEntrant ? telephone(p.smsEntrant) : 'Non'} />
             </dl>
             <p className="mt-3 text-sm leading-relaxed text-encre-3">Ces réglages relèvent de votre contrat. Pour les changer, contactez Makor Telecoms.</p>
           </Panneau>

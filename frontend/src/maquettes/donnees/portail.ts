@@ -109,6 +109,7 @@ const visibles = (messages: S<'Message'>[]): S<'MessageVisible'>[] => messages
     id: m.id,
     type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
     contenu: m.contenu,
+    canal: m.canal,
     auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' : 'BANQUE',
     creeLe: m.creeLe,
     piecesJointes: m.piecesJointes,
@@ -160,7 +161,7 @@ export const MA_RECLAMATION_RESOLUE: S<'ReclamationClient'> = {
   clotureAutoPrevueLe: t('29/09 15:30'),
   messages: [
     {
-      id: id('message', 20), type: 'REPONSE_AU_CLIENT', auteur: 'BANQUE', creeLe: t('24/09 15:30'),
+      id: id('message', 20), type: 'REPONSE_AU_CLIENT', auteur: 'BANQUE', canal: null, creeLe: t('24/09 15:30'),
       contenu: 'Bonjour M. Kouassi, le second prélèvement était une erreur de traitement. Les 2 500 FCFA ont été reversés sur votre compte ce jour ; vous trouverez l\'avis de régularisation ci-joint.',
       piecesJointes: [{ id: id('piece', 20), nomFichier: 'avis-regularisation.pdf', typeMime: 'application/pdf', tailleOctets: 184_320, creeLe: t('24/09 15:30') }],
     },

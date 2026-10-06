@@ -40,6 +40,11 @@ export function PageBanques() {
         modifier: (id, v) => ecrire(() => appeler('modifierBanque', { chemin: { id }, corps: v }), 'Réglages enregistrés.'),
         suspendre: (id, motif) => ecrire(() => appeler('suspendreBanque', { chemin: { id }, corps: { motif } }), 'Banque suspendue : son portail et sa console sont fermés.'),
         reactiver: (id) => ecrire(() => appeler('reactiverBanque', { chemin: { id } }), 'Banque réactivée.'),
+        // Étape 20 : le numéro WhatsApp (jeton chiffré par l'API) ou SMS de la banque
+        raccorder: (id, canal, v) => ecrire(
+          () => appeler('raccorderCanal', { chemin: { id, canal }, corps: v }),
+          canal === 'WHATSAPP' ? 'Numéro WhatsApp raccordé : ouvrez maintenant le canal à la banque.' : 'Numéro SMS raccordé : ouvrez maintenant le canal à la banque.',
+        ),
       }}
     />
   );

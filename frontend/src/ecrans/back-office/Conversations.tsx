@@ -2,8 +2,9 @@
  * Boîte de réception des agents (étape 17) : listerConversations, lireConversation,
  * marquerConversationLue ; on répond avec repondreAuClient, comme depuis la fiche.
  *
- * À gauche, les conversations du chat du portail (à répondre d'abord, la plus longue attente en
- * tête) ; à droite, la conversation choisie, avec la réclamation en tête du fil. Le droit de répondre
+ * À gauche, les conversations du chat du portail, de WhatsApp et des SMS (étape 20) — à répondre
+ * d'abord, la plus longue attente en tête ; à droite, la conversation choisie, avec la réclamation en
+ * tête du fil, et par où partira la réponse (reponseVers). Le droit de répondre
  * vient de operationsPossibles (REPONDRE_AU_CLIENT) : l'écran n'a pas de règle à lui.
  */
 import { useEffect, useRef, useState } from 'react';
@@ -12,6 +13,7 @@ import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Onglets, Texte, cx } from '../../ui/composants';
 import { dateCourte, relatif } from '../../ui/format';
+import { AideEnvoi, BadgeCanal, envoiDeLaReponse } from '../../ui/Canaux';
 import { CANAL_CONVERSATION } from '../../ui/libelles';
 import { PieceJointe } from '../portail/MaReclamation';
 
@@ -45,7 +47,7 @@ function Ligne({ c, active, maintenant, surOuvrir }: { c: S<'ConversationResume'
         type="button"
         onClick={surOuvrir}
         aria-current={active ? 'true' : undefined}
-        aria-label={`${c.client.nom}, ${c.reclamation.numero}${c.nonLue ? ', non lue' : ''}${c.aRepondre ? ', à répondre' : ''}${c.clientEnLigne ? ', en ligne' : ''}`}
+        aria-label={`${c.client.nom}, ${c.reclamation.numero}${c.canal !== 'WEB' ? `, ${CANAL_CONVERSATION[c.canal]}` : ''}${c.nonLue ? ', non lue' : ''}${c.aRepondre ? ', à répondre' : ''}${c.clientEnLigne ? ', en ligne' : ''}`}
         className={cx(
           'flex w-full gap-3 border-b border-trait px-4 py-3.5 text-left',
           active ? 'bg-marque-doux' : 'hover:bg-fond',
@@ -62,10 +64,11 @@ function Ligne({ c, active, maintenant, surOuvrir }: { c: S<'ConversationResume'
             </span>
           </span>
           <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-encre-3">
-            <span className="chiffres">{c.reclamation.numero}</span>
+            <span className="chiffres shrink-0 whitespace-nowrap">{c.reclamation.numero}</span>
             <span aria-hidden>·</span>
-            <span className="truncate">{c.reclamation.categorie}</span>
+            <span className="min-w-0 truncate">{c.reclamation.categorie}</span>
             {c.reclamation.priorite === 'URGENTE' && <span className="font-semibold text-urgent">· Urgente</span>}
+            <BadgeCanal canal={c.canal} className="ml-auto shrink-0" />
           </span>
           <span className="mt-1 flex items-center gap-2">
             <span className={cx('line-clamp-2 flex-1 text-sm leading-snug', c.nonLue ? 'text-encre' : 'text-encre-2')}>
@@ -85,10 +88,11 @@ function Bulle({ m, nomClient, luParLeClient }: { m: S<'Message'>; nomClient: st
   const client = m.type === 'MESSAGE_DU_CLIENT';
   return (
     <li className={cx('flex flex-col gap-1', client ? 'items-start pr-16' : 'items-end pl-16')}>
-      <span className="text-[13px] text-encre-3">
+      <span className="inline-flex items-center gap-1.5 text-[13px] text-encre-3">
         <span className="font-semibold text-encre-2">{client ? nomClient : m.auteur.nom ?? 'La banque'}</span>
         {' · '}
         <span className="chiffres">{dateCourte(m.creeLe)}</span>
+        <BadgeCanal canal={m.canal} />
       </span>
       <div className={cx('flex max-w-full flex-col gap-2 rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed', client ? 'rounded-tl-md border border-trait bg-surface' : 'rounded-tr-md bg-marque-doux')}>
         <p className="whitespace-pre-line">{m.contenu}</p>
@@ -114,6 +118,9 @@ function Fil({ c, maintenant, actions }: { c: S<'ConversationDetail'>; maintenan
   // Dernière réponse de la banque : « Lu par le client » dessous, s'il l'a lue
   const derniereReponse = [...c.messages].reverse().find((m) => m.type === 'REPONSE_AU_CLIENT');
   const lue = !!derniereReponse && !!c.luParLeClientLe && c.luParLeClientLe >= derniereReponse.creeLe;
+  // Étape 20 : WhatsApp dans les 24 h, SMS du numéro de la banque, sinon le suivi
+  const envoi = envoiDeLaReponse(c, c.client.nom, texte);
+  const web = c.canal === 'WEB';
 
   useEffect(() => {
     bas.current?.scrollIntoView?.({ block: 'end' });
@@ -137,7 +144,7 @@ function Fil({ c, maintenant, actions }: { c: S<'ConversationDetail'>; maintenan
         <div className="min-w-0">
           <h2 className="text-[17px] leading-tight font-bold">{c.client.nom}</h2>
           <p className="text-[13px] text-encre-3">
-            {c.clientEnLigne ? <span className="font-semibold text-resolue">En ligne</span> : c.luParLeClientLe ? `Vu ${relatif(c.luParLeClientLe, maintenant)}` : 'Hors ligne'}
+            {c.clientEnLigne ? <span className="font-semibold text-resolue">En ligne</span> : c.luParLeClientLe ? `Vu ${relatif(c.luParLeClientLe, maintenant)}` : web ? 'Hors ligne' : 'Pas encore lu'}
             {' · '}
             {CANAL_CONVERSATION[c.canal]}
           </p>
@@ -202,8 +209,9 @@ function Fil({ c, maintenant, actions }: { c: S<'ConversationDetail'>; maintenan
                 void envoyer();
               }
             }}
-            placeholder={`Votre réponse à ${c.client.nom} — Ctrl + Entrée pour envoyer`}
+            placeholder={`${envoi?.invite ?? `Votre réponse à ${c.client.nom}`} — Ctrl + Entrée pour envoyer`}
           />
+          <AideEnvoi aide={envoi} />
           <div className="mt-2.5 flex flex-wrap items-center gap-3">
             <ChoixFichiers fichiers={fichiers} surChangement={setFichiers} libelle="Joindre" compact />
             {peutQuestionner && (
@@ -216,14 +224,16 @@ function Fil({ c, maintenant, actions }: { c: S<'ConversationDetail'>; maintenan
               {actions?.occupe ? 'Envoi…' : 'Envoyer'}
             </Bouton>
           </div>
-          <p className="mt-2 text-[13px] text-encre-3">
-            Le client la voit dans son chat. S'il ne l'a pas lue 2 minutes après, il est prévenu par e-mail ou SMS.
-          </p>
+          {!envoi && (
+            <p className="mt-2 text-[13px] text-encre-3">
+              Le client la voit dans son chat. S'il ne l'a pas lue 2 minutes après, il est prévenu par e-mail ou SMS.
+            </p>
+          )}
         </form>
       ) : (
         <p className="border-t border-trait bg-surface px-5 py-3.5 text-sm text-encre-3">
           {c.reclamation.statut === 'RESOLUE' || c.reclamation.statut === 'CLOTUREE'
-            ? 'Réclamation résolue : le client confirme ou conteste depuis son espace.'
+            ? (web ? 'Réclamation résolue : le client confirme ou conteste depuis son espace.' : 'Réclamation résolue : le client confirme en répondant OUI, ou conteste en écrivant ce qui ne va pas.')
             : c.reclamation.statut === 'OUVERTE' && !c.agent
               ? 'Pour répondre, assignez d\'abord la réclamation à un agent depuis sa fiche.'
               : 'Vous consultez cette conversation : la réponse revient à l\'agent assigné et aux superviseurs.'}
@@ -257,7 +267,7 @@ export function Conversations({
       <div>
         <h1 className="text-[26px] font-bold tracking-tight">Conversations</h1>
         <p className="mt-1 max-w-[80ch] text-[15px] text-encre-3">
-          Les messages que les clients écrivent dans le chat du portail, réclamation par réclamation. Le chrono SLA et l'historique sont ceux de la fiche.
+          Les messages que les clients écrivent dans le chat du portail, sur WhatsApp ou par SMS, réclamation par réclamation. Le chrono SLA et l'historique sont ceux de la fiche.
         </p>
       </div>
 
@@ -299,7 +309,7 @@ export function Conversations({
           <div className="flex flex-col items-center justify-center gap-2 px-8 text-center text-[15px] text-encre-3">
             <MessagesSquare aria-hidden size={32} />
             <p>Choisissez une conversation à gauche.</p>
-            <p className="text-sm">Vos réponses apparaissent aussitôt dans le chat du client, sur le portail de la banque.</p>
+            <p className="text-sm">Vos réponses partent là où le client a écrit : le chat du portail, WhatsApp ou SMS.</p>
           </div>
         )}
       </div>

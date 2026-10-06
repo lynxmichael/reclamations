@@ -15,6 +15,7 @@
     "semer": "tsx --env-file-if-exists=.env scripts/semer.ts",
     "totp": "tsx scripts/totp.ts",
     "super-admin": "tsx --env-file-if-exists=.env scripts/creer-super-admin.ts",
+    "canal": "tsx --env-file-if-exists=.env scripts/canal.ts",
     "roles:dev": "tsx --env-file-if-exists=.env scripts/roles-developpement.ts",
     "serveur:navigateur": "tsx --env-file-if-exists=.env scripts/serveur-navigateur.ts",
     "test": "vitest run",

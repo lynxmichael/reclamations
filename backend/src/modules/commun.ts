@@ -25,8 +25,32 @@ export function urlLogo(logoCle: string | null): string | null {
   return logoCle ? `/api/v1/public/${logoCle}` : null;
 }
 
-export function banquePublique(b: { nom: string; slug: string; logoCle: string | null; couleurPrimaire: string | null; couleurSecondaire: string | null }): S<'BanquePublique'> {
-  return { nom: b.nom, slug: b.slug, logoUrl: urlLogo(b.logoCle), couleurPrimaire: b.couleurPrimaire, couleurSecondaire: b.couleurSecondaire };
+/** Champs de la banque lus pour son portail (dont son numéro WhatsApp, étape 20) */
+export const CHAMPS_BANQUE_PUBLIQUE = {
+  nom: true, slug: true, logoCle: true, couleurPrimaire: true, couleurSecondaire: true, whatsapp: true, chatWeb: true,
+  canaux: { where: { canal: 'WHATSAPP' }, select: { numero: true } },
+} as const;
+
+interface BanqueLue {
+  nom: string; slug: string; logoCle: string | null; couleurPrimaire: string | null; couleurSecondaire: string | null;
+  whatsapp: boolean; chatWeb: boolean; canaux: { numero: string }[];
+}
+
+export function banquePublique(b: BanqueLue): S<'BanquePublique'> {
+  return {
+    nom: b.nom, slug: b.slug, logoUrl: urlLogo(b.logoCle), couleurPrimaire: b.couleurPrimaire, couleurSecondaire: b.couleurSecondaire,
+    whatsapp: b.whatsapp && b.chatWeb ? (b.canaux[0]?.numero ?? null) : null,
+  };
+}
+
+/**
+ * Adresse à partager d'un point de dépôt : le portail pour un QR code ou un lien web ; pour le numéro
+ * WhatsApp ou SMS de la banque (étape 20), l'ouverture de la conversation sur le téléphone du client.
+ */
+export function adresseDepot(config: Configuration, slug: string, point: { code: string; canal: string }, numero: string | null): string {
+  if (point.canal === 'WHATSAPP' && numero) return `https://wa.me/${numero.replace(/\D/g, '')}`;
+  if (point.canal === 'SMS' && numero) return `sms:${numero}`;
+  return urlDepot(config, slug, point.code);
 }
 
 export function urlDepot(config: Configuration, slug: string, code: string): string {

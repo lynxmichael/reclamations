@@ -56,6 +56,13 @@ x-application: &application
     IA_PRIX_ENTREE: ${IA_PRIX_ENTREE:-0}
     IA_PRIX_SORTIE: ${IA_PRIX_SORTIE:-0}
     IA_PLAFOND_JOUR: ${IA_PLAFOND_JOUR:-2000}
+    # WhatsApp Business et SMS entrant (étape 20) : vides, les webhooks sont refusés
+    WHATSAPP_ENVOI: ${WHATSAPP_ENVOI:-meta}
+    WHATSAPP_URL: ${WHATSAPP_URL:-https://graph.facebook.com}
+    WHATSAPP_VERSION: ${WHATSAPP_VERSION:-v26.0}
+    WHATSAPP_SECRET_APP: ${WHATSAPP_SECRET_APP:-}
+    WHATSAPP_JETON_VERIFICATION: ${WHATSAPP_JETON_VERIFICATION:-}
+    SMS_ENTRANT_SECRET: ${SMS_ENTRANT_SECRET:-}
   logging: *journaux
   networks: [interne]
 

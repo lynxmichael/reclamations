@@ -7,7 +7,7 @@ import { ALPHA, HORIZON } from './commun';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './auth';
 import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './agences';
 import { ABSENCES, AGENCES, CATEGORIES, GROUPES, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi } from './parametrage';
-import { ALERTES, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './plateforme';
+import { ALERTES, FACTURATION_CANAUX, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './plateforme';
 import { ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos } from './portail';
 import {
   CONVERSATION_42, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL, NOTIFICATIONS_AGENT,
@@ -76,5 +76,6 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'banques', schema: 'PageBanques', valeur: PAGE_BANQUES },
   { nom: 'indicateurs de la plateforme', schema: 'IndicateursPlateforme', valeur: INDICATEURS_PLATEFORME },
   { nom: 'facturation SMS', schema: 'FacturationSms', valeur: FACTURATION_SMS },
+  { nom: 'facturation WhatsApp et SMS reçus', schema: 'FacturationCanaux', valeur: FACTURATION_CANAUX },
   { nom: 'alertes du Super Admin', schema: 'PageNotifications', valeur: ALERTES },
 ];

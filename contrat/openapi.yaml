@@ -79,6 +79,8 @@ tags:
     description: Chat web du portail et boîte de réception des agents (phase 2, étape 17)
   - name: Assistant IA
     description: Assistant automatique du portail, base de réponses de la banque, brouillons pour les agents, consommation (phase 2, étape 18)
+  - name: Canaux
+    description: Messages des clients reçus sur WhatsApp et par SMS, statuts des envois WhatsApp (phase 2, étape 20)
 
 paths:
   # ===========================================================================
@@ -2530,6 +2532,158 @@ paths:
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
 
+  /plateforme/banques/{id}/canaux/{canal}:
+    put:
+      tags: [Plateforme]
+      operationId: raccorderCanal
+      summary: Raccorder le numéro WhatsApp ou SMS d'une banque (étape 20)
+      description: |
+        WhatsApp : le numéro de la banque, son identifiant chez Meta (`identifiant`, phone_number_id), son
+        compte WhatsApp Business (`compte`, WABA) et le jeton d'accès obtenu à l'inscription intégrée de
+        Meta. Le jeton est chiffré et ne se relit plus ; à une modification, l'omettre garde l'actuel.
+        SMS : le numéro de réception de la banque chez la passerelle de Makor. Le premier raccordement
+        crée le point de dépôt du canal. Un numéro ou un identifiant déjà raccordé à une autre banque :
+        409 `NUMERO_DEJA_UTILISE`. Le canal s'ouvre ensuite à la banque par `modifierBanque`
+        (`whatsapp`, `smsEntrant`).
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: canal
+          in: path
+          required: true
+          schema: { type: string, enum: [WHATSAPP, SMS] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RaccordementCanal' }
+      responses:
+        '200': { $ref: '#/components/responses/UneBanque' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /plateforme/facturation-canaux:
+    get:
+      tags: [Plateforme]
+      operationId: lireFacturationCanaux
+      summary: Messages WhatsApp et SMS reçus par banque sur un mois (refacturation, étape 20)
+      description: |
+        Mois civil en temps universel. `whatsappEnvoyes` : messages remis à Meta pendant le mois ;
+        `whatsappFactures` : ceux que Meta a déclarés facturables, au-delà de ses gratuités (tarif du pays
+        du client) ; `whatsappEchecs` : messages abandonnés ; `whatsappRecus`, `smsRecus` : messages des
+        clients. Des totaux seulement, jamais un numéro ni un texte. Les SMS envoyés restent dans
+        `lireFacturationSms`. Figurent les banques existant à la fin du mois.
+      x-roles: [SUPER_ADMIN]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - name: mois
+          in: query
+          required: true
+          schema: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', examples: ['2026-10'] }
+      responses:
+        '200':
+          description: Consommation WhatsApp et SMS entrants
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FacturationCanaux' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /webhooks/whatsapp:
+    get:
+      tags: [Canaux]
+      operationId: verifierWebhookWhatsapp
+      summary: Vérification de l'adresse du webhook par Meta
+      description: |
+        Appelée par Meta une fois, quand Makor abonne son application : renvoie `hub.challenge` si
+        `hub.verify_token` est le jeton de la configuration (WHATSAPP_JETON_VERIFICATION) ; sinon 403.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - name: hub.mode
+          in: query
+          required: true
+          schema: { type: string, enum: [subscribe] }
+        - name: hub.verify_token
+          in: query
+          required: true
+          schema: { type: string, maxLength: 200 }
+        - name: hub.challenge
+          in: query
+          required: true
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Le défi, tel quel
+          content:
+            text/plain:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '403': { $ref: '#/components/responses/Interdit' }
+    post:
+      tags: [Canaux]
+      operationId: recevoirWebhookWhatsapp
+      summary: Messages des clients et statuts des envois, transmis par Meta
+      description: |
+        Corps signé par Meta : `X-Hub-Signature-256` est le HMAC-SHA256 du corps avec le secret de
+        l'application de Makor (WHATSAPP_SECRET_APP) ; absent ou faux, 401 `SIGNATURE_INVALIDE`, rien
+        n'est lu. Chaque message n'est traité qu'une fois (Meta réessaie jusqu'à 7 jours). Un numéro
+        raccordé à aucune banque, ou une banque qui n'a pas le canal ouvert : ignoré, 200. Une erreur
+        interne répond 500 : Meta réessaie, sans doublon.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: false
+          description: "sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE"
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookWhatsapp' }
+      responses:
+        '200': { $ref: '#/components/responses/Recu' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /webhooks/sms:
+    post:
+      tags: [Canaux]
+      operationId: recevoirSmsEntrant
+      summary: SMS d'un client, transmis par la passerelle de Makor
+      description: |
+        Interface proposée à la passerelle de Makor (à confirmer avec son équipe) : un appel par SMS reçu,
+        `X-Signature` étant le HMAC-SHA256 du corps avec le secret partagé (SMS_ENTRANT_SECRET) ; absent ou
+        faux, 401 `SIGNATURE_INVALIDE`. `vers` est le numéro de la banque, `de` celui du client. Un même
+        `id` n'est traité qu'une fois. Un numéro raccordé à aucune banque : ignoré, 200.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - name: X-Signature
+          in: header
+          required: false
+          description: "sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE"
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SmsEntrant' }
+      responses:
+        '200': { $ref: '#/components/responses/Recu' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
   /plateforme/consommation-ia:
     get:
       tags: [Plateforme]
@@ -2844,6 +2998,15 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
+    Recu:
+      description: Reçu et traité (ou ignoré, pour un numéro inconnu)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [recu]
+            properties:
+              recu: { type: boolean, const: true }
     RegleMetier:
       description: Donnée correcte en forme mais refusée par une règle métier
       content:
@@ -2941,7 +3104,8 @@ components:
       enum: [NORMALE, URGENTE]
     CanalDepot:
       type: string
-      enum: [QR_CODE, LIEN_WEB]
+      description: "QR code en agence, lien web, ou numéro WhatsApp et SMS de la banque (étape 20)"
+      enum: [QR_CODE, LIEN_WEB, WHATSAPP, SMS]
     RoleUtilisateur:
       type: string
       enum: [SUPER_ADMIN, ADMIN_ENTREPRISE, SUPERVISEUR, AGENT]
@@ -3059,6 +3223,10 @@ components:
         - DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE
         - DOUBLE_AUTHENTIFICATION_INACTIVE
         - DOUBLE_AUTHENTIFICATION_NON_PREPAREE
+        # Étape 20 : WhatsApp et SMS entrant
+        - SIGNATURE_INVALIDE
+        - NUMERO_DEJA_UTILISE
+        - CANAL_NON_RACCORDE
         # Serveur
         - ERREUR_INTERNE
 
@@ -3152,8 +3320,11 @@ components:
     # ---- Public : dépôt et suivi -----------------------------------------------------
     BanquePublique:
       type: object
-      required: [nom, slug, logoUrl, couleurPrimaire, couleurSecondaire]
+      required: [nom, slug, logoUrl, couleurPrimaire, couleurSecondaire, whatsapp]
       properties:
+        whatsapp:
+          description: "Numéro WhatsApp de la banque, quand le canal est ouvert (étape 20) : le portail propose d'y écrire"
+          type: [string, 'null']
         nom: { type: string, examples: ['Banque Alpha'] }
         slug: { type: string, examples: ['alpha'] }
         logoUrl: { type: [string, 'null'], format: uri-reference }
@@ -3351,8 +3522,13 @@ components:
     MessageVisible:
       type: object
       description: Réponse de la banque ou message du client (jamais une note interne)
-      required: [id, type, contenu, auteur, creeLe, piecesJointes]
+      required: [id, type, contenu, auteur, creeLe, piecesJointes, canal]
       properties:
+        canal:
+          description: "Étape 20 : WhatsApp ou SMS si le message est passé par là"
+          oneOf:
+            - $ref: '#/components/schemas/CanalConversation'
+            - type: 'null'
         id: { type: string, format: uuid }
         type: { type: string, enum: [REPONSE_AU_CLIENT, MESSAGE_DU_CLIENT] }
         contenu: { type: string }
@@ -3425,7 +3601,7 @@ components:
     # ---- Conversations et chat web (étape 17) -----------------------------------------
     CanalConversation:
       type: string
-      description: "Canal d'une conversation : WEB (chat du portail) ; WHATSAPP et SMS entrant à l'étape 19"
+      description: "Canal d'une conversation ou d'un message : WEB (suivi et chat du portail), WHATSAPP, SMS (étape 20)"
       enum: [WEB, WHATSAPP, SMS]
     EtatChat:
       type: object
@@ -3664,8 +3840,13 @@ components:
         nom: { type: [string, 'null'], description: "Nom du membre du personnel ; vide pour le client et le système" }
     Message:
       type: object
-      required: [id, type, contenu, auteur, creeLe, piecesJointes]
+      required: [id, type, contenu, auteur, creeLe, piecesJointes, canal]
       properties:
+        canal:
+          description: "Étape 20 : où le client a écrit, ou par où la réponse lui est partie ; vide pour une note interne ou un message antérieur"
+          oneOf:
+            - $ref: '#/components/schemas/CanalConversation'
+            - type: 'null'
         id: { type: string, format: uuid }
         type: { $ref: '#/components/schemas/TypeCommentaire' }
         contenu: { type: string }
@@ -3846,8 +4027,9 @@ components:
     ConversationDetail:
       type: object
       required: [id, canal, reclamation, client, agent, description, deposeeLe, messages, aRepondre, nonLue, clientEnLigne,
-        luParLeClientLe, operationsPossibles]
+        luParLeClientLe, operationsPossibles, reponseVers]
       properties:
+        reponseVers: { $ref: '#/components/schemas/ReponseVers' }
         id: { type: string, format: uuid }
         canal: { $ref: '#/components/schemas/CanalConversation' }
         reclamation: { $ref: '#/components/schemas/ReclamationEnConversation' }
@@ -3876,11 +4058,24 @@ components:
           type: array
           description: REPONDRE_AU_CLIENT si l'appelant peut répondre d'ici
           items: { $ref: '#/components/schemas/OperationTicket' }
+    ReponseVers:
+      type: object
+      description: |
+        Par où partira la prochaine réponse de la banque (étape 20) : WHATSAPP, le texte même, si le client y a
+        écrit en dernier il y a moins de 24 h ; SMS, le texte même, s'il a écrit par SMS ; sinon WEB : la
+        réponse reste dans son suivi et il en est averti par e-mail ou SMS, sans le texte.
+      required: [canal, finFenetreLe]
+      properties:
+        canal: { $ref: '#/components/schemas/CanalConversation' }
+        finFenetreLe:
+          $ref: '#/components/schemas/HorodatageFacultatif'
+          description: "WhatsApp : fin de la fenêtre de 24 h ouverte par le dernier message du client"
     ConversationTicket:
       type: object
       description: Conversation de la réclamation, sur sa fiche
-      required: [id, canal, aRepondre, nonLue, clientEnLigne, luParLeClientLe]
+      required: [id, canal, aRepondre, nonLue, clientEnLigne, luParLeClientLe, reponseVers]
       properties:
+        reponseVers: { $ref: '#/components/schemas/ReponseVers' }
         id: { type: string, format: uuid }
         canal: { $ref: '#/components/schemas/CanalConversation' }
         aRepondre: { type: boolean }
@@ -4108,8 +4303,15 @@ components:
       type: object
       required: [nom, slug, prefixeTickets, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
         smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, assistantIa, doubleAuthentificationObligatoire,
-        couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
+        whatsapp, smsEntrant, couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
       properties:
+        whatsapp:
+          description: "Numéro WhatsApp de la banque, quand Makor l'a raccordé et ouvert (étape 20)"
+          type: [string, 'null']
+          examples: ['+2252722000000']
+        smsEntrant:
+          description: "Numéro auquel les clients écrivent par SMS, quand Makor l'a raccordé et ouvert (étape 20)"
+          type: [string, 'null']
         nom: { type: string }
         slug: { type: string }
         prefixeTickets: { type: string }
@@ -4221,12 +4423,12 @@ components:
             - $ref: '#/components/schemas/ReferenceNommee'
             - type: 'null'
         actif: { type: boolean }
-        urlDepot: { type: string, format: uri, description: "Adresse encodée dans le QR code ou à placer sur le site" }
+        urlDepot: { type: string, format: uri, description: "Adresse encodée dans le QR code ou à placer sur le site ; WhatsApp : https://wa.me/<numéro> ; SMS : sms:<numéro>" }
     EcriturePointDepot:
       type: object
       required: [canal, libelle]
       properties:
-        canal: { $ref: '#/components/schemas/CanalDepot' }
+        canal: { type: string, enum: [QR_CODE, LIEN_WEB], description: "Les points WhatsApp et SMS sont créés par Makor au raccordement du numéro" }
         libelle: { type: string, minLength: 2, maxLength: 160 }
         agenceId: { type: [string, 'null'], format: uuid, description: "Obligatoire pour un QR code" }
     ModificationPointDepot:
@@ -4541,8 +4743,11 @@ components:
       type: object
       required: [id, nom, slug, prefixeTickets, plan, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
         smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, assistantIa, doubleAuthentificationObligatoire,
-        suspendueLe, motifSuspension, creeLe, consommation]
+        whatsapp, smsEntrant, raccordements, suspendueLe, motifSuspension, creeLe, consommation]
       properties:
+        whatsapp: { type: boolean, description: "WhatsApp Business ouvert (étape 20)" }
+        smsEntrant: { type: boolean, description: "SMS entrant ouvert (étape 20)" }
+        raccordements: { $ref: '#/components/schemas/Raccordements' }
         id: { type: string, format: uuid }
         nom: { type: string }
         slug: { type: string }
@@ -4604,6 +4809,12 @@ components:
         assistantIa:
           type: boolean
           description: "Assistant IA (étape 18) ; exige le chat web (sinon 422 CHAT_WEB_REQUIS) ; fermer le chat ferme aussi l'assistant"
+        whatsapp:
+          type: boolean
+          description: "WhatsApp Business (étape 20) ; exige le chat web (422 CHAT_WEB_REQUIS) et le numéro raccordé (422 CANAL_NON_RACCORDE) ; fermer le chat le ferme"
+        smsEntrant:
+          type: boolean
+          description: "SMS entrant (étape 20) ; mêmes conditions que WhatsApp"
     IndicateursPlateforme:
       type: object
       required: [du, au, banques]
@@ -4650,6 +4861,73 @@ components:
               sms: { type: integer, description: "SMS envoyés" }
               segments: { type: integer, description: "Segments facturés par la passerelle" }
               echecs: { type: integer }
+    FacturationCanaux:
+      type: object
+      required: [mois, banques]
+      properties:
+        mois: { type: string, examples: ['2026-10'] }
+        banques:
+          type: array
+          items:
+            type: object
+            required: [banque, whatsappEnvoyes, whatsappFactures, whatsappEchecs, whatsappRecus, smsRecus]
+            properties:
+              banque: { $ref: '#/components/schemas/ReferenceNommee' }
+              whatsappEnvoyes: { type: integer, minimum: 0 }
+              whatsappFactures: { type: integer, minimum: 0, description: "Déclarés facturables par Meta" }
+              whatsappEchecs: { type: integer, minimum: 0 }
+              whatsappRecus: { type: integer, minimum: 0 }
+              smsRecus: { type: integer, minimum: 0 }
+
+    # ---- Canaux WhatsApp et SMS (étape 20) --------------------------------------------
+    Raccordements:
+      type: object
+      description: Numéros raccordés par Makor ; le jeton WhatsApp n'est jamais renvoyé
+      required: [whatsapp, sms]
+      properties:
+        whatsapp:
+          oneOf:
+            - type: object
+              required: [numero, identifiant, compte]
+              properties:
+                numero: { type: string, examples: ['+2252722000000'] }
+                identifiant: { type: string, description: "phone_number_id chez Meta" }
+                compte: { type: string, description: "Compte WhatsApp Business (WABA)" }
+            - type: 'null'
+        sms:
+          oneOf:
+            - type: object
+              required: [numero]
+              properties:
+                numero: { type: string }
+            - type: 'null'
+    RaccordementCanal:
+      type: object
+      required: [numero]
+      properties:
+        numero: { type: string, minLength: 8, maxLength: 24, description: "Numéro de la banque, normalisé en E.164 (+225 par défaut)" }
+        identifiant: { type: string, pattern: '^[0-9]{5,30}$', description: "WhatsApp : phone_number_id (obligatoire)" }
+        compte: { type: string, pattern: '^[0-9]{5,30}$', description: "WhatsApp : identifiant du compte WhatsApp Business (obligatoire)" }
+        jeton: { type: string, minLength: 20, maxLength: 1000, writeOnly: true, description: "WhatsApp : jeton d'accès de la banque ; obligatoire au premier raccordement" }
+    WebhookWhatsapp:
+      type: object
+      description: Notification de Meta (messages reçus, statuts des envois) ; les champs inconnus sont ignorés
+      required: [object, entry]
+      properties:
+        object: { type: string }
+        entry:
+          type: array
+          maxItems: 1000
+          items: { type: object }
+    SmsEntrant:
+      type: object
+      required: [id, de, vers, texte]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 160, description: "Identifiant du SMS chez la passerelle" }
+        de: { type: string, minLength: 3, maxLength: 24, description: "Numéro du client" }
+        vers: { type: string, minLength: 3, maxLength: 24, description: "Numéro de la banque" }
+        texte: { type: string, maxLength: 2000 }
+        recuLe: { type: string, format: date-time }
 
     # ---- Assistant IA (étape 18) ------------------------------------------------------
     CodeMessageAssistant:

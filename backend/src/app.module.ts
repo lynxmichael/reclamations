@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { Module, type DynamicModule, type INestApplication } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { json } from 'express';
 import type { Configuration } from './configuration/configuration.js';
 import { InterceptionContrat } from './infrastructure/contrat/contrat.interceptor.js';
 import { FiltreErreurs } from './infrastructure/contrat/filtre-erreurs.js';
@@ -16,6 +17,7 @@ import { AttributionModule } from './modules/attribution/attribution.controller.
 import { ConversationsModule } from './modules/conversations/conversations.controller.js';
 import { AuditModule } from './modules/audit/audit.controller.js';
 import { AuthModule } from './modules/auth/auth.controller.js';
+import { CanauxModule } from './modules/canaux/canaux.controller.js';
 import { ClientModule } from './modules/client/client.controller.js';
 import { NotificationsModule } from './modules/notifications/notifications.controller.js';
 import { ParametrageModule } from './modules/parametrage/parametrage.controller.js';
@@ -48,6 +50,7 @@ export class AppModule {
         AttributionModule,
         ConversationsModule,
         AssistantModule,
+        CanauxModule,
         PersonnelModule,
         AuditModule,
         PlateformeModule,
@@ -76,6 +79,11 @@ export async function creerApplication(options: OptionsNoyau & { journaux?: bool
   serveur.headersTimeout = 66_000;
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
+  // Webhooks (étape 20) : le corps brut est gardé pour vérifier sa signature ; un lot de Meta peut dépasser 100 ko
+  app.use(`/${PREFIXE_API}/webhooks`, json({
+    limit: '1mb',
+    verify: (req, _res, brut) => { (req as { corpsBrut?: Buffer }).corpsBrut = Buffer.from(brut); },
+  }));
   app.useBodyParser('json', { limit: '100kb' });
   app.setGlobalPrefix(PREFIXE_API);
   app.use((_req: unknown, res: { setHeader(n: string, v: string): void }, suite: () => void) => {

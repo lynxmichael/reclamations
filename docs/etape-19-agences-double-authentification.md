@@ -1,7 +1,7 @@
 # Étape 19 — Activité des agences et double authentification au choix de la banque
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 03/10/2026 · **Statut : à valider** (décisions V1 à V12).
+Version du 03/10/2026 · **Statut : validé le 05/10/2026** (décisions V1 à V12 retenues telles que proposées).
 
 Cette étape répond à deux demandes du client, ajoutées à la phase 2 avant WhatsApp, qui devient l'étape 20 :
 

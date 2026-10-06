@@ -5,6 +5,7 @@
  * ouverture (tirage pseudo-aléatoire à graine fixe). Étape 15 : un client sur deux répond à
  * l'enquête de satisfaction, dans les 48 heures (tirage à part : le reste de l'historique ne change pas).
  * Étape 17 : le chat web s'ouvre une heure avant l'ouverture de la démo ; deux clients y écrivent.
+ * Étape 20 : le second écrit sur WhatsApp, où partira la réponse de l'agent.
  */
 import { DateTime } from 'luxon';
 import { ajouterMinutesOuvrees, minutesOuvreesEntre } from '@domaine/temps-ouvre/calendrier';
@@ -171,7 +172,7 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
     /** L'agent n'a pas résolu à temps : la réclamation sera en retard et escaladée */
     sansResolution?: boolean;
     /** Chat web (étape 17) : le client écrit, tant de minutes avant l'ouverture de la démo */
-    chat?: { avant: number; messages: string[] };
+    chat?: { avant: number; messages: string[]; canal?: 'WHATSAPP' | 'SMS' };
   }
   function reclamation(quand: Date, client: { nom: string; telephone: string; email?: string }, choix: Choix = {}) {
     const cat = choix.cat ?? h.pondere(categoriesActives.map((c, i) => [c, POIDS_CATEGORIES[i]!] as const));
@@ -210,11 +211,11 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
         planifier(ouvre(t, h.entier(15, 90)), () => m.repondre(agent.id, id, h.parmi(REPONSES)));
       }
       if (choix.chat) {
-        const { avant, messages } = choix.chat;
+        const { avant, messages, canal } = choix.chat;
         planifier(new Date(debut.getTime() - avant * MINUTE), () => {
           const s = sessionDe(id);
-          m.lireChat(s, id);
-          for (const texte of messages) m.messageClient(s, id, texte);
+          if (!canal) m.lireChat(s, id);
+          for (const texte of messages) m.messageClient(s, id, texte, canal);
         });
       }
       if (choix.sansResolution) return;
@@ -274,7 +275,7 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
   const cat = (nom: string) => categoriesActives.find((c) => c.nom === nom)!;
   const point = (code: string) => POINTS_DEPOT.find((p) => p.code === code)!;
   const client = () => ({ nom: `${h.parmi(PRENOMS)} ${h.parmi(NOMS)}`, telephone: `07${String(h.entier(0, 99_999_999)).padStart(8, '0')}` });
-  // Chat web : ouvert une heure avant ; le client en retard demande des nouvelles, l'autre écrit deux fois
+  // Chat web : ouvert une heure avant ; le client en retard demande des nouvelles, l'autre écrit deux fois sur WhatsApp
   m.chatActif = false;
   planifier(new Date(debut.getTime() - 60 * MINUTE), () => {
     m.chatActif = true;
@@ -285,7 +286,7 @@ export function creerDemo({ banque, debut, jours = 30, graine = 42 }: OptionsDem
   });
   reclamation(ilYaOuvrees(380), client(), {
     cat: cat('Banque mobile'), point: point('W5Q9HB2MLC'), sansResolution: true,
-    chat: { avant: 7, messages: ['J\'ai réinstallé l\'application, toujours le même message d\'erreur.', 'Je peux vous envoyer une capture d\'écran si besoin.'] },
+    chat: { avant: 7, canal: 'WHATSAPP', messages: ['J\'ai réinstallé l\'application, toujours le même message d\'erreur.', 'Je peux vous envoyer une capture d\'écran si besoin.'] },
   });
   reclamation(new Date(debut.getTime() - 55 * MINUTE), client(), { cat: cat('Virement et transfert'), point: point('K4V8PZ3TRG'), sansAssignation: true });
   reclamation(new Date(debut.getTime() - 31 * MINUTE), client(), { cat: cat('Accueil en agence'), point: point('P9D2LK7VXR'), sansAssignation: true });

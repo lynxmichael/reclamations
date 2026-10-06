@@ -43,6 +43,12 @@ x-backend: &backend
     JWT_SECRET: developpement-uniquement-changer-en-production-0123456789
     CLE_CHIFFREMENT_TOTP: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
     CLE_OTP: developpement-uniquement-cle-otp-0123456789abcdef
+    # WhatsApp et SMS entrant (étape 20) : messages écrits dans le journal du worker ; webhooks signés
+    # avec ces secrets de développement (npm run canal les simule)
+    WHATSAPP_ENVOI: journal
+    WHATSAPP_SECRET_APP: developpement-whatsapp-secret-0123456789
+    WHATSAPP_JETON_VERIFICATION: developpement-verification
+    SMS_ENTRANT_SECRET: developpement-sms-entrant-0123456789
     COOKIE_SECURE: "false"
     SMTP_URL: smtp://mailpit:1025
     STOCKAGE_DOSSIER: /donnees/fichiers

@@ -81,7 +81,7 @@ describe('codes d\'erreur', () => {
 
   it('toutes les réponses d\'erreur sont au format problem+json (RFC 9457)', () => {
     for (const [nom, reponse] of Object.entries(contrat.components.responses)) {
-      if (['Fichier', 'Reclamation', 'SessionOuverte', 'Parametres', 'Regles', 'Horaires', 'UnUtilisateur', 'UneBanque', 'Verification'].includes(nom)) continue;
+      if (['Fichier', 'Reclamation', 'SessionOuverte', 'Parametres', 'Regles', 'Horaires', 'UnUtilisateur', 'UneBanque', 'Verification', 'Recu'].includes(nom)) continue;
       expect(Object.keys(reponse.content ?? {}), nom).toEqual(['application/problem+json']);
     }
     for (const { chemin, methode, op } of operations) {

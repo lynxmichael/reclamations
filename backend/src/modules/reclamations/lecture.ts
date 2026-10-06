@@ -16,6 +16,7 @@ import type { Choix } from '../../domaine/attribution.js';
 import { chargerContexte, suggestion, type ContexteAttribution } from '../../application/reclamations/attribution.js';
 import type { ParametresBanque } from '../../application/reclamations/parametres.js';
 import { clientEnLigne, disponibilite, nonLueParLaBanque, reponseDue } from '../../domaine/conversation.js';
+import { canalDuFil } from '../../domaine/canaux.js';
 
 type S<N extends keyof components['schemas']> = components['schemas'][N];
 
@@ -99,7 +100,7 @@ export async function lireFiche(tx: ClientTransaction, id: string, acteur: Acteu
   const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
   if (!t || !verifierOperation('CONSULTER', etat(t), acteur).ok) throw introuvable('Réclamation introuvable');
   const ctx = peutRecevoirSuggestion(p, acteur) && !t.agentId && t.statut === 'OUVERTE' ? await chargerContexte(tx, p, maintenant) : null;
-  return fiche(t, acteur, maintenant, p.sla.calendrier, suggestion(ctx, t), p.banque.chatWeb);
+  return fiche(t, acteur, maintenant, p.sla.calendrier, suggestion(ctx, t), p.banque);
 }
 
 /** Mode suggestion (étape 16) : l'agent proposé s'affiche pour qui peut assigner, le superviseur. */
@@ -113,7 +114,8 @@ export async function contexteSuggestions(tx: ClientTransaction, p: ParametresBa
 }
 
 export function fiche(
-  t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise, suggeree: Choix | null = null, chatWeb = false,
+  t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise, suggeree: Choix | null = null,
+  canaux: CanauxOuverts | null = null,
 ): S<'ReclamationDetail'> {
   const c = chrono(t, maintenant, cal);
   const qui = (type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME', u: { nom: string; prenom: string } | null): S<'ActeurVisible'> =>
@@ -171,7 +173,7 @@ export function fiche(
     attributionSuggeree: suggeree
       ? { agent: { id: suggeree.agent.id, nom: suggeree.agent.nom }, groupe: { id: suggeree.groupe.id, nom: suggeree.groupe.nom } }
       : null,
-    conversation: chatWeb && t.conversation ? conversationTicket(t.conversation, t.statut, maintenant) : null,
+    conversation: canaux?.chatWeb && t.conversation ? conversationTicket(t.conversation, t.statut, maintenant, canaux) : null,
     depotAssistant: depotAssistant(t.evenements),
   };
 }
@@ -184,15 +186,30 @@ export function depotAssistant(evenements: readonly { type: string; donnees: unk
 
 type LigneConversation = NonNullable<TicketComplet['conversation']>;
 
-/** Conversation sur la fiche (étape 17) : à répondre, non lue, client en ligne. */
-export function conversationTicket(c: LigneConversation, statut: string, maintenant: Date): S<'ConversationTicket'> {
+/** Fonctions de conversation ouvertes à la banque : chat (étape 17), WhatsApp et SMS (étape 20) */
+export interface CanauxOuverts {
+  readonly chatWeb: boolean;
+  readonly whatsapp: boolean;
+  readonly smsEntrant: boolean;
+}
+
+/** Étape 20 : par où partira la prochaine réponse (WhatsApp dans les 24 h, SMS, sinon le suivi). */
+export function reponseVers(c: Pick<LigneConversation, 'canal' | 'dernierMessageClientLe'>, canaux: CanauxOuverts, maintenant: Date): S<'ReponseVers'> {
+  const r = canalDuFil(c, canaux, maintenant);
+  return { canal: r.canal, finFenetreLe: iso(r.finFenetreLe) };
+}
+
+/** Conversation sur la fiche (étape 17) : à répondre, non lue, client en ligne, canal de la réponse (étape 20). */
+export function conversationTicket(c: LigneConversation, statut: string, maintenant: Date, canaux: CanauxOuverts): S<'ConversationTicket'> {
   return {
     id: c.id,
     canal: c.canal,
     aRepondre: reponseDue(c, statut),
     nonLue: nonLueParLaBanque(c),
-    clientEnLigne: clientEnLigne(c, maintenant),
+    // Le client « en ligne » est celui qui a le chat du portail à l'écran
+    clientEnLigne: c.canal === 'WEB' && clientEnLigne(c, maintenant),
     luParLeClientLe: iso(c.luClientLe),
+    reponseVers: reponseVers(c, canaux, maintenant),
   };
 }
 
@@ -208,6 +225,7 @@ export function messagePersonnel(m: TicketComplet['commentaires'][number]): S<'M
     id: m.id,
     type: m.type,
     contenu: m.contenu,
+    canal: m.canal,
     auteur: m.type === 'MESSAGE_DU_CLIENT'
       ? { type: 'CLIENT', nom: null }
       : { type: 'UTILISATEUR', nom: m.auteurUtilisateur ? nomComplet(m.auteurUtilisateur) : null },
@@ -222,6 +240,7 @@ export function messageVisible(m: TicketComplet['commentaires'][number]): S<'Mes
     id: m.id,
     type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
     contenu: m.contenu,
+    canal: m.canal,
     auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' : 'BANQUE',
     creeLe: m.creeLe.toISOString(),
     piecesJointes: m.piecesJointes.map(piece),

@@ -25,14 +25,14 @@ Référence : cahier des charges consolidé (version du 25/09/2026).
 | 16 | Attribution et escalade automatiques | Validé | [`backend/src/domaine/attribution.ts`](backend/src/domaine/attribution.ts) · [`frontend/src/ecrans/back-office/Attribution.tsx`](frontend/src/ecrans/back-office/Attribution.tsx) · [note](docs/etape-16-attribution-escalade.md) |
 | 17 | Conversations et chat web | Validé | [`backend/src/domaine/conversation.ts`](backend/src/domaine/conversation.ts) · [`frontend/src/ecrans/portail/Chat.tsx`](frontend/src/ecrans/portail/Chat.tsx) · [`frontend/src/ecrans/back-office/Conversations.tsx`](frontend/src/ecrans/back-office/Conversations.tsx) · [note](docs/etape-17-conversations-chat-web.md) |
 | 18 | Assistant IA de première ligne | Validé | [`backend/src/domaine/ia/`](backend/src/domaine/ia/) · [`backend/src/infrastructure/ia/fournisseurs.ts`](backend/src/infrastructure/ia/fournisseurs.ts) · [`frontend/src/ecrans/portail/Assistant.tsx`](frontend/src/ecrans/portail/Assistant.tsx) · [banc d'essai](backend/banc-ia/) · [rapport du banc](docs/banc-ia/rapport.md) · [note](docs/etape-18-assistant-ia.md) |
-| 19 | Activité des agences et double authentification au choix de la banque | En attente de validation | [`backend/src/modules/reporting/indicateurs.ts`](backend/src/modules/reporting/indicateurs.ts) · [`frontend/src/ecrans/back-office/Agences.tsx`](frontend/src/ecrans/back-office/Agences.tsx) · [`frontend/src/ecrans/back-office/Compte.tsx`](frontend/src/ecrans/back-office/Compte.tsx) · [note](docs/etape-19-agences-double-authentification.md) |
-| 20 | WhatsApp Business et SMS entrant | À venir | |
+| 19 | Activité des agences et double authentification au choix de la banque | Validé | [`backend/src/modules/reporting/indicateurs.ts`](backend/src/modules/reporting/indicateurs.ts) · [`frontend/src/ecrans/back-office/Agences.tsx`](frontend/src/ecrans/back-office/Agences.tsx) · [`frontend/src/ecrans/back-office/Compte.tsx`](frontend/src/ecrans/back-office/Compte.tsx) · [note](docs/etape-19-agences-double-authentification.md) |
+| 20 | WhatsApp Business et SMS entrant | En attente de validation | [`backend/src/domaine/canaux.ts`](backend/src/domaine/canaux.ts) · [`backend/src/modules/canaux/canaux.service.ts`](backend/src/modules/canaux/canaux.service.ts) · [`backend/src/infrastructure/canaux/whatsapp.ts`](backend/src/infrastructure/canaux/whatsapp.ts) · [`frontend/src/ui/Canaux.tsx`](frontend/src/ui/Canaux.tsx) · [note](docs/etape-20-whatsapp-sms-entrant.md) |
 | 21 | Baromètre et recommandations IA | À venir | |
 
 ## Structure
 
 ```
-contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (112 opérations)
+contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (117 opérations)
 docker-compose.yml                    développement : PostgreSQL 16, Redis 8, Mailpit, API, worker, écrans, outils
 docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis, sauvegarde
 docker-compose.demo.yml               environnement de démonstration (second serveur) : surcharge de la production
@@ -51,17 +51,18 @@ docker/caddy/commun.caddy             en-têtes de sécurité, /api/* vers l'API
 docker/caddy/options-*.caddy          émission des certificats : Let's Encrypt, ou autorité locale en répétition
 backend/
   Dockerfile                          image de l'application (API et worker) et image des migrations
-  prisma/schema.prisma                modèle de données (26 modèles, 17 énumérations)
-  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting, enquêtes, attribution, conversations, assistant IA
+  prisma/schema.prisma                modèle de données (29 modèles, 17 énumérations)
+  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting, enquêtes, attribution, conversations, assistant IA, WhatsApp et SMS
   prisma.config.ts                    configuration Prisma 7
-  src/domaine/                        code pur : temps ouvré, machine d'états, SLA, escalade, enquêtes, attribution, conversations, assistant IA (+ tests unitaires), partagé avec la démo
+  src/domaine/                        code pur : temps ouvré, machine d'états, SLA, escalade, enquêtes, attribution, conversations, assistant IA, dialogue WhatsApp et SMS (+ tests unitaires), partagé avec la démo
   src/domaine/ia/                     assistant IA : masquage, interdits, tri par règles, consignes envoyées au fournisseur
   src/application/reclamations/       cycle de vie d'une réclamation, attribution, conversations, tâches planifiées du SLA
   src/contrat/                        types générés du contrat + tests de cohérence contrat ↔ code
   src/infrastructure/base-de-donnees/ accès contextuel : banque, plateforme, système
   src/infrastructure/contrat/         routes, rôles, validation et erreurs lus dans le contrat ; Swagger
   src/infrastructure/securite/        jetons, mots de passe, TOTP, limites de débit, idempotence, anti-robot
-  src/infrastructure/envois/          boîte d'envoi : e-mail (SMTP, texte et HTML), SMS (passerelle HTTP ou journal), in-app
+  src/infrastructure/envois/          boîte d'envoi : e-mail (SMTP, texte et HTML), SMS (passerelle HTTP ou journal), WhatsApp, in-app
+  src/infrastructure/canaux/          WhatsApp Business (API Cloud de Meta, signature des webhooks) et SMS entrant
   src/infrastructure/ia/              fournisseurs d'IA interchangeables : Anthropic, OpenAI, Mistral
   src/application/ia/                 appels à l'IA : repli sur les règles, plafond quotidien, journal sans contenu
   src/modules/                        API : public, client, auth, réclamations, reporting, paramétrage, personnel…
@@ -71,9 +72,10 @@ backend/
   scripts/creer-super-admin.ts        premier Super Admin d'une installation
   scripts/taches.ts                   un passage des tâches planifiées du worker, à la demande (tests navigateur, dépannage)
   scripts/banc-ia.ts · banc-ia/       banc d'essai des fournisseurs d'IA : 100 échanges, notes pondérées, rapport (npm run banc-ia)
-  test/e2e/                           171 tests de bout en bout, chaque réponse validée contre le contrat
+  scripts/canal.ts                    un client écrit sur WhatsApp ou par SMS, en développement (npm run canal)
+  test/e2e/                           193 tests de bout en bout, chaque réponse validée contre le contrat
   scripts/verifier-integrite.ts       32 vérifications du modèle (étape 2)
-  scripts/verifier-securite.ts        129 vérifications de sécurité (étapes 3, 9, 15, 16, 17, 18 et 19)
+  scripts/verifier-securite.ts        159 vérifications de sécurité (étapes 3, 9, 15, 16, 17, 18, 19 et 20)
   scripts/verifier-cycle-de-vie.ts    45 vérifications du cycle de vie et du SLA (étape 4)
 frontend/
   Dockerfile                          image web : Caddy, la console et le portail construits
@@ -85,8 +87,8 @@ frontend/
   src/ecrans/                         écrans du portail, du back-office et de la console (étape 6)
   src/maquettes/                      données fictives conformes au contrat, galerie des maquettes
   src/demo/                           démo cliquable : API simulée, 30 jours d'historique, visite guidée
-  tests/                              231 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
-  tests/navigateur/                   53 tests dans Chromium (Playwright) sur la vraie API
+  tests/                              246 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
+  tests/navigateur/                   61 tests dans Chromium (Playwright) sur la vraie API
 docs/
   etape-2-modele-de-donnees.md        note de l'étape 2 et diagramme entité-relation
   etape-3-architecture.md             note d'architecture de l'étape 3 et diagrammes
@@ -106,6 +108,7 @@ docs/
   etape-17-conversations-chat-web.md  conversation par réclamation, chat sur le portail, boîte de réception des agents
   etape-18-assistant-ia.md            assistant du portail, base de réponses, brouillons pour les agents, banc d'essai des fournisseurs
   etape-19-agences-double-authentification.md  activité de chaque agence, double authentification au choix de la banque, « Mon compte »
+  etape-20-whatsapp-sms-entrant.md    le client écrit sur WhatsApp ou par SMS, la réponse part là où il a écrit ; raccordement par Makor
   banc-ia/rapport.md                  rapport du banc d'essai de l'IA (à relancer avec les clés des fournisseurs)
   exploitation.md                     guide d'exploitation : VPS, installation, sauvegardes, supervision, mises à jour, restauration
   recette/                            cahier de recette (à signer) et rapport de la recette automatique
@@ -126,10 +129,11 @@ cp .env.example .env                    # facultatif : identifiants et ports
 docker compose up -d                    # PostgreSQL 16, Redis 8, Mailpit, l'API et le worker, puis les écrans
 docker compose exec api npm run semer   # jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
 docker compose exec api npm run totp -- serge.kouadio@banque-alpha.example   # code TOTP du moment
-docker compose logs -f api worker       # journaux (les SMS de développement s'y affichent)
-docker compose run --rm verification    # contrat, typage, tests unitaires, 206 vérifications, tests de bout en bout
-docker compose run --rm maquettes       # écrans : 231 tests, les deux applications, docs/maquettes/ et docs/demo/
-docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 53 tests
+docker compose logs -f api worker       # journaux (les SMS et WhatsApp de développement s'y affichent)
+docker compose exec api npm run canal -- whatsapp 0707070707 "Bonjour"   # un client écrit à la Banque Alpha (étape 20)
+docker compose run --rm verification    # contrat, typage, tests unitaires, 236 vérifications, tests de bout en bout
+docker compose run --rm maquettes       # écrans : 246 tests, les deux applications, docs/maquettes/ et docs/demo/
+docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 61 tests
 docker compose run --rm recette         # tout ce qui précède, plus l'essai de sauvegarde : rapport des 11 critères et de la phase 2
 ```
 
@@ -143,7 +147,7 @@ docker compose run --rm recette         # tout ce qui précède, plus l'essai de
 
 Comptes de démonstration, mot de passe et codes TOTP : [note de l'étape 7, section 7](docs/etape-7-backend.md#7-jeu-de-démonstration). L'API, le worker et les écrans se rechargent à chaque modification du code, contrat d'API compris, y compris sous Windows (les fichiers sont relus chaque seconde : Docker Desktop ne signale pas les changements du dossier partagé). Si une nouvelle livraison ne semble pas prise en compte : `docker compose restart api worker console portail`, puis rechargement forcé de la page (Ctrl+Maj+R). Les liens des e-mails (Mailpit) pointent vers la console et le portail ci-dessus. Le tableau de bord et les exports de la Banque Alpha s'appuient sur 60 jours d'historique ; une base semée avant l'étape 9 ne l'a pas : `docker compose down -v`, `docker compose up -d`, puis `npm run semer`.
 
-La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `326 passed` (tests unitaires), puis `32`, `129` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `171 passed` (tests de bout en bout de l'API). Pour les écrans : `231 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `53 passed`.
+La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `359 passed` (tests unitaires), puis `32`, `159` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `193 passed` (tests de bout en bout de l'API). Pour les écrans : `246 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `61 passed`.
 
 Les maquettes et la démo s'ouvrent aussi directement dans un navigateur, sans Docker : `docs/maquettes/index.html` et `docs/demo/index.html`. Pour présenter la démo à une banque : [guide](docs/demo-cliquable.md).
 
@@ -185,8 +189,8 @@ npm install                 # installe les dépendances et génère le client Pr
 npm run migrate:deploy      # applique les migrations sur reclamations_dev
 npm run dev                 # API : http://localhost:3000/api/docs
 npm run dev:worker          # worker (dans un second terminal)
-npm test                    # 326 tests unitaires
-npm run test:e2e            # 171 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
+npm test                    # 359 tests unitaires
+npm run test:e2e            # 193 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
 npx prisma studio           # parcourir les tables (connexion propriétaire)
 ```
 

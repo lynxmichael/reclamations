@@ -14,7 +14,8 @@ import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Liste, Panneau, Texte, cx } from '../../ui/composants';
 import { dateCourte, dateHeure } from '../../ui/format';
 import { JaugeFiche } from '../../ui/JaugeSla';
-import { CANAL, ETAT_AVIS, EVENEMENT, MOTIF_CLOTURE, NOTE_SATISFACTION } from '../../ui/libelles';
+import { AideEnvoi, BadgeCanal, envoiDeLaReponse, IconeCanal } from '../../ui/Canaux';
+import { CANAL, CANAL_CONVERSATION, ETAT_AVIS, EVENEMENT, MOTIF_CLOTURE, NOTE_SATISFACTION } from '../../ui/libelles';
 import { PieceJointe } from '../portail/MaReclamation';
 
 export type Fenetre = 'aucune' | 'resoudre' | 'cloturer';
@@ -56,7 +57,10 @@ function Message({ m, nomClient }: { m: S<'ReclamationDetail'>['messages'][numbe
             Note interne, invisible du client
           </span>
         ) : (
-          <span className="text-encre-3">{client ? 'client, a écrit' : 'a répondu au client'}</span>
+          <span className="text-encre-3">
+            {client ? 'client, a écrit' : 'a répondu au client'}
+            {m.canal === 'WHATSAPP' ? ' sur WhatsApp' : m.canal === 'SMS' ? ' par SMS' : ''}
+          </span>
         )}
         <span className="chiffres ml-auto text-encre-3">{dateCourte(m.creeLe)}</span>
       </div>
@@ -142,6 +146,8 @@ function Redaction({ r, actions, suggestion, suggestionIa }: { r: S<'Reclamation
   const note = mode === 'note';
   // Répondre depuis « Ouverte » prend en charge : il faut d'abord un agent assigné
   const attendAgent = !peutRepondre && r.statut === 'OUVERTE' && !r.agent;
+  // Étape 20 : WhatsApp dans les 24 h, SMS du numéro de la banque, sinon le suivi
+  const envoi = note ? null : envoiDeLaReponse(r.conversation, r.client.nom, texte);
   return (
     <div className={cx('rounded-xl border', note ? 'border-attente/35 bg-attente-doux/50' : 'border-trait-fort bg-surface')}>
       <div className="flex items-end gap-2 border-b border-inherit pr-3">
@@ -176,10 +182,13 @@ function Redaction({ r, actions, suggestion, suggestionIa }: { r: S<'Reclamation
           className={note ? 'border-attente/35 bg-surface' : undefined}
           placeholder={note
             ? 'Visible seulement par l\'équipe de la banque'
-            : r.conversation
-              ? `Votre réponse à ${r.client.nom}, dans son chat (e-mail ou SMS s'il ne la lit pas)`
-              : `Votre réponse à ${r.client.nom}, envoyée par e-mail et SMS`}
+            : envoi
+              ? envoi.invite
+              : r.conversation
+                ? `Votre réponse à ${r.client.nom}, dans son chat (e-mail ou SMS s'il ne la lit pas)`
+                : `Votre réponse à ${r.client.nom}, envoyée par e-mail et SMS`}
         />
+        <AideEnvoi aide={envoi} />
         <div className="mt-3 flex flex-wrap items-start gap-3">
           <div className="min-w-0 basis-full sm:basis-auto">
             <ChoixFichiers fichiers={fichiers} surChangement={setFichiers} libelle="Joindre un fichier" compact />
@@ -214,14 +223,27 @@ function Redaction({ r, actions, suggestion, suggestionIa }: { r: S<'Reclamation
   );
 }
 
-/** Chat web (étape 17) : le client écrit depuis le portail ; présence et réponse attendue. */
+/**
+ * Conversation : chat du portail (étape 17), WhatsApp ou SMS (étape 20) ; présence, réponse attendue,
+ * et par où partira la réponse.
+ */
 function ChatClient({ c, actions }: { c: NonNullable<S<'ReclamationDetail'>['conversation']>; actions?: ActionsFiche }) {
+  const web = c.canal === 'WEB';
   return (
-    <Panneau titre="Chat web">
-      <p className="flex items-center gap-2 text-[15px] text-encre-2">
-        <span aria-hidden className={cx('h-2.5 w-2.5 shrink-0 rounded-full', c.clientEnLigne ? 'bg-resolue' : 'bg-trait-fort')} />
-        {c.clientEnLigne ? 'Le client est en ligne' : c.luParLeClientLe ? `Vu par le client ${dateCourte(c.luParLeClientLe)}` : 'Le client n\'a pas encore ouvert le chat'}
-      </p>
+    <Panneau titre={web ? 'Chat web' : 'Conversation'}>
+      {web ? (
+        <p className="flex items-center gap-2 text-[15px] text-encre-2">
+          <span aria-hidden className={cx('h-2.5 w-2.5 shrink-0 rounded-full', c.clientEnLigne ? 'bg-resolue' : 'bg-trait-fort')} />
+          {c.clientEnLigne ? 'Le client est en ligne' : c.luParLeClientLe ? `Vu par le client ${dateCourte(c.luParLeClientLe)}` : 'Le client n\'a pas encore ouvert le chat'}
+        </p>
+      ) : (
+        <p className="flex flex-wrap items-center gap-2 text-[15px] text-encre-2">
+          <BadgeCanal canal={c.canal} />
+          {c.reponseVers.canal === c.canal
+            ? `Le client écrit ${c.canal === 'SMS' ? 'par SMS' : 'sur WhatsApp'} : la réponse y part.`
+            : `Dernier message sur ${CANAL_CONVERSATION[c.canal]} il y a plus de 24 h : la réponse reste dans son suivi.`}
+        </p>
+      )}
       {c.aRepondre && <p className="mt-2 text-[15px] font-semibold text-marque-texte">Il attend une réponse{c.nonLue ? ' (message non lu)' : ''}.</p>}
       <Bouton className="mt-3 w-full" icone={<MessagesSquare aria-hidden size={16} />} onClick={() => actions?.ouvrirConversation?.(c.id)}>
         Ouvrir la conversation
@@ -491,8 +513,8 @@ export function Ticket({
               </Info>
               <Info libelle="Dépôt">
                 <span className="inline-flex items-center gap-2">
-                  {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={16} className="text-encre-3" /> : <Globe aria-hidden size={16} className="text-encre-3" />}
-                  {CANAL[r.canal]}, {r.pointDepot.libelle.toLowerCase()}
+                  {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={16} className="text-encre-3" /> : r.canal === 'LIEN_WEB' ? <Globe aria-hidden size={16} className="text-encre-3" /> : <span className="text-encre-3"><IconeCanal canal={r.canal} taille={16} /></span>}
+                  {r.canal === 'WHATSAPP' || r.canal === 'SMS' ? `${CANAL[r.canal]}, au numéro de la banque` : `${CANAL[r.canal]}, ${r.pointDepot.libelle.toLowerCase()}`}
                 </span>
               </Info>
               <Info libelle="Agence">{r.agence?.nom ?? 'Aucune'}</Info>

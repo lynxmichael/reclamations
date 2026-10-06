@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { AttributionControleur } from '../../modules/attribution/attribution.controller.js';
 import { ConversationsControleur } from '../../modules/conversations/conversations.controller.js';
 import { AssistantControleur } from '../../modules/assistant/assistant.controller.js';
+import { CanauxControleur } from '../../modules/canaux/canaux.controller.js';
 import { AuditControleur } from '../../modules/audit/audit.controller.js';
 import { AuthControleur } from '../../modules/auth/auth.controller.js';
 import { ClientControleur } from '../../modules/client/client.controller.js';
@@ -26,7 +27,7 @@ import { erreursChamps, validateurDe } from './validation.js';
 const CONTROLEURS = [
   SanteControleur, PublicControleur, ClientControleur, AuthControleur, ReclamationsControleur, NotificationsControleur,
   ParametrageControleur, PersonnelControleur, AuditControleur, PlateformeControleur, ReportingControleur, AttributionControleur, ConversationsControleur,
-  AssistantControleur,
+  AssistantControleur, CanauxControleur,
 ];
 
 const METHODES_HTTP = ['get', 'post', 'put', 'delete', 'patch'];
@@ -43,12 +44,12 @@ function routes() {
 }
 
 describe('routes de l\'API ↔ opérations du contrat', () => {
-  it('chaque opération du contrat est servie une fois (112, phase 2 et étape 19 comprises)', () => {
+  it('chaque opération du contrat est servie une fois (117, phase 2 et étape 20 comprises)', () => {
     const servies = routes().map((r) => r.id);
     expect(new Set(servies).size).toBe(servies.length);
     const attendues = [...contratApi().operations.keys()].sort();
     expect([...servies].sort()).toEqual(attendues);
-    expect(attendues.length).toBe(112);
+    expect(attendues.length).toBe(117);
   });
 
   it('méthode et chemin HTTP de chaque route sont ceux du contrat', () => {

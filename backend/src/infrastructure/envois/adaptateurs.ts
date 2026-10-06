@@ -8,6 +8,7 @@
  */
 import { Logger } from '@nestjs/common';
 import { createTransport, type Transporter } from 'nodemailer';
+import { segmentsSms } from '../../domaine/sms.js';
 
 export interface ResultatEnvoi {
   readonly idFournisseur: string | null;
@@ -31,6 +32,8 @@ export interface MessageSms {
   readonly texte: string;
   /** Identifiant de la notification : clé d'idempotence pour la passerelle */
   readonly reference?: string;
+  /** SMS d'une conversation (étape 20) : le numéro de la banque, pour que le client puisse répondre */
+  readonly expediteur?: string | null;
 }
 
 export interface AdaptateurSms {
@@ -62,7 +65,7 @@ export class SmsJournal implements AdaptateurSms {
 
   async envoyer(m: MessageSms): Promise<ResultatEnvoi> {
     const segments = segmentsSms(m.texte);
-    this.journal.log(`→ ${m.destination} (${segments} segment${segments > 1 ? 's' : ''}) : ${m.texte}`);
+    this.journal.log(`→ ${m.destination}${m.expediteur ? ` (de ${m.expediteur})` : ''} (${segments} segment${segments > 1 ? 's' : ''}) : ${m.texte}`);
     return { idFournisseur: null, segments };
   }
 }
@@ -84,6 +87,9 @@ export interface OptionsSmsHttp {
  *   Idempotency-Key: <identifiant de la notification>
  *   { "from": "<expéditeur>", "to": "+225…", "text": "…", "reference": "<identifiant>" }
  *
+ *   (étape 20 : « from » est le numéro de la banque pour les SMS d'une conversation, le nom
+ *   d'expéditeur sinon)
+ *
  *   2xx { "id": "<identifiant chez la passerelle>", "segments": 2 }   (segments facultatif)
  *
  * Toute autre réponse, ou aucune réponse en 10 s, est une erreur : la boîte d'envoi réessaie
@@ -101,7 +107,7 @@ export class SmsHttp implements AdaptateurSms {
         Accept: 'application/json',
         ...(m.reference ? { 'Idempotency-Key': m.reference } : {}),
       },
-      body: JSON.stringify({ from: this.o.expediteur, to: m.destination, text: m.texte, ...(m.reference ? { reference: m.reference } : {}) }),
+      body: JSON.stringify({ from: m.expediteur ?? this.o.expediteur, to: m.destination, text: m.texte, ...(m.reference ? { reference: m.reference } : {}) }),
       signal: AbortSignal.timeout(this.o.delaiMs ?? 10_000),
     });
     const texte = await reponse.text();
@@ -117,19 +123,5 @@ export class SmsHttp implements AdaptateurSms {
   }
 }
 
-// Alphabet GSM 03.38 : 7 bits par caractère ; les caractères de l'extension en comptent deux
-const GSM_BASE = new Set([...'@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà']);
-const GSM_EXTENSION = new Set([...'^{}\\[~]|€']);
-
-/** Nombre de segments facturés : 160/153 caractères en GSM 7 bits, 70/67 en UCS-2 (accents hors GSM, emojis). */
-export function segmentsSms(texte: string): number {
-  const caracteres = [...texte];
-  const gsm = caracteres.every((c) => GSM_BASE.has(c) || GSM_EXTENSION.has(c));
-  if (gsm) {
-    const longueur = caracteres.reduce((n, c) => n + (GSM_EXTENSION.has(c) ? 2 : 1), 0);
-    return longueur <= 160 ? 1 : Math.ceil(longueur / 153);
-  }
-  // UCS-2 : les caractères hors plan de base (emojis) comptent deux unités
-  const unites = texte.length;
-  return unites <= 70 ? 1 : Math.ceil(unites / 67);
-}
+// Décompte des segments : code pur, partagé avec les écrans (étape 20)
+export { segmentsSms } from '../../domaine/sms.js';

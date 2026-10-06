@@ -88,3 +88,9 @@ export function initiales(nom: string): string {
     .map((m) => m[0]!.toUpperCase())
     .join('');
 }
+
+/** Numéro E.164 lisible : +225 27 22 00 00 00 (Côte d'Ivoire), sinon tel quel. */
+export function telephone(e164: string): string {
+  const m = /^\+225(\d{10})$/.exec(e164);
+  return m ? `+225 ${m[1]!.replace(/(\d{2})(?=\d)/g, '$1 ')}` : e164;
+}

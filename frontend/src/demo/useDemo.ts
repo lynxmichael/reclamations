@@ -347,13 +347,17 @@ export function useDemo(prospectInitial: Prospect) {
     ouvrir: (conversationId) => setBanque((b) => ({ ...b, conversationId })),
     ouvrirFiche: (id) => setBanque((b) => ({ ...b, page: 'reclamations', ficheId: id, notifs: false })),
     repondre: (contenu, attendre) => {
-      const id = banque.conversationId ? moteur.conversation(utilisateur, banque.conversationId).reclamation.id : null;
-      if (!id) return false;
+      const c = banque.conversationId ? moteur.conversation(utilisateur, banque.conversationId) : null;
+      if (!c) return false;
       avancer(DUREE.chat);
+      // Étape 20 : sur WhatsApp ou par SMS, la réponse part telle quelle là où le client a écrit
+      const vers = c.reponseVers.canal;
+      const envoyee = vers === 'WHATSAPP' ? 'Réponse envoyée sur WhatsApp, où le client a écrit.' : vers === 'SMS' ? 'Réponse envoyée par SMS, du numéro de la banque.'
+        : 'Réponse envoyée dans le chat. S\'il ne la lit pas sous 2 minutes, le client reçoit un SMS.';
       return tenter(() => {
-        moteur.repondre(utilisateur, id, contenu, attendre);
+        moteur.repondre(utilisateur, c.reclamation.id, contenu, attendre);
         return true;
-      }, attendre ? 'Question envoyée : le chrono SLA est en pause jusqu\'à la réponse du client.' : 'Réponse envoyée dans le chat. S\'il ne la lit pas sous 2 minutes, le client reçoit un SMS.') ?? false;
+      }, attendre ? 'Question envoyée : le chrono SLA est en pause jusqu\'à la réponse du client.' : envoyee) ?? false;
     },
   };
 

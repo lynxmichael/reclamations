@@ -36,6 +36,8 @@ export const ALPHA: S<'BanquePublique'> = {
   logoUrl: null,
   couleurPrimaire: '#0b6e5f',
   couleurSecondaire: '#e3f1ed',
+  // Étape 20 : WhatsApp ouvert par Makor, proposé sur le portail
+  whatsapp: '+2252722000000',
 };
 
 /** Seconde banque, pour montrer le portail aux couleurs d'une autre banque (décision E2). */
@@ -45,6 +47,7 @@ export const HORIZON: S<'BanquePublique'> = {
   logoUrl: null,
   couleurPrimaire: '#e0a526',
   couleurSecondaire: '#1f2a44',
+  whatsapp: null,
 };
 
 export const DOMAINE = 'reclamations.example';

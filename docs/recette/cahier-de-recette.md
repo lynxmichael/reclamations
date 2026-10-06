@@ -321,7 +321,7 @@ Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
 Comme les critères 12 à 15, il se signe à part. Gardez un téléphone avec Google Authenticator ou Microsoft Authenticator à portée de main.
 
-1. Fatou, **Activité des agences**, période « Les 30 derniers jours ». **Attendu :** une ligne par agence (Plateau, Cocody Angré, Bouaké Commerce), puis « Sans agence (lien web) » en dernier. La somme de la colonne « Reçues » est égale au nombre de « Réclamations reçues » du **Tableau de bord** sur la même période. Les quatre repères sont en tête.
+1. Fatou, **Activité des agences**, période « Les 30 derniers jours ». **Attendu :** une ligne par agence (Plateau, Cocody Angré, Bouaké Commerce), puis « Sans agence (lien web, WhatsApp ou SMS) » en dernier. La somme de la colonne « Reçues » est égale au nombre de « Réclamations reçues » du **Tableau de bord** sur la même période. Les quatre repères sont en tête.
 2. Elle déplie le Plateau. **Attendu :** ses catégories principales, les agents qui traitent ses réclamations, et le QR code « Hall d'accueil » avec son volume.
    - **Son tableau de bord** ouvre le tableau de bord filtré « Agence : Plateau ».
    - **Ses réclamations** ouvre la liste de toute la banque, filtrée sur l'agence.
@@ -348,6 +348,31 @@ Preuve automatique :
 - `reporting.e2e.test.ts` : 3 tests de l'activité des agences ; les lignes font le tableau de bord.
 - `navigateur/12-agences-securite.spec.ts` : 5 tests.
 - Vérifications de sécurité : 5 contrôles. La règle n'est modifiable que pour sa propre banque, et le contexte banque ne peut ni marquer un compte comme protégé ni effacer son secret.
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
+### Critère 17 (phase 2, étape 20) — WhatsApp Business et SMS entrant
+
+*Le client écrit à sa banque sur WhatsApp ou par SMS. Son message entre dans la conversation de sa réclamation, ou une réclamation se prépare avec lui, qu'il envoie en répondant OUI. L'agent répond depuis la boîte de réception, et la réponse part là où le client a écrit. Makor raccorde et ouvre ces canaux banque par banque, et voit des totaux, jamais un message.*
+
+Comme les critères 12 à 16, il se signe à part. Il se passe avec le numéro WhatsApp de test de Makor chez Meta, raccordé à la Banque Alpha, et un téléphone avec WhatsApp ; pour le SMS, avec la passerelle de Makor. Sans eux, en développement, `npm run canal` simule le client (note de l'étape 20, partie 9) et le journal du worker montre les envois.
+
+1. Koffi, **Plateforme › Banques**, fiche de la Banque Alpha, **Numéros WhatsApp et SMS** : il saisit le numéro, l'identifiant chez Meta, le compte WhatsApp Business et le jeton, puis **Raccorder le numéro WhatsApp**. **Attendu :** « raccordé » ; le champ du jeton reste vide ; la case **WhatsApp Business** se coche, et se grise si l'on décoche le chat web. Le même numéro saisi pour Horizon est refusé.
+2. Le téléphone écrit « Bonjour » au numéro de la banque. **Attendu :** dans les secondes qui suivent, l'assistant se présente comme automatique. Il écrit « Le distributeur du Plateau a avalé ma carte hier soir, je ne peux plus retirer. » **Attendu :** le récapitulatif (Carte bancaire, son texte) et le lien de la politique de données. Il répond « OUI ». **Attendu :** « Votre réclamation ALP-… est enregistrée », avec le lien de suivi ; sur la fiche, dépôt « WhatsApp, au numéro de la banque », le nom de son profil WhatsApp.
+3. Il envoie une photo avec une légende. **Attendu :** la photo et le texte dans la conversation de la réclamation, marqués WhatsApp. Un message vocal : on lui demande d'écrire.
+4. Aya (ou Serge), **Conversations** : la conversation porte le badge WhatsApp. Sous la zone de réponse : « Elle part sur WhatsApp … fenêtre de 24 h ouverte jusqu'au … ». Elle répond. **Attendu :** le texte arrive sur le téléphone, tel quel ; « Lu par le client » dès qu'il l'a ouvert ; aucun autre SMS.
+5. Aya résout la réclamation. **Attendu :** le message de résolution arrive sur WhatsApp, terminé par « Répondez OUI si c'est réglé… ». Le téléphone répond « Oui merci ». **Attendu :** la réclamation est clôturée et le lien de l'enquête arrive sur WhatsApp. Sur une autre réclamation résolue, il répond « Non, toujours pas » : elle est rouverte, ce message comme motif.
+6. Par SMS, un client écrit au numéro SMS de la banque au sujet de sa réclamation en cours. **Attendu :** son message dans la conversation, marqué SMS. Aya répond avec un « ç » : l'aide affiche le nombre de SMS facturés ; le SMS arrive du numéro de la banque, le « ç » devenu « c ».
+7. Un client qui a écrit sur WhatsApp il y a plus de 24 h (ou simulé) : l'aide dit que la réponse restera dans son suivi. Aya répond. **Attendu :** pas de WhatsApp ; un SMS « nouvelle réponse » avec le lien, sans le texte.
+8. Fatou, **Agences et QR codes**, section **WhatsApp et SMS** : le QR code WhatsApp, scanné par un téléphone, ouvre une conversation avec la banque. Le portail de dépôt affiche « Vous préférez WhatsApp ? Écrivez-nous au … ».
+9. Koffi, **Activité et SMS**, tableau **WhatsApp et SMS reçus** du mois. **Attendu :** pour la Banque Alpha, les WhatsApp envoyés, ceux facturés par Meta, les échecs, les messages reçus ; aucun numéro ni texte. Il décoche le chat web : WhatsApp et SMS se ferment, un message envoyé ensuite reste sans réponse.
+
+Preuve automatique :
+
+- `canaux.e2e.test.ts` : 22 tests, avec un faux serveur Meta. Raccordement et ouverture, signature des webhooks, dépôt guidé, conversation, fenêtre de 24 h, refus de Meta, confirmation et contestation, SMS en GSM, plafond, facturation, sessions.
+- `navigateur/13-whatsapp-sms.spec.ts` : 8 tests.
+- Tests unitaires de `domaine/canaux`, `domaine/sms` et de l'adaptateur Meta.
+- Vérifications de sécurité : 30 contrôles. Jeton illisible hors du système ; numéros, sessions et messages reçus cloisonnés par banque ; canaux ouverts par le seul Super Admin, avec le chat ; facturation en totaux.
 
 Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
@@ -388,6 +413,7 @@ Phase 2, à signer à la livraison de chaque fonction :
 | 14. Conversations et chat web (étape 17) | | |
 | 15. Assistant IA de première ligne (étape 18) | | |
 | 16. Activité des agences et double authentification (étape 19) | | |
+| 17. WhatsApp Business et SMS entrant (étape 20) | | |
 
 | | Nom | Date | Signature |
 |---|---|---|---|

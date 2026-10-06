@@ -29,9 +29,11 @@ export const PRIORITE: Record<S<'Priorite'>, string> = {
 export const CANAL: Record<S<'CanalDepot'>, string> = {
   QR_CODE: 'QR code',
   LIEN_WEB: 'Lien web',
+  WHATSAPP: 'WhatsApp',
+  SMS: 'SMS',
 };
 
-/** Canal d'une conversation (étape 17) ; WhatsApp et SMS entrant à l'étape 19 */
+/** Canal d'une conversation (étape 17) ; WhatsApp et SMS entrant à l'étape 20 */
 export const CANAL_CONVERSATION: Record<S<'CanalConversation'>, string> = {
   WEB: 'Chat du portail',
   WHATSAPP: 'WhatsApp',

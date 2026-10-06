@@ -55,7 +55,7 @@ type LigneReponse = { id: string; question: string; reponse: string; active: boo
 const vueReponse = (r: LigneReponse): S<'ReponseBanque'> =>
   ({ id: r.id, question: r.question, reponse: r.reponse, active: r.active, ordre: r.ordre, alertes: alertes(r.reponse), modifieLe: r.modifieLe.toISOString() });
 
-async function baseDeReponses(tx: ClientTransaction): Promise<{ faq: QuestionFrequente[]; categories: CategorieAssistant[] }> {
+export async function baseDeReponses(tx: ClientTransaction): Promise<{ faq: QuestionFrequente[]; categories: CategorieAssistant[] }> {
   const [faq, categories] = await enSerie([
     () => tx.reponseAssistant.findMany({ where: { active: true }, orderBy: [{ ordre: 'asc' }, { creeLe: 'asc' }], select: { id: true, question: true, reponse: true } }),
     () => tx.categorie.findMany({ where: { active: true }, orderBy: [{ ordre: 'asc' }, { nom: 'asc' }], select: { id: true, nom: true, description: true } }),

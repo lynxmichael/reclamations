@@ -20,7 +20,7 @@ import { DUREE_CLIENT, Jetons } from '../../infrastructure/securite/jetons.js';
 import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
-import { avecFichiers, banquePublique, stockerPiecesJointes, type S } from '../commun.js';
+import { avecFichiers, banquePublique, CHAMPS_BANQUE_PUBLIQUE, stockerPiecesJointes, type S } from '../commun.js';
 import { etapesSuivi } from '../reclamations/lecture.js';
 import { etatAvis, normaliserReponse } from '../../domaine/satisfaction.js';
 
@@ -29,7 +29,7 @@ export const VERSION_POLITIQUE = '2026-09';
 export const DUREE_OTP_SECONDES = 600;
 export const ESSAIS_OTP = 5;
 
-const CHAMPS_BANQUE = { id: true, nom: true, slug: true, logoCle: true, couleurPrimaire: true, couleurSecondaire: true, suspendueLe: true } as const;
+const CHAMPS_BANQUE = { id: true, suspendueLe: true, ...CHAMPS_BANQUE_PUBLIQUE } as const;
 
 /** Point de dépôt par son code public : lecture ciblée, toutes banques (aussi pour l'assistant, étape 18). */
 export async function pointPublic(bd: BaseDonnees, code: string) {

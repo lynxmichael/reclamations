@@ -5,6 +5,8 @@
 import { useState, type FormEvent } from 'react';
 import { Bot, CircleAlert, MapPin } from 'lucide-react';
 import type { S } from '../../api/types';
+import { IconeCanal } from '../../ui/Canaux';
+import { telephone } from '../../ui/format';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Bouton, Champ, Liste, Saisie, Texte, cx } from '../../ui/composants';
 import { CadrePortail } from './CadrePortail';
@@ -87,6 +89,22 @@ export function Depot({
           <h1 className="text-[26px] leading-tight font-bold tracking-tight">Déposer une réclamation</h1>
           <p className="mt-2 text-[15px] leading-relaxed text-encre-2">Un conseiller l'étudie et vous répond par SMS ou par e-mail.</p>
         </div>
+
+        {/* Étape 20 : la banque a ouvert WhatsApp ; le client peut aussi y écrire */}
+        {formulaire.banque.whatsapp && (
+          <a
+            href={`https://wa.me/${formulaire.banque.whatsapp.replace(/\D/g, '')}`}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="lien-whatsapp"
+            className="-mt-3 flex items-center gap-3 rounded-xl border border-resolue/30 bg-resolue-doux px-4 py-3 text-[15px] leading-snug text-encre"
+          >
+            <span className="text-resolue"><IconeCanal canal="WHATSAPP" taille={20} /></span>
+            <span>
+              Vous préférez WhatsApp ? Écrivez-nous au <span className="chiffres font-semibold whitespace-nowrap">{telephone(formulaire.banque.whatsapp)}</span> : un conseiller vous y répond.
+            </span>
+          </a>
+        )}
 
         {assistant && (
           <div className="flex gap-3 rounded-xl border border-marque/30 bg-marque-doux px-4 py-3 text-[15px] leading-relaxed">

@@ -63,11 +63,13 @@ enum TypeJeton {
   @@map("type_jeton")
 }
 
-/// Canal de dépôt, porté par le point de dépôt (§6.1). Les canaux de la phase 2
-/// (WhatsApp, SMS entrant, chat web) s'ajouteront ici.
+/// Canal de dépôt, porté par le point de dépôt (§6.1). WhatsApp et SMS entrant (étape 20) : un point
+/// de dépôt par banque et par canal, créé par Makor avec le numéro de la banque.
 enum CanalDepot {
   QR_CODE
   LIEN_WEB
+  WHATSAPP
+  SMS
 
   @@map("canal_depot")
 }
@@ -151,7 +153,7 @@ enum ModeAttribution {
   @@map("mode_attribution")
 }
 
-/// Canal d'une conversation (étape 17) : chat du portail ; WhatsApp et SMS entrant à l'étape 19.
+/// Canal d'une conversation (étape 17) : chat du portail ; WhatsApp et SMS entrant à l'étape 20.
 enum CanalConversation {
   WEB
   WHATSAPP
@@ -198,6 +200,8 @@ enum CanalNotification {
   EMAIL
   SMS
   IN_APP
+  /// Message WhatsApp au client (étape 20), dans la fenêtre de 24 h qui suit son dernier message
+  WHATSAPP
 
   @@map("canal_notification")
 }
@@ -272,6 +276,10 @@ model Banque {
   /// Double authentification du personnel (étape 19) : obligatoire, ou facultative (chacun l'active
   /// depuis « Mon compte »), réglée par l'Admin Entreprise ; toujours obligatoire pour le Super Admin
   doubleAuthentificationObligatoire Boolean         @default(false) @map("double_authentification_obligatoire")
+  /// WhatsApp Business (étape 20) : ouvert par Makor avec le compte WhatsApp de la banque ; exige le chat web
+  whatsapp                          Boolean         @default(false)
+  /// SMS entrant (étape 20) : le client écrit au numéro de la banque ; exige le chat web
+  smsEntrant                        Boolean         @default(false) @map("sms_entrant")
   suspendueLe                       DateTime?       @map("suspendue_le") @db.Timestamptz(3)
   motifSuspension                   String?         @map("motif_suspension")
   creeLe                            DateTime        @default(now()) @map("cree_le") @db.Timestamptz(3)
@@ -293,6 +301,9 @@ model Banque {
   conversations     Conversation[]
   reponsesAssistant ReponseAssistant[]
   appelsIa          AppelIa[]
+  canaux            CanalBanque[]
+  sessionsCanal     SessionCanal[]
+  messagesEntrants  MessageEntrant[]
 
   @@index([planId])
   @@map("banque")
@@ -344,6 +355,7 @@ model PointDepot {
   banque       Banque        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   agence       Agence?       @relation(fields: [tenantId, agenceId], references: [tenantId, id], onDelete: Restrict)
   reclamations Reclamation[]
+  canalBanque  CanalBanque?
 
   @@unique([tenantId, id])
   @@index([tenantId, agenceId])
@@ -681,14 +693,15 @@ model Reclamation {
   creeLe    DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
-  banque        Banque       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  client        ClientFinal  @relation(fields: [tenantId, clientId], references: [tenantId, id], onDelete: Restrict)
-  categorie     Categorie    @relation(fields: [tenantId, categorieId], references: [tenantId, id], onDelete: Restrict)
-  pointDepot    PointDepot   @relation(fields: [tenantId, pointDepotId], references: [tenantId, id], onDelete: Restrict)
-  agence        Agence?      @relation(fields: [tenantId, agenceId], references: [tenantId, id], onDelete: Restrict)
-  agent         Utilisateur? @relation("AgentAssigne", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
-  escaladeeVers Utilisateur? @relation("EscaladeeVers", fields: [tenantId, escaladeeVersId], references: [tenantId, id], onDelete: Restrict)
-  cloturePar    Utilisateur? @relation("ClotureePar", fields: [tenantId, clotureParId], references: [tenantId, id], onDelete: Restrict)
+  banque        Banque         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  client        ClientFinal    @relation(fields: [tenantId, clientId], references: [tenantId, id], onDelete: Restrict)
+  categorie     Categorie      @relation(fields: [tenantId, categorieId], references: [tenantId, id], onDelete: Restrict)
+  pointDepot    PointDepot     @relation(fields: [tenantId, pointDepotId], references: [tenantId, id], onDelete: Restrict)
+  agence        Agence?        @relation(fields: [tenantId, agenceId], references: [tenantId, id], onDelete: Restrict)
+  sessionsCanal SessionCanal[]
+  agent         Utilisateur?   @relation("AgentAssigne", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  escaladeeVers Utilisateur?   @relation("EscaladeeVers", fields: [tenantId, escaladeeVersId], references: [tenantId, id], onDelete: Restrict)
+  cloturePar    Utilisateur?   @relation("ClotureePar", fields: [tenantId, clotureParId], references: [tenantId, id], onDelete: Restrict)
 
   commentaires  Commentaire[]
   piecesJointes PieceJointe[]
@@ -730,18 +743,22 @@ model CompteurNumero {
 /// Note interne, réponse au client ou message du client. Immuable : une correction
 /// se fait par un nouveau message (trigger à l'étape 3).
 model Commentaire {
-  id                  String          @id @default(uuid(7)) @db.Uuid
-  tenantId            String          @map("tenant_id") @db.Uuid
-  reclamationId       String          @map("reclamation_id") @db.Uuid
+  id                  String             @id @default(uuid(7)) @db.Uuid
+  tenantId            String             @map("tenant_id") @db.Uuid
+  reclamationId       String             @map("reclamation_id") @db.Uuid
   type                TypeCommentaire
   contenu             String
   /// Vide pour un message du client (l'auteur est alors le client de la réclamation)
-  auteurUtilisateurId String?         @map("auteur_utilisateur_id") @db.Uuid
-  creeLe              DateTime        @default(now()) @map("cree_le") @db.Timestamptz(3)
+  auteurUtilisateurId String?            @map("auteur_utilisateur_id") @db.Uuid
+  /// Canal du message (étape 20) : où le client l'a écrit, ou par où la réponse de la banque lui est
+  /// partie (WEB : le suivi et le chat du portail). Vide pour les notes internes et les anciens messages
+  canal               CanalConversation?
+  creeLe              DateTime           @default(now()) @map("cree_le") @db.Timestamptz(3)
 
-  reclamation       Reclamation   @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
-  auteurUtilisateur Utilisateur?  @relation(fields: [tenantId, auteurUtilisateurId], references: [tenantId, id], onDelete: Restrict)
+  reclamation       Reclamation      @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
+  auteurUtilisateur Utilisateur?     @relation(fields: [tenantId, auteurUtilisateurId], references: [tenantId, id], onDelete: Restrict)
   piecesJointes     PieceJointe[]
+  messagesEntrants  MessageEntrant[]
 
   @@unique([tenantId, id])
   @@index([tenantId, reclamationId, creeLe])
@@ -778,6 +795,86 @@ model Conversation {
   // Avis différés au client (worker)
   @@index([dernierMessageBanqueLe])
   @@map("conversation")
+}
+
+/// Numéro WhatsApp ou SMS d'une banque (étape 20), raccordé par Makor. Les messages reçus sont routés
+/// vers la banque par cet identifiant ; les réponses partent de ce numéro. Le jeton WhatsApp, chiffré,
+/// n'est lu que par le système (envoi) : ni la banque ni le Super Admin ne le relisent.
+model CanalBanque {
+  id             String            @id @default(uuid(7)) @db.Uuid
+  tenantId       String            @map("tenant_id") @db.Uuid
+  canal          CanalConversation
+  /// WhatsApp : identifiant du numéro chez Meta (phone_number_id) ; SMS : numéro de réception, E.164
+  identifiant    String            @db.VarChar(64)
+  /// Numéro affiché au client, E.164
+  numero         String            @db.VarChar(20)
+  /// WhatsApp : compte WhatsApp Business de la banque (WABA)
+  compteWhatsapp String?           @map("compte_whatsapp") @db.VarChar(64)
+  /// WhatsApp : jeton d'accès de la banque, chiffré (AES-256-GCM)
+  jetonChiffre   String?           @map("jeton_chiffre") @db.VarChar(2000)
+  /// Point de dépôt des réclamations déposées par ce canal (reporting par canal)
+  pointDepotId   String            @map("point_depot_id") @db.Uuid
+  creeLe         DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe      DateTime          @updatedAt @map("modifie_le") @db.Timestamptz(3)
+
+  banque     Banque     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  pointDepot PointDepot @relation(fields: [tenantId, pointDepotId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([canal, identifiant])
+  @@unique([tenantId, canal])
+  @@unique([tenantId, pointDepotId])
+  @@map("canal_banque")
+}
+
+/// Échange en cours avec un client sur WhatsApp ou par SMS (étape 20) : la réclamation qu'il a choisie,
+/// ou le dépôt en préparation (catégorie, description). Effacé 24 h après son dernier message.
+model SessionCanal {
+  id               String            @id @default(uuid(7)) @db.Uuid
+  tenantId         String            @map("tenant_id") @db.Uuid
+  canal            CanalConversation
+  /// Numéro du client, E.164
+  telephone        String            @db.VarChar(20)
+  /// LIBRE, CHOIX, DESCRIPTION, CATEGORIE, CONFIRMATION, NOM
+  etape            String            @default("LIBRE") @db.VarChar(20)
+  /// Réclamation à laquelle vont ses messages
+  reclamationId    String?           @map("reclamation_id") @db.Uuid
+  /// Dépôt en préparation, réclamations proposées au choix, derniers échanges avec l'assistant
+  donnees          Json?
+  /// Dernier message du client : ouvre la fenêtre de 24 h de WhatsApp
+  dernierMessageLe DateTime          @map("dernier_message_le") @db.Timestamptz(3)
+  /// Réponses automatiques du jour (plafond par client)
+  reponsesAuto     Int               @default(0) @map("reponses_auto")
+  jourReponsesAuto String?           @map("jour_reponses_auto") @db.VarChar(10)
+  creeLe           DateTime          @default(now()) @map("cree_le") @db.Timestamptz(3)
+  modifieLe        DateTime          @updatedAt @map("modifie_le") @db.Timestamptz(3)
+
+  banque      Banque       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  reclamation Reclamation? @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, canal, telephone])
+  @@index([dernierMessageLe])
+  @@map("session_canal")
+}
+
+/// Message reçu sur WhatsApp ou par SMS (étape 20) : son identifiant chez le fournisseur évite de le
+/// traiter deux fois (Meta renvoie un webhook jusqu'à 7 jours). Sans contenu ni numéro : le texte est
+/// dans le commentaire, s'il a été rattaché à une réclamation.
+model MessageEntrant {
+  id            String            @id @default(uuid(7)) @db.Uuid
+  tenantId      String            @map("tenant_id") @db.Uuid
+  canal         CanalConversation
+  idExterne     String            @map("id_externe") @db.VarChar(160)
+  /// EN_COURS (réception), puis RATTACHE, CONFIRMATION, DEPOT, ASSISTANT, CHOIX, NON_PRIS_EN_CHARGE, LIMITE
+  issue         String            @db.VarChar(20)
+  commentaireId String?           @map("commentaire_id") @db.Uuid
+  recuLe        DateTime          @map("recu_le") @db.Timestamptz(3)
+
+  banque      Banque       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  commentaire Commentaire? @relation(fields: [tenantId, commentaireId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([canal, idExterne])
+  @@index([tenantId, recuLe])
+  @@map("message_entrant")
 }
 
 /// Base de réponses de l'assistant (étape 18, décision I4) : écrite et validée par l'Admin
@@ -928,6 +1025,11 @@ model Notification {
   idFournisseur             String?            @map("id_fournisseur") @db.VarChar(128)
   /// Segments SMS facturés, pour la refacturation par banque
   segmentsSms               Int?               @map("segments_sms")
+  /// SMS d'une conversation (étape 20) : envoyé du numéro de la banque, pour que le client puisse répondre
+  expediteur                String?            @db.VarChar(20)
+  /// WhatsApp (étape 20) : catégorie et facturation indiquées par Meta à la remise du message
+  categorieTarif            String?            @map("categorie_tarif") @db.VarChar(30)
+  facturable                Boolean?
   /// Empêche un double envoi (ex. sla.alerte_preventive:<réclamation>:<destinataire>)
   cleDeduplication          String?            @unique @map("cle_deduplication") @db.VarChar(200)
   envoyeeLe                 DateTime?          @map("envoyee_le") @db.Timestamptz(3)
@@ -944,6 +1046,8 @@ model Notification {
   @@index([statut, creeLe])
   @@index([tenantId, canal, creeLe])
   @@index([tenantId, reclamationId])
+  /// Statuts de remise WhatsApp (étape 20), retrouvés par l'identifiant du message chez Meta
+  @@index([idFournisseur])
   @@map("notification")
 }
 

@@ -11,6 +11,7 @@ import { CONFIGURATION, lireConfiguration, urlPortail, type Configuration } from
 import { BaseDonnees } from './infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { EmailSmtp, SmsHttp, SmsJournal, type AdaptateurSms } from './infrastructure/envois/adaptateurs.js';
 import { BoiteEnvoi } from './infrastructure/envois/boite-envoi.js';
+import { adaptateurWhatsapp } from './infrastructure/canaux/whatsapp.js';
 import { Planificateur } from './worker/planification.js';
 
 @Injectable()
@@ -25,7 +26,7 @@ class ServiceWorker implements OnApplicationBootstrap, OnApplicationShutdown {
     this.email = new EmailSmtp(config.smtpUrl, config.emailExpediteur);
     this.planificateur = new Planificateur(config.redisUrl, {
       taches: new TachesSla(this.bd.base, cycle),
-      boite: new BoiteEnvoi(this.bd, this.email, adaptateurSms(config)),
+      boite: new BoiteEnvoi(this.bd, this.email, adaptateurSms(config), undefined, { whatsapp: adaptateurWhatsapp(config.whatsapp, config.production), cle: config.cleCanaux }),
       bd: this.bd,
     });
   }

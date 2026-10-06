@@ -3,10 +3,13 @@
  * (lireFacturationSms). Métadonnées seulement : volumes, taux, compteurs. Étape 15 : totaux des
  * enquêtes de satisfaction par banque, jamais les commentaires des clients. Étape 18 : usage de
  * l'assistant IA par banque (lireConsommationIa), d'après un journal qui ne garde aucun message.
+ * Étape 20 : messages WhatsApp (envoyés, facturés par Meta, échecs, reçus) et SMS reçus par banque
+ * (lireFacturationCanaux), des totaux sans numéro ni texte.
  */
 import type { ReactNode } from 'react';
 import { CalendarDays, ChevronDown, Download } from 'lucide-react';
 import type { S } from '../../api/types';
+import { IconeCanal } from '../../ui/Canaux';
 import { Bouton, Panneau, cx } from '../../ui/composants';
 import { nombre, pourcent, relatif } from '../../ui/format';
 import { signe } from '../back-office/TableauDeBord';
@@ -19,9 +22,11 @@ export function Activite({
   indicateurs,
   sms,
   ia,
+  canaux,
   choixMois,
   surExporterSms,
   surExporterIa,
+  surExporterCanaux,
   chargement,
 }: {
   indicateurs: S<'IndicateursPlateforme'>;
@@ -29,6 +34,9 @@ export function Activite({
   /** Étape 18 : usage de l'assistant IA du mois */
   ia?: S<'ConsommationIa'>;
   surExporterIa?: () => void;
+  /** Étape 20 : WhatsApp et SMS reçus du mois */
+  canaux?: S<'FacturationCanaux'>;
+  surExporterCanaux?: () => void;
   /** Étape 9 : le choix du mois (sinon, celui de la maquette) */
   choixMois?: ReactNode;
   surExporterSms?: () => void;
@@ -161,6 +169,7 @@ export function Activite({
         <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">Un long SMS, ou un SMS avec certains accents (ê, â, ô…), est découpé en plusieurs segments, chacun facturé.</p>
       </Panneau>
 
+      {canaux && <FacturationCanaux f={canaux} surExporter={surExporterCanaux} />}
       {ia && <ConsommationIa ia={ia} surExporter={surExporterIa} />}
       </div>
     </div>
@@ -263,6 +272,63 @@ function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExpor
       <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
         Fournisseur configuré : {ia.fournisseur.nom === 'regles' ? 'aucun (règles seules, rien n\'est envoyé)' : `${ia.fournisseur.nom}${ia.fournisseur.modele ? `, ${ia.fournisseur.modele}` : ''}`}.
         {' '}« Par les règles » : sans fournisseur, plafond du jour atteint, délai dépassé ou réponse hors format. Le journal ne garde aucun message, seulement les volumes.
+      </p>
+    </Panneau>
+  );
+}
+
+/** WhatsApp et SMS reçus (étape 20) : les banques qui ont eu du trafic ce mois-là. */
+function FacturationCanaux({ f, surExporter }: { f: S<'FacturationCanaux'>; surExporter?: () => void }) {
+  const lignes = f.banques.filter((b) => b.whatsappEnvoyes + b.whatsappRecus + b.whatsappEchecs + b.smsRecus > 0);
+  const total = lignes.reduce((t, b) => ({
+    envoyes: t.envoyes + b.whatsappEnvoyes, factures: t.factures + b.whatsappFactures, echecs: t.echecs + b.whatsappEchecs,
+    recus: t.recus + b.whatsappRecus, sms: t.sms + b.smsRecus,
+  }), { envoyes: 0, factures: 0, echecs: 0, recus: 0, sms: 0 });
+  return (
+    <Panneau
+      titre={`WhatsApp et SMS reçus de ${nomMois(f.mois)}`}
+      sansMarge
+      action={surExporter && <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter les messages en CSV</Bouton>}
+    >
+      <table className="w-full text-left text-[15px]" data-testid="facturation-canaux">
+        <thead>
+          <tr className="border-b border-trait text-[13px] text-encre-3">
+            <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Banque</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold"><span className="inline-flex items-center gap-1"><IconeCanal canal="WHATSAPP" taille={13} />WhatsApp envoyés</span></th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">dont facturés par Meta</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Échecs</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">WhatsApp reçus</th>
+            <th scope="col" className="py-2.5 pr-5 pl-3 text-right font-semibold"><span className="inline-flex items-center gap-1"><IconeCanal canal="SMS" taille={13} />SMS reçus</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.length === 0 && (
+            <tr><td colSpan={6} className="px-5 py-6 text-center text-encre-3">Aucun message WhatsApp ni SMS reçu ce mois-ci.</td></tr>
+          )}
+          {lignes.map((b) => (
+            <tr key={b.banque.id} className="border-b border-trait">
+              <td className="py-3 pr-3 pl-5 font-semibold">{b.banque.nom}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.whatsappEnvoyes)}</td>
+              <td className="chiffres px-3 py-3 text-right font-semibold">{nombre(b.whatsappFactures)}</td>
+              <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.whatsappEchecs)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.whatsappRecus)}</td>
+              <td className="chiffres py-3 pr-5 pl-3 text-right">{nombre(b.smsRecus)}</td>
+            </tr>
+          ))}
+          {lignes.length > 1 && (
+            <tr className="bg-fond/70 font-bold">
+              <td className="py-3 pr-3 pl-5">Total</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(total.envoyes)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(total.factures)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(total.echecs)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(total.recus)}</td>
+              <td className="chiffres py-3 pr-5 pl-3 text-right">{nombre(total.sms)}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
+        Facturés : messages que Meta déclare payants, au-delà de ses gratuités, au tarif du pays du client. Les réponses par SMS d'une conversation sont comptées avec les SMS envoyés, ci-dessus. Ni numéro ni texte ne quitte la banque.
       </p>
     </Panneau>
   );

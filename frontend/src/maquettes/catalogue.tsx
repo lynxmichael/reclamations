@@ -39,12 +39,12 @@ import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './donnees/auth';
 import {
   ABSENCES, AGENCES, AGENTS_DES_GROUPES, AYA, CATEGORIES, FATOU, GROUPES as GROUPES_AGENTS, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi,
 } from './donnees/parametrage';
-import { ALERTES, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './donnees/plateforme';
+import { ALERTES, FACTURATION_CANAUX, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './donnees/plateforme';
 import {
   ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos,
 } from './donnees/portail';
 import {
-  AGENTS_ASSIGNABLES, CONVERSATION_42, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL,
+  AGENTS_ASSIGNABLES, CONVERSATION_42, CONVERSATION_WHATSAPP, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL,
   NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
 } from './donnees/reclamations';
 
@@ -545,16 +545,19 @@ export const ECRANS: Ecran[] = [
       'Le rond vert : le client a le chat à l\'écran. « Lu par le client » sous la dernière réponse.',
       'La réponse part par repondreAuClient, comme depuis la fiche : chrono SLA, première réponse et « Attendre sa réponse » sont les mêmes. Les notes internes restent sur la fiche.',
       'Une rafale de messages du client ne donne qu\'une alerte à l\'agent. La liste se relit toutes les 10 secondes, la conversation toutes les 5.',
+      'Étape 20 : les messages écrits sur WhatsApp ou par SMS entrent dans la même boîte, avec leur canal. La réponse part là où le client a écrit en dernier : sur WhatsApp, telle quelle, tant que la fenêtre de 24 h de Meta est ouverte ; par SMS, du numéro de la banque (nombre de SMS facturés affiché) ; sinon dans son suivi, avec un avis par e-mail ou SMS (reponseVers).',
     ],
     variantes: [
       VU_PAR(['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE']),
       { cle: 'filtre', libelle: 'Onglet', options: [{ valeur: 'a-repondre', libelle: 'À répondre' }, { valeur: 'toutes', libelle: 'Toutes' }] },
+      { cle: 'canal', libelle: 'Conversation', options: [{ valeur: 'web', libelle: 'Chat du portail' }, { valeur: 'whatsapp', libelle: 'WhatsApp (étape 20)' }] },
     ],
     rendu: ({ v }) => {
       const role = v.role as keyof typeof PROFILS;
       const agent = role === 'AGENT';
       const page = agent ? CONVERSATIONS_AGENT : v.filtre === 'toutes' ? CONVERSATIONS_SUPERVISEUR_TOUTES : CONVERSATIONS_SUPERVISEUR;
-      const selection = role === 'ADMIN_ENTREPRISE' ? CONVERSATION_42.ADMIN_ENTREPRISE : role === 'SUPERVISEUR' ? CONVERSATION_42.SUPERVISEUR : CONVERSATION_42.AGENT;
+      const selection = v.canal === 'whatsapp' ? CONVERSATION_WHATSAPP
+        : role === 'ADMIN_ENTREPRISE' ? CONVERSATION_42.ADMIN_ENTREPRISE : role === 'SUPERVISEUR' ? CONVERSATION_42.SUPERVISEUR : CONVERSATION_42.AGENT;
       return backOffice(
         PROFILS[role],
         'conversations',
@@ -625,6 +628,7 @@ export const ECRANS: Ecran[] = [
       'Un QR code par emplacement physique, regroupés par agence. PNG pour l\'écran, SVG pour l\'impression.',
       'Un point désactivé refuse les dépôts (POINT_DE_DEPOT_INACTIF) : le QR code déjà affiché ne marche plus.',
       'Les liens web n\'ont pas d\'agence ; le client peut en indiquer une.',
+      'Étape 20 : les numéros WhatsApp et SMS de la banque, raccordés et ouverts par Makor, avec l\'adresse qui ouvre la conversation (wa.me, sms:) et le QR code WhatsApp à afficher. La banque ne les crée ni ne les désactive.',
     ],
     variantes: [VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR'])],
     rendu: ({ v }) => {
@@ -658,6 +662,7 @@ export const ECRANS: Ecran[] = [
     notes: [
       'La couleur principale habille le portail et le back-office. Le texte posé dessus, blanc ou foncé, est choisi automatiquement ; le contraste est vérifié (décision E2).',
       'Le plan, sa consommation et les réglages du contrat sont affichés en lecture : ils relèvent du Super Admin (décision C12).',
+      'Étape 20 : les numéros WhatsApp et SMS de la banque, quand Makor les a ouverts.',
     ],
     rendu: () => backOffice(ADMIN, 'banque', <Banque parametres={PARAMETRES} banque={ALPHA} />),
   },
@@ -804,14 +809,18 @@ export const ECRANS: Ecran[] = [
     titre: 'Banques clientes',
     format: 'bureau',
     adresse: () => console_('/banques'),
-    operations: ['listerBanques', 'listerPlans', 'creerBanque', 'suspendreBanque', 'reactiverBanque'],
+    operations: ['listerBanques', 'listerPlans', 'creerBanque', 'modifierBanque', 'raccorderCanal', 'suspendreBanque', 'reactiverBanque'],
     roles: 'Super Admin.',
     notes: [
       'Consommation du mois face aux plafonds du plan : un dépassement de tickets alerte mais ne bloque jamais un dépôt.',
       'Une banque suspendue n\'accepte plus de dépôts (BANQUE_SUSPENDUE) ; son personnel garde l\'accès aux réclamations en cours.',
+      'Étape 20 : dans la fiche d\'une banque, le raccordement de son numéro WhatsApp (identifiants de l\'inscription intégrée de Meta et jeton d\'accès, chiffré et jamais réaffiché) et de son numéro SMS, puis leur ouverture, avec le chat web.',
     ],
-    variantes: [{ cle: 'creation', libelle: 'Création', options: [{ valeur: 'non', libelle: 'Liste' }, { valeur: 'oui', libelle: 'Nouvelle banque' }] }],
-    rendu: ({ v }) => consoleSA('banques', <Banques page={PAGE_BANQUES} plans={PLANS} creation={v.creation === 'oui'} />),
+    variantes: [{
+      cle: 'creation', libelle: 'Écran',
+      options: [{ valeur: 'non', libelle: 'Liste' }, { valeur: 'oui', libelle: 'Nouvelle banque' }, { valeur: 'fiche', libelle: 'Fiche, WhatsApp et SMS' }],
+    }],
+    rendu: ({ v }) => consoleSA('banques', <Banques page={PAGE_BANQUES} plans={PLANS} creation={v.creation === 'oui'} ouverteInitiale={v.creation === 'fiche' ? PAGE_BANQUES.donnees[0]!.id : null} />),
   },
   {
     id: 'activite',
@@ -819,15 +828,16 @@ export const ECRANS: Ecran[] = [
     titre: 'Activité et SMS',
     format: 'bureau',
     adresse: () => console_('/activite'),
-    operations: ['lireIndicateursPlateforme', 'lireFacturationSms', 'lireConsommationIa'],
+    operations: ['lireIndicateursPlateforme', 'lireFacturationSms', 'lireFacturationCanaux', 'lireConsommationIa'],
     roles: 'Super Admin.',
     notes: [
       'Métadonnées seulement : volumes, taux, compteurs de SMS. Aucun texte ni client (arbitrage 4, droits par colonne de l\'étape 3).',
       'Les segments facturés servent à refacturer les SMS à chaque banque.',
       'Satisfaction (étape 15) : totaux par banque (enquêtes, réponses, satisfaits, NPS), jamais les commentaires des clients.',
       'Assistant IA (étape 18) : tours du portail, brouillons, réponses par l\'IA ou par les règles, jetons et coût, d\'après un journal qui ne garde aucun message (décisions I2 et I5).',
+      'WhatsApp et SMS reçus (étape 20) : messages remis à Meta, ceux que Meta déclare facturables, échecs, messages reçus ; des totaux, sans numéro ni texte.',
     ],
-    rendu: () => consoleSA('activite', <Activite indicateurs={INDICATEURS_PLATEFORME} sms={FACTURATION_SMS} ia={CONSOMMATION_IA} />),
+    rendu: () => consoleSA('activite', <Activite indicateurs={INDICATEURS_PLATEFORME} sms={FACTURATION_SMS} canaux={FACTURATION_CANAUX} ia={CONSOMMATION_IA} />),
   },
   {
     id: 'alertes',

@@ -14,6 +14,16 @@ import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from '../src/maquettes/donnees
 import { AGENCES, IBRAHIM, PAGE_PERSONNEL, PARAMETRES, moi } from '../src/maquettes/donnees/parametrage';
 import { INDICATEURS } from '../src/maquettes/donnees/reclamations';
 import { OPERATIONS_DU_CONTRAT } from './contrat';
+import { Conversations } from '../src/ecrans/back-office/Conversations';
+import { PointsDepot } from '../src/ecrans/back-office/PointsDepot';
+import { Banques } from '../src/ecrans/plateforme/Banques';
+import { Depot } from '../src/ecrans/portail/Depot';
+import { envoiDeLaReponse } from '../src/ui/Canaux';
+import { POINTS_DEPOT } from '../src/maquettes/donnees/parametrage';
+import { CONVERSATION_WHATSAPP, CONVERSATIONS_SUPERVISEUR_TOUTES } from '../src/maquettes/donnees/reclamations';
+import { PAGE_BANQUES, PLANS } from '../src/maquettes/donnees/plateforme';
+import { formulaire } from '../src/maquettes/donnees/portail';
+import { CATEGORIES } from '../src/maquettes/donnees/parametrage';
 
 /** Toutes les combinaisons de variantes d'un écran. */
 function combinaisons(e: (typeof ECRANS)[number]): Record<string, string>[] {
@@ -62,7 +72,7 @@ describe('étape 19 : activité des agences, Mon compte, règle de la banque', (
     const csv = lignesCsvAgences(INDICATEURS_AGENCES);
     expect(csv).toHaveLength(lignes.length + 1);
     expect(csv[0]!.slice(0, 4)).toEqual(['Agence', 'Code', 'Ville', 'Active']);
-    expect(csv.at(-1)![0]).toBe('Sans agence (lien web)');
+    expect(csv.at(-1)![0]).toBe('Sans agence (lien web, WhatsApp ou SMS)');
     expect(texte(<Agences indicateurs={INDICATEURS_AGENCES} ouverte={AGENCES[0]!.id} />)).toContain('Points de dépôt');
   });
 
@@ -87,5 +97,54 @@ describe('étape 19 : activité des agences, Mon compte, règle de la banque', (
     expect(rendu(false)).toContain('Sans double authentification');
     expect(rendu(true)).toContain('Double authentification : obligatoire');
     expect(rendu(true)).toContain('Double authentification à activer');
+  });
+});
+
+describe('étape 20 : WhatsApp et SMS', () => {
+  const texte = (n: React.ReactNode) => renderToString(<>{n}</>).replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, '\'').replace(/&quot;/g, '"').replace(/\s+/g, ' ');
+
+  it('par où part la réponse : WhatsApp (fenêtre), SMS (SMS facturés), suivi après 24 h', () => {
+    const wa = envoiDeLaReponse({ canal: 'WHATSAPP', reponseVers: { canal: 'WHATSAPP', finFenetreLe: '2026-09-26T09:46:00Z' } }, 'Salimata Touré', 'Bonjour');
+    expect(wa?.aide).toContain('jusqu\'au 26/09/2026 à 09:46');
+    const court = envoiDeLaReponse({ canal: 'SMS', reponseVers: { canal: 'SMS', finFenetreLe: null } }, 'Adama', 'Bonjour, c\'est réglé.');
+    expect(court?.aide).toContain('1 SMS facturé');
+    const long = envoiDeLaReponse({ canal: 'SMS', reponseVers: { canal: 'SMS', finFenetreLe: null } }, 'Adama', 'é'.repeat(700));
+    expect(long).toMatchObject({ ton: 'alerte' });
+    expect(long?.aide).toContain('5 SMS facturés — au-delà de 4');
+    expect(envoiDeLaReponse({ canal: 'WHATSAPP', reponseVers: { canal: 'WEB', finFenetreLe: null } }, 'X', '')?.aide).toContain('plus de 24 h');
+    expect(envoiDeLaReponse({ canal: 'WEB', reponseVers: { canal: 'WEB', finFenetreLe: null } }, 'X', '')).toBeNull();
+  });
+
+  it('boîte de réception : le canal de chaque conversation, et l\'aide sous la réponse', () => {
+    const t = texte(<Conversations page={CONVERSATIONS_SUPERVISEUR_TOUTES} filtre="toutes" selection={CONVERSATION_WHATSAPP} maintenant={MAINTENANT} />);
+    expect(t).toContain('WhatsApp');
+    expect(t).toContain('SMS');
+    expect(t).toContain('Elle part sur WhatsApp');
+    expect(t).toContain('sur WhatsApp ou par SMS');
+  });
+
+  it('points de dépôt : les numéros de la banque, lisibles, avec l\'adresse qui ouvre la conversation', () => {
+    const t = texte(<PointsDepot agences={AGENCES} points={POINTS_DEPOT} modifiable />);
+    expect(t).toContain('+225 27 22 00 00 00');
+    expect(t).toContain('+225 27 22 00 00 01');
+    expect(t).toContain('Copier le numéro');
+  });
+
+  it('console de la plateforme : raccordement dans la fiche ; canaux à cocher seulement une fois raccordés', () => {
+    const alpha = texte(<Banques page={PAGE_BANQUES} plans={PLANS} ouverteInitiale={PAGE_BANQUES.donnees[0]!.id} />);
+    expect(alpha).toContain('Numéros WhatsApp et SMS');
+    expect(alpha).toContain('Mettre à jour le raccordement');
+    expect(alpha).toContain('Vide : le jeton actuel est gardé');
+    const horizon = texte(<Banques page={PAGE_BANQUES} plans={PLANS} ouverteInitiale={PAGE_BANQUES.donnees[1]!.id} />);
+    expect(horizon).toContain('Exige le chat web');
+    expect(horizon).toContain('Raccorder le numéro WhatsApp');
+  });
+
+  it('portail : « Vous préférez WhatsApp ? » quand la banque l\'a ouvert, pas sinon', () => {
+    const saisie = { categorieId: CATEGORIES[0]!.id, description: '', nom: '', telephone: '', email: '', consentement: false, fichiers: [] };
+    const avec = texte(<Depot formulaire={formulaire(ALPHA)} saisie={saisie} />);
+    expect(avec).toContain('Vous préférez WhatsApp ?');
+    expect(avec).toContain('+225 27 22 00 00 00');
+    expect(texte(<Depot formulaire={formulaire(HORIZON)} saisie={saisie} />)).not.toContain('WhatsApp');
   });
 });

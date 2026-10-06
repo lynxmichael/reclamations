@@ -19,6 +19,7 @@ import { FAQ_EXEMPLE } from '../src/domaine/ia/exemples.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { hacherMotDePasse } from '../src/infrastructure/securite/mots-de-passe.js';
 import { chiffrer } from '../src/infrastructure/securite/totp.js';
+import { cleCanauxDe } from '../src/configuration/configuration.js';
 import { segmentsSms } from '../src/infrastructure/envois/adaptateurs.js';
 
 export const MOT_DE_PASSE_DEMO = 'Makor-Demo-2026';
@@ -59,6 +60,12 @@ export interface BanqueDemo {
   readonly agences: Record<string, string>;
 }
 
+/** WhatsApp et SMS entrant de la Banque Alpha (étape 20) */
+export const CANAUX_DEMO = {
+  whatsapp: { identifiant: '109876543210987', compte: '209876543210987', numero: '+2252722000000', jeton: 'jeton-de-demonstration-whatsapp-alpha', point: 'WHATSAPP2A' },
+  sms: { numero: '+2252722000001', point: 'SMSALPHA2B' },
+} as const;
+
 export interface JeuDemo {
   readonly superAdmin: { id: string; email: string };
   readonly alpha: BanqueDemo;
@@ -94,6 +101,11 @@ export interface OptionsSemis {
    * l'historique, un journal des appels (règles seules) pour l'écran de consommation. Non par défaut dans les tests
    */
   readonly assistant?: boolean;
+  /**
+   * Étape 20 : WhatsApp et SMS entrant raccordés et ouverts pour la Banque Alpha (avec le chat) ; avec les
+   * réclamations d'exemple, un dépôt par WhatsApp et un client qui écrit par SMS. Non par défaut dans les tests
+   */
+  readonly canaux?: boolean;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
   /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
@@ -186,6 +198,7 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
   if (o.attribution) await attributionAlpha(bd, alpha, maintenant);
   if (o.chat) await chatAlpha(bd, alpha, o, exemples);
   if (o.chat && o.assistant) await assistantAlpha(bd, alpha, o, maintenant);
+  if (o.chat && o.canaux) await canauxAlpha(bd, alpha, o, exemples);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
 }
 
@@ -228,7 +241,7 @@ async function reclamationsExemple(bd: BaseDonnees, alpha: BanqueDemo, o: Option
     client: { nom, telephone, email: null }, consentementVersion: '2026-09',
   });
   const a = await deposer('Carte bancaire', 'Hier soir, j\'ai voulu retirer 50 000 FCFA au distributeur de l\'agence. Il n\'a pas donné les billets, mais mon compte a été débité.', 'Yao Kouassi', '0708091011');
-  await deposer('Virement et transfert', 'Mon virement de salaire du 25 n\'apparaît pas sur mon compte.', 'Adjoua Koffi', '0102030405');
+  const b = await deposer('Virement et transfert', 'Mon virement de salaire du 25 n\'apparaît pas sur mon compte.', 'Adjoua Koffi', '0102030405');
   const c = await deposer('Fraude suspectée', 'Deux paiements en ligne que je n\'ai pas faits sont apparus ce matin.', 'Brice Tanoh', '0506070809');
   const d = await deposer('Banque mobile', 'Je n\'arrive plus à me connecter à l\'application depuis la mise à jour.', 'Nadia Sylla', '0748596071');
   await cycle.assigner(alpha.id, a.id, superviseur, alpha.comptes.aya.id);
@@ -237,7 +250,7 @@ async function reclamationsExemple(bd: BaseDonnees, alpha: BanqueDemo, o: Option
   await cycle.assigner(alpha.id, d.id, superviseur, alpha.comptes.aya.id);
   await cycle.prendreEnCharge(alpha.id, d.id, agent('aya'));
   await cycle.resoudre(alpha.id, d.id, agent('aya'), 'Nous avons réinitialisé votre accès : reconnectez-vous avec le code reçu par SMS.');
-  return { cycle, carte: a.id, fraude: c.id };
+  return { cycle, carte: a.id, fraude: c.id, virement: b.id };
 }
 
 /**
@@ -254,6 +267,40 @@ async function chatAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, ex
   };
   await ecrire(exemples.carte, ['Merci. C\'était au distributeur de l\'agence du Plateau, vers 21 h. J\'ai gardé le ticket.']);
   await ecrire(exemples.fraude, ['J\'ai bloqué ma carte depuis l\'application.', 'Faut-il que je passe en agence pour la plainte ?']);
+}
+
+/**
+ * WhatsApp et SMS entrant de la Banque Alpha (étape 20) : numéros raccordés par Makor (jeton de
+ * démonstration chiffré), canaux ouverts. Avec les réclamations d'exemple, Moussa Koné dépose par
+ * WhatsApp et y écrit encore, Adjoua Koffi relance son virement par SMS : la boîte de réception montre
+ * les deux canaux, et les réponses des agents y partent.
+ */
+async function canauxAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, exemples: Awaited<ReturnType<typeof reclamationsExemple>> | null) {
+  const { whatsapp, sms } = CANAUX_DEMO;
+  const points = await bd.enSysteme(async (tx) => {
+    const wa = await tx.pointDepot.create({ data: { tenantId: alpha.id, code: whatsapp.point, canal: 'WHATSAPP', libelle: 'WhatsApp' } });
+    const sm = await tx.pointDepot.create({ data: { tenantId: alpha.id, code: sms.point, canal: 'SMS', libelle: 'SMS' } });
+    await tx.canalBanque.create({
+      data: {
+        tenantId: alpha.id, canal: 'WHATSAPP', identifiant: whatsapp.identifiant, numero: whatsapp.numero, compteWhatsapp: whatsapp.compte,
+        jetonChiffre: chiffrer(cleCanauxDe(o.cleTotp), whatsapp.jeton), pointDepotId: wa.id,
+      },
+    });
+    await tx.canalBanque.create({ data: { tenantId: alpha.id, canal: 'SMS', identifiant: sms.numero, numero: sms.numero, pointDepotId: sm.id } });
+    await tx.banque.update({ where: { id: alpha.id }, data: { whatsapp: true, smsEntrant: true } });
+    return { whatsapp: wa.id };
+  });
+  if (!exemples) return;
+  const depot = await exemples.cycle.deposer({
+    tenantId: alpha.id, pointDepotId: points.whatsapp, categorieId: alpha.categories['Frais et prélèvements']!,
+    description: 'On m\'a prélevé 15 000 FCFA de frais de tenue de compte deux fois ce mois-ci.',
+    client: { nom: 'Moussa Koné', telephone: '+2250707070707' }, consentementVersion: '2026-09',
+  });
+  const client = (id: string) => bd.enBanque(alpha.id, (tx) => tx.reclamation.findUniqueOrThrow({ where: { id }, select: { clientId: true } }));
+  await exemples.cycle.messageDuClient(alpha.id, depot.id, { type: 'CLIENT', clientId: (await client(depot.id)).clientId },
+    'Je peux vous envoyer le relevé si besoin.', undefined, undefined, 'WHATSAPP');
+  await exemples.cycle.messageDuClient(alpha.id, exemples.virement, { type: 'CLIENT', clientId: (await client(exemples.virement)).clientId },
+    'Bonjour, toujours rien sur mon compte ce matin.', undefined, undefined, 'SMS');
 }
 
 /**

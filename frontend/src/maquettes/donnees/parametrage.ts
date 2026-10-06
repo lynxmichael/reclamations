@@ -36,6 +36,9 @@ export const POINTS_DEPOT: S<'PointDepot'>[] = [
   { id: id('point', 6), code: 'R8F3JX6NDT', canal: 'QR_CODE', libelle: "Hall d'accueil", agence: agence(5), actif: true, urlDepot: url('R8F3JX6NDT') },
   { id: id('point', 7), code: 'W5Q9HB2MLC', canal: 'LIEN_WEB', libelle: 'Site web, page Contact', agence: null, actif: true, urlDepot: url('W5Q9HB2MLC') },
   { id: id('point', 8), code: 'K4V8PZ3TRG', canal: 'LIEN_WEB', libelle: "Application mobile, rubrique Aide", agence: null, actif: true, urlDepot: url('K4V8PZ3TRG') },
+  // Étape 20 : les numéros de la banque, raccordés et ouverts par Makor
+  { id: id('point', 9), code: 'WHATSAPP2A', canal: 'WHATSAPP', libelle: 'WhatsApp', agence: null, actif: true, urlDepot: 'https://wa.me/2252722000000' },
+  { id: id('point', 10), code: 'SMSALPHA2B', canal: 'SMS', libelle: 'SMS', agence: null, actif: true, urlDepot: 'sms:+2252722000001' },
 ];
 
 const plagesJour = (j: number): S<'Plage'>[] => [
@@ -73,6 +76,8 @@ export const PARAMETRES: S<'ParametresBanque'> = {
   chatWeb: true,
   assistantIa: true,
   doubleAuthentificationObligatoire: false,
+  whatsapp: '+2252722000000',
+  smsEntrant: '+2252722000001',
   couleurPrimaire: ALPHA.couleurPrimaire,
   couleurSecondaire: ALPHA.couleurSecondaire,
   logoUrl: null,

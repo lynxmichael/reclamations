@@ -16,7 +16,7 @@ import { introuvable, invalideChamp, Probleme } from '../../infrastructure/contr
 import { svgSain, TYPES_LOGO, verifierFichiers } from '../../infrastructure/fichiers/fichiers.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
-import { urlDepot, urlLogo, type S } from '../commun.js';
+import { adresseDepot, urlLogo, type S } from '../commun.js';
 
 /** Unicité violée (P2002) → le Probleme donné. */
 export async function unique<T>(travail: () => Promise<T>, probleme: () => Probleme): Promise<T> {
@@ -58,7 +58,8 @@ export class ServiceParametrage {
   // ---- Paramètres et apparence ---------------------------------------------------
 
   private async parametres(tx: ClientTransaction, tenantId: string): Promise<S<'ParametresBanque'>> {
-    const b = await tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: true } });
+    const b = await tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: true, canaux: { select: { canal: true, numero: true } } } });
+    const numero = (canal: 'WHATSAPP' | 'SMS', ouvert: boolean) => (ouvert && b.chatWeb ? (b.canaux.find((c) => c.canal === canal)?.numero ?? null) : null);
     const debutMois = DateTime.fromJSDate(this.horloge(), { zone: b.fuseauHoraire }).startOf('month').toJSDate();
     const [agents, ticketsCeMois] = await enSerie([
       () => tx.utilisateur.count({ where: { role: { in: ['AGENT', 'SUPERVISEUR'] }, statut: { not: 'DESACTIVE' } } }),
@@ -77,6 +78,8 @@ export class ServiceParametrage {
       modeAttribution: b.modeAttribution,
       chatWeb: b.chatWeb,
       assistantIa: b.assistantIa && b.chatWeb,
+      whatsapp: numero('WHATSAPP', b.whatsapp),
+      smsEntrant: numero('SMS', b.smsEntrant),
       doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,
       couleurPrimaire: b.couleurPrimaire,
       couleurSecondaire: b.couleurSecondaire,
@@ -237,11 +240,13 @@ export class ServiceParametrage {
   // ---- Points de dépôt et QR codes ----------------------------------------------------
 
   private async pointsVue(tx: ClientTransaction, tenantId: string, where: { id?: string } = {}): Promise<S<'PointDepot'>[]> {
-    const banque = await tx.banque.findUniqueOrThrow({ where: { id: tenantId }, select: { slug: true } });
+    const banque = await tx.banque.findUniqueOrThrow({ where: { id: tenantId }, select: { slug: true, canaux: { select: { pointDepotId: true, numero: true } } } });
     const points = await tx.pointDepot.findMany({ where, orderBy: [{ creeLe: 'asc' }], include: { agence: { select: { id: true, nom: true } } } });
     return points.map((p) => ({
       id: p.id, code: p.code, canal: p.canal, libelle: p.libelle, agence: p.agence ? { id: p.agence.id, nom: p.agence.nom } : null,
-      actif: p.actif, urlDepot: urlDepot(this.config, banque.slug, p.code),
+      actif: p.actif,
+      // Étape 20 : le numéro WhatsApp ou SMS de la banque s'ouvre sur le téléphone du client
+      urlDepot: adresseDepot(this.config, banque.slug, p, banque.canaux.find((c) => c.pointDepotId === p.id)?.numero ?? null),
     }));
   }
 
@@ -271,6 +276,11 @@ export class ServiceParametrage {
       const avant = await tx.pointDepot.findUnique({ where: { id } });
       if (!avant) throw introuvable('Point de dépôt introuvable');
       const agenceId = m.agenceId !== undefined ? m.agenceId : avant.agenceId;
+      // Étape 20 : le numéro WhatsApp ou SMS de la banque n'appartient à aucune agence, et Makor l'ouvre ou le ferme
+      if (avant.canal === 'WHATSAPP' || avant.canal === 'SMS') {
+        if (agenceId) throw invalideChamp('agenceId', 'Le numéro WhatsApp ou SMS de la banque n\'appartient à aucune agence');
+        if (m.actif === false) throw invalideChamp('actif', 'Ce canal s\'ouvre et se ferme par Makor : adressez-vous à lui');
+      }
       if (avant.canal === 'QR_CODE' && !agenceId) throw new Probleme(422, 'QR_CODE_SANS_AGENCE', 'Un QR code reste rattaché à une agence');
       if (m.agenceId) await this.exigerAgence(tx, m.agenceId);
       await tx.pointDepot.update({

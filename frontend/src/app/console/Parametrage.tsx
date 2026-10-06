@@ -153,7 +153,7 @@ export function PageBanque() {
   const cache = useQueryClient();
   useTitre('Banque et apparence');
   const { ecrire, occupe, erreurs } = useEcriture([['parametres']]);
-  const banque: S<'BanquePublique'> = { nom: parametres.nom, slug: parametres.slug, logoUrl: parametres.logoUrl, couleurPrimaire: parametres.couleurPrimaire, couleurSecondaire: parametres.couleurSecondaire };
+  const banque: S<'BanquePublique'> = { nom: parametres.nom, slug: parametres.slug, logoUrl: parametres.logoUrl, couleurPrimaire: parametres.couleurPrimaire, couleurSecondaire: parametres.couleurSecondaire, whatsapp: parametres.whatsapp };
   return (
     <Banque
       key={`${parametres.couleurPrimaire}-${parametres.couleurSecondaire}-${parametres.emailContact}`}

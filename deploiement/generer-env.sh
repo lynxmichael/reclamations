@@ -44,6 +44,9 @@ remplir APP_DB_PASSWORD "$(openssl rand -hex 24)"
 remplir JWT_SECRET "$(openssl rand -hex 48)"
 remplir CLE_CHIFFREMENT_TOTP "$(openssl rand -hex 32)"
 remplir CLE_OTP "$(openssl rand -hex 48)"
+# Étape 20 : jeton de vérification du webhook WhatsApp (à saisir chez Meta) et secret de la passerelle SMS
+remplir WHATSAPP_JETON_VERIFICATION "$(openssl rand -hex 24)"
+remplir SMS_ENTRANT_SECRET "$(openssl rand -hex 32)"
 # Démonstration : mot de passe lisible des comptes fictifs, graine des secrets TOTP
 remplir DEMO_MOT_DE_PASSE "Demo-$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-12)"
 remplir DEMO_GRAINE_TOTP "$(openssl rand -hex 32)"
@@ -58,7 +61,7 @@ echo
 echo "À compléter avant le premier démarrage :"
 grep -E '^[A-Z0-9_]+=$' "$cible" | cut -d= -f1 | while read -r v; do
   case $v in
-    SMS_URL | SMS_CLE | SAUVEGARDE_PING_URL) printf '  %-24s (facultatif pour l\x27instant)\n' "$v" ;;
+    SMS_URL | SMS_CLE | SAUVEGARDE_PING_URL | WHATSAPP_SECRET_APP) printf '  %-24s (facultatif pour l\x27instant)\n' "$v" ;;
     *) printf '  %s\n' "$v" ;;
   esac
 done

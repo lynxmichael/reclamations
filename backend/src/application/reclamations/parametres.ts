@@ -21,6 +21,9 @@ export interface ParametresBanque {
     readonly chatWeb: boolean;
     /** Assistant IA (étape 18) : portail et brouillons pour les agents, ouverts par Makor (exige le chat) */
     readonly assistantIa: boolean;
+    /** WhatsApp Business et SMS entrant (étape 20), ouverts par Makor (exigent le chat) */
+    readonly whatsapp: boolean;
+    readonly smsEntrant: boolean;
     readonly suspendueLe: Date | null;
     readonly plafondTicketsMois: number | null;
   };
@@ -49,6 +52,8 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
         : null,
       chatWeb: banque.chatWeb,
       assistantIa: banque.assistantIa && banque.chatWeb,
+      whatsapp: banque.whatsapp && banque.chatWeb,
+      smsEntrant: banque.smsEntrant && banque.chatWeb,
       suspendueLe: banque.suspendueLe,
       plafondTicketsMois: banque.plan.plafondTicketsMois,
     },

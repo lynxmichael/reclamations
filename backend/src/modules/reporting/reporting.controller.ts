@@ -18,7 +18,7 @@ import { filtresReclamations } from '../reclamations/reclamations.controller.js'
 import { BOM, ligne, type Cellule } from './csv.js';
 import {
   CANAUX, MODES_CLOTURE, MOTIFS_CLOTURE, PRIORITES, STATUTS,
-  facturationSms, filtresDe, indicateursAgences, indicateursBanque, indicateursPlateforme, periodeDe, regroupementDe,
+  facturationCanaux, facturationSms, filtresDe, indicateursAgences, indicateursBanque, indicateursPlateforme, periodeDe, regroupementDe,
 } from './indicateurs.js';
 
 /** Lignes d'un export au plus (contrat : 400 EXPORT_TROP_VOLUMINEUX au-delà) */
@@ -191,6 +191,10 @@ export class ServiceReporting {
   facturationSms(q: Record<string, unknown>) {
     return this.bd.enPlateforme((tx) => facturationSms(tx, String(q.mois)));
   }
+
+  facturationCanaux(q: Record<string, unknown>) {
+    return this.bd.enPlateforme((tx) => facturationCanaux(tx, String(q.mois)));
+  }
 }
 
 @Controller()
@@ -220,6 +224,11 @@ export class ReportingControleur {
   @Operation('lireFacturationSms')
   facturationSms(@EntreesValidees() e: Entrees) {
     return this.service.facturationSms(e.requete);
+  }
+
+  @Operation('lireFacturationCanaux')
+  facturationCanaux(@EntreesValidees() e: Entrees) {
+    return this.service.facturationCanaux(e.requete);
   }
 }
 

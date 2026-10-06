@@ -62,6 +62,10 @@ const TITRES: Partial<Record<CodeErreur, string>> = {
   DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE: 'Double authentification déjà activée',
   DOUBLE_AUTHENTIFICATION_INACTIVE: 'Double authentification non activée',
   DOUBLE_AUTHENTIFICATION_NON_PREPAREE: 'Double authentification non préparée',
+  CHAT_WEB_REQUIS: 'Chat web requis',
+  SIGNATURE_INVALIDE: 'Signature invalide',
+  NUMERO_DEJA_UTILISE: 'Numéro déjà raccordé',
+  CANAL_NON_RACCORDE: 'Numéro à raccorder d\'abord',
   ERREUR_INTERNE: 'Erreur interne',
 };
 

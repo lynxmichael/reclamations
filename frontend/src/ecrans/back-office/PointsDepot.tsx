@@ -4,19 +4,25 @@
  * donc l'agence de la réclamation, sans que le client ait à la choisir.
  * Avec `actions` (étape 8) : création et modification (Admin Entreprise), téléchargement du QR
  * code en PNG ou SVG pour l'impression (superviseur et Admin Entreprise).
+ * Étape 20 : les numéros WhatsApp et SMS de la banque, raccordés et ouverts par Makor, s'affichent avec
+ * l'adresse qui ouvre la conversation sur le téléphone du client (et le QR code qui y mène).
  */
 import { useState } from 'react';
 import { Check, Copy, Download, Globe, MapPin, Pencil, Plus, Printer } from 'lucide-react';
+import { IconeCanal } from '../../ui/Canaux';
+import { telephone } from '../../ui/format';
 import type { S } from '../../api/types';
 import { Dialogue } from '../../ui/Dialogue';
 import { Bouton, Champ, Liste, QrCode, Saisie, cx } from '../../ui/composants';
 
 type Issue = void | boolean | Promise<boolean>;
+/** Les points que la banque crée ; WhatsApp et SMS viennent du raccordement par Makor (étape 20) */
+type CanalCree = S<'EcriturePointDepot'>['canal'];
 
 export interface ActionsPoints {
   creerAgence: (v: { code: string; nom: string; ville: string | null; adresse: string | null }) => Issue;
   modifierAgence: (id: string, v: { nom?: string; ville?: string | null; adresse?: string | null; active?: boolean }) => Issue;
-  creerPoint: (v: { canal: S<'CanalDepot'>; libelle: string; agenceId: string | null }) => Issue;
+  creerPoint: (v: { canal: CanalCree; libelle: string; agenceId: string | null }) => Issue;
   modifierPoint: (id: string, v: { libelle?: string; agenceId?: string | null; actif?: boolean }) => Issue;
   telechargerQr: (p: S<'PointDepot'>, format: 'png' | 'svg') => void;
   occupe?: boolean;
@@ -25,9 +31,9 @@ export interface ActionsPoints {
 
 type Fenetre =
   | { type: 'agence'; agence: S<'Agence'> | null }
-  | { type: 'point'; point: S<'PointDepot'> | null; canal: S<'CanalDepot'>; agenceId: string | null };
+  | { type: 'point'; point: S<'PointDepot'> | null; canal: CanalCree; agenceId: string | null };
 
-function BoutonCopier({ texte }: { texte: string }) {
+function BoutonCopier({ texte, numero }: { texte: string; numero?: boolean }) {
   const [copie, setCopie] = useState(false);
   return (
     <Bouton
@@ -40,7 +46,7 @@ function BoutonCopier({ texte }: { texte: string }) {
         })
       }
     >
-      {copie ? 'Lien copié' : 'Copier le lien'}
+      {numero ? (copie ? 'Numéro copié' : 'Copier le numéro') : copie ? 'Lien copié' : 'Copier le lien'}
     </Bouton>
   );
 }
@@ -116,7 +122,7 @@ function FenetreAgence({ agence, actions, surFermer }: { agence: S<'Agence'> | n
   );
 }
 
-function FenetrePoint({ point, canal, agenceId, agences, actions, surFermer }: { point: S<'PointDepot'> | null; canal: S<'CanalDepot'>; agenceId: string | null; agences: S<'Agence'>[]; actions: ActionsPoints; surFermer: () => void }) {
+function FenetrePoint({ point, canal, agenceId, agences, actions, surFermer }: { point: S<'PointDepot'> | null; canal: CanalCree; agenceId: string | null; agences: S<'Agence'>[]; actions: ActionsPoints; surFermer: () => void }) {
   const [libelle, setLibelle] = useState(point?.libelle ?? '');
   const [agence, setAgence] = useState(point?.agence?.id ?? agenceId ?? '');
   const [actif, setActif] = useState(point?.actif ?? true);
@@ -172,6 +178,7 @@ function FenetrePoint({ point, canal, agenceId, agences, actions, surFermer }: {
 export function PointsDepot({ agences, points, modifiable, actions }: { agences: S<'Agence'>[]; points: S<'PointDepot'>[]; modifiable: boolean; actions?: ActionsPoints }) {
   const [fenetre, setFenetre] = useState<Fenetre | null>(null);
   const liens = points.filter((p) => p.canal === 'LIEN_WEB');
+  const messageries = points.filter((p) => p.canal === 'WHATSAPP' || p.canal === 'SMS');
   const edition = modifiable && !!actions;
   return (
     <div className="flex flex-col gap-6">
@@ -218,7 +225,7 @@ export function PointsDepot({ agences, points, modifiable, actions }: { agences:
               <div className="flex flex-1 flex-wrap items-start gap-3">
                 {ici.length > 0 ? (
                   <ul className="flex flex-wrap gap-3">
-                    {ici.map((p) => <CarteQr key={p.id} p={p} modifiable={modifiable} actions={actions} surModifier={() => setFenetre({ type: 'point', point: p, canal: p.canal, agenceId: a.id })} />)}
+                    {ici.map((p) => <CarteQr key={p.id} p={p} modifiable={modifiable} actions={actions} surModifier={() => setFenetre({ type: 'point', point: p, canal: 'QR_CODE', agenceId: a.id })} />)}
                   </ul>
                 ) : (
                   <p className="self-center text-[15px] text-encre-3">
@@ -260,12 +267,54 @@ export function PointsDepot({ agences, points, modifiable, actions }: { agences:
               </div>
               <BoutonCopier texte={p.urlDepot} />
               {edition && (
-                <Bouton taille="petit" variante="discret" aria-label={`Modifier ${p.libelle}`} icone={<Pencil aria-hidden size={15} />} onClick={() => setFenetre({ type: 'point', point: p, canal: p.canal, agenceId: p.agence?.id ?? null })} />
+                <Bouton taille="petit" variante="discret" aria-label={`Modifier ${p.libelle}`} icone={<Pencil aria-hidden size={15} />} onClick={() => setFenetre({ type: 'point', point: p, canal: 'LIEN_WEB', agenceId: p.agence?.id ?? null })} />
               )}
             </li>
           ))}
         </ul>
       </section>
+
+      {messageries.length > 0 && (
+        <section className="flex flex-col gap-3" aria-labelledby="titre-messageries">
+          <div>
+            <h2 id="titre-messageries" className="text-[19px] font-bold">WhatsApp et SMS</h2>
+            <p className="mt-0.5 max-w-[80ch] text-[15px] text-encre-3">
+              Les numéros de la banque, ouverts par Makor : le client y écrit, un conseiller lui répond dans la boîte de réception. À afficher en agence et sur le site.
+            </p>
+          </div>
+          <ul className="flex flex-wrap gap-3">
+            {messageries.map((p) => {
+              const numero = p.canal === 'SMS' ? p.urlDepot.replace(/^sms:/, '') : `+${p.urlDepot.replace(/^https:\/\/wa\.me\//, '')}`;
+              return (
+                <li key={p.id} className="flex w-[360px] gap-3.5 rounded-xl border border-trait bg-surface p-3">
+                  {p.canal === 'WHATSAPP' ? (
+                    <div className="shrink-0 rounded-md border border-trait" title={p.urlDepot}>
+                      <QrCode texte={p.urlDepot} taille={84} />
+                    </div>
+                  ) : (
+                    <div aria-hidden className="flex h-[86px] w-[86px] shrink-0 items-center justify-center rounded-md bg-ouverte-doux text-ouverte">
+                      <IconeCanal canal="SMS" taille={34} />
+                    </div>
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <p className="flex items-center gap-1.5 font-semibold">
+                      <IconeCanal canal={p.canal as 'WHATSAPP' | 'SMS'} />
+                      {p.canal === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}
+                    </p>
+                    <p className="chiffres mt-0.5 text-[15px] text-encre">{telephone(numero)}</p>
+                    <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-2">
+                      <BoutonCopier texte={p.canal === 'WHATSAPP' ? p.urlDepot : numero} numero={p.canal === 'SMS'} />
+                      {p.canal === 'WHATSAPP' && (
+                        <Bouton taille="petit" icone={<Download aria-hidden size={14} />} onClick={() => actions?.telechargerQr(p, 'png')} aria-label={`QR code PNG de ${p.libelle}`}>PNG</Bouton>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {actions && fenetre?.type === 'agence' && <FenetreAgence agence={fenetre.agence} actions={actions} surFermer={() => setFenetre(null)} />}
       {actions && fenetre?.type === 'point' && (

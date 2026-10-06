@@ -7,6 +7,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { CONFIGURATION, type Configuration } from '../../configuration/configuration.js';
+import { normaliserTelephone } from '../../domaine/contact.js';
+import { chiffrer } from '../../infrastructure/securite/totp.js';
 import { journaliser } from '../../infrastructure/audit/journal.js';
 import { BaseDonnees, type ClientTransaction } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
@@ -17,7 +19,7 @@ import { verifierChaine, pageAudit } from '../audit/audit.controller.js';
 import { envoyerInvitation, nouveauJeton } from '../auth/liens.js';
 import { pageDe, pagination, type S } from '../commun.js';
 import { marquerLue, pageNotifications } from '../notifications/notifications.controller.js';
-import { unique } from '../parametrage/parametrage.service.js';
+import { nouveauCodePoint, unique } from '../parametrage/parametrage.service.js';
 import { SELECTION_UTILISATEUR, telephoneValide, vueUtilisateur } from '../personnel/personnel.service.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,9 +29,20 @@ const HORAIRES_PAR_DEFAUT = [1, 2, 3, 4, 5].map((jourSemaine) => ({ jourSemaine,
 const SELECTION_BANQUE = {
   id: true, nom: true, slug: true, prefixeTickets: true, fuseauHoraire: true, seuilAlerteSlaPourcent: true, delaiClotureAutoJours: true,
   smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, doubleAuthentificationObligatoire: true,
+  whatsapp: true, smsEntrant: true,
   suspendueLe: true, motifSuspension: true, creeLe: true,
   plan: { select: { id: true, nom: true } },
+  // Étape 20 : numéros raccordés, jamais le jeton (colonne non accordée à la plateforme)
+  canaux: { select: { canal: true, identifiant: true, numero: true, compteWhatsapp: true } },
 } as const satisfies Prisma.BanqueSelect;
+
+/** Corps de raccorderCanal (contrat RaccordementCanal) */
+export interface Raccordement {
+  readonly numero: string;
+  readonly identifiant?: string;
+  readonly compte?: string;
+  readonly jeton?: string;
+}
 
 type BanqueLue = Prisma.BanqueGetPayload<{ select: typeof SELECTION_BANQUE }>;
 
@@ -63,6 +76,9 @@ export class ServicePlateforme {
       chatWeb: b.chatWeb,
       assistantIa: b.assistantIa,
       doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,
+      whatsapp: b.whatsapp,
+      smsEntrant: b.smsEntrant,
+      raccordements: raccordements(b.canaux),
       suspendueLe: b.suspendueLe?.toISOString() ?? null,
       motifSuspension: b.motifSuspension, creeLe: b.creeLe.toISOString(), consommation: { agents, ticketsCeMois },
     };
@@ -124,6 +140,7 @@ export class ServicePlateforme {
   modifierBanque(appel: Appel, id: string, m: {
     nom?: string; planId?: string; fuseauHoraire?: string; seuilAlerteSlaPourcent?: number; delaiClotureAutoJours?: number;
     smsChaqueChangementStatut?: boolean; enqueteSatisfaction?: boolean; attributionAutomatique?: boolean; chatWeb?: boolean; assistantIa?: boolean;
+    whatsapp?: boolean; smsEntrant?: boolean;
   }) {
     if (m.fuseauHoraire && !fuseauValide(m.fuseauHoraire)) throw invalideChamp('fuseauHoraire', 'Fuseau horaire inconnu (ex. Africa/Abidjan)');
     return this.bd.enPlateforme(async (tx) => {
@@ -134,17 +151,74 @@ export class ServicePlateforme {
       if (m.assistantIa && !(m.chatWeb ?? avant.chatWeb)) {
         throw new Probleme(422, 'CHAT_WEB_REQUIS', 'L\'assistant IA passe la main à un conseiller dans le chat : ouvrez d\'abord le chat web');
       }
+      // WhatsApp et SMS entrant (étape 20) : les messages entrent dans la conversation du chat, au numéro raccordé
+      for (const [champ, canal, nom] of [['whatsapp', 'WHATSAPP', 'WhatsApp'], ['smsEntrant', 'SMS', 'Le SMS entrant']] as const) {
+        if (!m[champ] || avant[champ]) continue;
+        if (!(m.chatWeb ?? avant.chatWeb)) {
+          throw new Probleme(422, 'CHAT_WEB_REQUIS', `${nom} entre dans la boîte de réception du chat : ouvrez d'abord le chat web`);
+        }
+        if (!avant.canaux.some((c) => c.canal === canal)) {
+          throw new Probleme(422, 'CANAL_NON_RACCORDE', `Raccordez d'abord le numéro ${canal === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} de la banque`);
+        }
+      }
       // Fermer l'attribution automatique (étape 16) remet la banque en attribution manuelle ; ses groupes restent
       await tx.banque.update({
         where: { id },
         data: {
           ...m, ...(m.nom ? { nom: m.nom.trim() } : {}), ...(m.attributionAutomatique === false ? { modeAttribution: 'MANUELLE' } : {}),
-          ...(m.chatWeb === false ? { assistantIa: false } : {}),
+          ...(m.chatWeb === false ? { assistantIa: false, whatsapp: false, smsEntrant: false } : {}),
         },
       });
       await this.audit(tx, appel, 'plateforme.banque_modifiee', 'banque', id, {
         champs: Object.keys(m), ...(m.planId && m.planId !== avant.plan.id ? { planAvant: avant.plan.id, planApres: m.planId } : {}),
       });
+      return this.banque(tx, id);
+    });
+  }
+
+  /**
+   * Étape 20 : raccorde le numéro WhatsApp (inscription intégrée de Meta : phone_number_id, compte, jeton)
+   * ou SMS d'une banque. Contexte système : le jeton, chiffré, n'est lisible que par lui, et le premier
+   * raccordement crée le point de dépôt du canal. Le canal s'ouvre ensuite par modifierBanque.
+   */
+  raccorderCanal(appel: Appel, id: string, canal: 'WHATSAPP' | 'SMS', r: Raccordement) {
+    let numero: string | null;
+    try {
+      numero = normaliserTelephone(r.numero);
+    } catch {
+      numero = null;
+    }
+    if (!numero) throw invalideChamp('numero', 'Numéro invalide, par exemple +225 27 22 00 00 00');
+    const whatsapp = canal === 'WHATSAPP';
+    if (whatsapp && !r.identifiant) throw invalideChamp('identifiant', 'Identifiant du numéro chez Meta (phone_number_id) obligatoire');
+    if (whatsapp && !r.compte) throw invalideChamp('compte', 'Compte WhatsApp Business (WABA) obligatoire');
+    const identifiant = whatsapp ? r.identifiant! : numero;
+    return this.bd.enSysteme(async (tx) => {
+      const banque = await tx.banque.findUnique({ where: { id }, select: { id: true } });
+      if (!banque) throw introuvable('Banque introuvable');
+      const autre = await tx.canalBanque.findFirst({
+        where: { canal, tenantId: { not: id }, OR: [{ identifiant }, { numero }] }, select: { id: true },
+      });
+      if (autre) throw new Probleme(409, 'NUMERO_DEJA_UTILISE', 'Ce numéro est déjà raccordé à une autre banque');
+      const avant = await tx.canalBanque.findUnique({ where: { tenantId_canal: { tenantId: id, canal } }, select: { id: true } });
+      if (whatsapp && !avant && !r.jeton) throw invalideChamp('jeton', 'Jeton d\'accès de la banque obligatoire au premier raccordement');
+      if (!this.config.cleCanaux.length && r.jeton) throw new Error('Clé de chiffrement des jetons absente (CLE_CHIFFREMENT_TOTP)');
+      const champs = {
+        identifiant,
+        numero,
+        compteWhatsapp: whatsapp ? r.compte! : null,
+        ...(whatsapp && r.jeton ? { jetonChiffre: chiffrer(this.config.cleCanaux, r.jeton) } : {}),
+      };
+      if (avant) {
+        await tx.canalBanque.update({ where: { id: avant.id }, data: champs });
+      } else {
+        const point = await tx.pointDepot.create({
+          data: { tenantId: id, code: nouveauCodePoint(), canal, libelle: whatsapp ? 'WhatsApp' : 'SMS', agenceId: null },
+        });
+        await tx.canalBanque.create({ data: { tenantId: id, canal, pointDepotId: point.id, ...champs, jetonChiffre: champs.jetonChiffre ?? null } });
+      }
+      // Ni le jeton ni les identifiants chez Meta au journal
+      await this.audit(tx, appel, 'plateforme.canal_raccorde', 'banque', id, { canal, premier: !avant, jetonRemplace: !!(avant && r.jeton) });
       return this.banque(tx, id);
     });
   }
@@ -244,4 +318,14 @@ export class ServicePlateforme {
       return vueUtilisateur(await tx.utilisateur.findUniqueOrThrow({ where: { id: u.id }, select: SELECTION_UTILISATEUR }));
     });
   }
+}
+
+/** Numéros raccordés d'une banque (étape 20), sans le jeton */
+function raccordements(canaux: { canal: string; identifiant: string; numero: string; compteWhatsapp: string | null }[]): S<'Raccordements'> {
+  const wa = canaux.find((c) => c.canal === 'WHATSAPP');
+  const sms = canaux.find((c) => c.canal === 'SMS');
+  return {
+    whatsapp: wa ? { numero: wa.numero, identifiant: wa.identifiant, compte: wa.compteWhatsapp ?? '' } : null,
+    sms: sms ? { numero: sms.numero } : null,
+  };
 }

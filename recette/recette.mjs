@@ -243,6 +243,14 @@ const CRITERES_PHASE_2 = [
     [nav('12-agences-securite'), /./],
     ['verifications'],
   ]],
+  ['Étape 20 — WhatsApp Business et SMS entrant : ouverts banque par banque par le Super Admin, avec le chat web, une fois le numéro de la banque raccordé (WhatsApp : son propre compte, jeton chiffré) ; le client qui écrit est reconnu à son numéro, son message entre dans la conversation de sa réclamation (au choix s\'il en a plusieurs) ou prépare avec lui une réclamation qu\'il envoie en répondant OUI après le lien de la politique de données ; l\'agent répond depuis la boîte de réception et la réponse part là où le client a écrit (WhatsApp dans les 24 h, SMS du numéro de la banque), sinon dans son suivi avec un avis ; OUI clôture une réclamation résolue, tout autre message la conteste ; webhooks signés, chaque message traité une seule fois, réponses automatiques plafonnées ; l\'Admin Entreprise publie ses numéros, le Super Admin voit les messages du mois et ceux facturés par Meta, jamais leur contenu.', [
+    [e2e('canaux'), /./],
+    [nav('13-whatsapp-sms'), /./],
+    ['backend/src/domaine/canaux', /./],
+    ['backend/src/domaine/sms', /./],
+    ['backend/src/infrastructure/canaux', /./],
+    ['verifications'],
+  ]],
 ];
 
 // ---- Exécution ------------------------------------------------------------------------------------------------

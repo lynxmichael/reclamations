@@ -144,15 +144,15 @@ export const DESCRIPTION_42 =
 /** Chat web (étape 17) : ce que le client et Aya se sont écrit cet après-midi, dans le chat du portail. */
 export const CHAT_42: S<'Message'>[] = [
   {
-    id: id('message', 5), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('25/09 14:58'), piecesJointes: [],
+    id: id('message', 5), type: 'MESSAGE_DU_CLIENT', canal: 'WEB', auteur: client, creeLe: t('25/09 14:58'), piecesJointes: [],
     contenu: 'Bonjour, avez-vous pu vérifier le distributeur ? Je dois payer mes fournisseurs lundi.',
   },
   {
-    id: id('message', 6), type: 'REPONSE_AU_CLIENT', auteur: aya, creeLe: t('25/09 15:04'), piecesJointes: [],
+    id: id('message', 6), type: 'REPONSE_AU_CLIENT', canal: 'WEB', auteur: aya, creeLe: t('25/09 15:04'), piecesJointes: [],
     contenu: 'Bonjour M. Kouassi, oui : la monétique confirme l\'anomalie. Nous lançons le remboursement des 50 000 FCFA aujourd\'hui.',
   },
   {
-    id: id('message', 7), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('25/09 15:07'), piecesJointes: [],
+    id: id('message', 7), type: 'MESSAGE_DU_CLIENT', canal: 'WEB', auteur: client, creeLe: t('25/09 15:07'), piecesJointes: [],
     contenu: 'Merci beaucoup ! Je le verrai quand sur mon compte ?',
   },
 ];
@@ -171,7 +171,7 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
   avis: null,
   attributionSuggeree: null,
   // Chat web (étape 17) : le client écrit depuis son espace ; il a le chat à l'écran
-  conversation: { id: id('conversation', 42), canal: 'WEB', aRepondre: true, nonLue: true, clientEnLigne: true, luParLeClientLe: t('25/09 15:09') },
+  conversation: { id: id('conversation', 42), canal: 'WEB', aRepondre: true, nonLue: true, clientEnLigne: true, luParLeClientLe: t('25/09 15:09'), reponseVers: { canal: 'WEB', finFenetreLe: null } },
   depotAssistant: false,
   escaladeeVers: null,
   client: { id: id('client', 1), nom: 'Yao Kouassi', email: 'yao.kouassi@exemple.ci', telephone: '+2250708091011' },
@@ -199,20 +199,20 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
   nbReouvertures: 0,
   messages: [
     {
-      id: id('message', 1), type: 'REPONSE_AU_CLIENT', auteur: aya, creeLe: t('24/09 10:20'), piecesJointes: [],
+      id: id('message', 1), type: 'REPONSE_AU_CLIENT', canal: 'WEB', auteur: aya, creeLe: t('24/09 10:20'), piecesJointes: [],
       contenu:
         'Bonjour M. Kouassi, merci pour votre signalement. Pour retrouver l\'opération, pouvez-vous nous envoyer une photo du ticket du distributeur et nous confirmer l\'heure du retrait ?',
     },
     {
-      id: id('message', 2), type: 'MESSAGE_DU_CLIENT', auteur: client, creeLe: t('24/09 18:02'), piecesJointes: [PHOTO_TICKET],
+      id: id('message', 2), type: 'MESSAGE_DU_CLIENT', canal: 'WEB', auteur: client, creeLe: t('24/09 18:02'), piecesJointes: [PHOTO_TICKET],
       contenu: 'Bonsoir, voici le ticket. Le retrait a eu lieu mercredi 23 vers 19 h 10.',
     },
     {
-      id: id('message', 3), type: 'NOTE_INTERNE', auteur: aya, creeLe: t('25/09 08:30'), piecesJointes: [],
+      id: id('message', 3), type: 'NOTE_INTERNE', canal: null, auteur: aya, creeLe: t('25/09 08:30'), piecesJointes: [],
       contenu: 'Journal du distributeur GAB-0412 demandé à la monétique. Opération du 23/09 à 19:11, 50 000 FCFA, anomalie de distribution d\'après le ticket.',
     },
     {
-      id: id('message', 4), type: 'NOTE_INTERNE', auteur: serge, creeLe: t('25/09 11:40'), piecesJointes: [],
+      id: id('message', 4), type: 'NOTE_INTERNE', canal: null, auteur: serge, creeLe: t('25/09 11:40'), piecesJointes: [],
       contenu: 'La monétique confirme l\'anomalie. Tu peux lancer la régularisation et résoudre.',
     },
     ...CHAT_42,
@@ -284,15 +284,18 @@ const enConversation = (r: Resume): ResumeConversation['reclamation'] =>
   ({ id: r.id, numero: r.numero, statut: r.statut, priorite: r.priorite, categorie: r.categorie.nom });
 const deLaFile = (n: number) => FILE.find((r) => r.numero.endsWith(String(n)))!;
 
-/** Boîte de réception au 25/09 15:10 : trois clients attendent une réponse, un autre a eu la sienne. */
+/**
+ * Boîte de réception au 25/09 15:10 : trois clients attendent une réponse, un autre a eu la sienne.
+ * Étape 20 : Salimata Touré écrit sur WhatsApp, Adama Sanogo par SMS.
+ */
 const CONVERSATIONS: ResumeConversation[] = [
   {
-    id: id('conversation', 38), canal: 'WEB', reclamation: enConversation(deLaFile(2438)), client: { nom: 'Salimata Touré' }, agent: ref(AYA),
+    id: id('conversation', 38), canal: 'WHATSAPP', reclamation: enConversation(deLaFile(2438)), client: { nom: 'Salimata Touré' }, agent: ref(AYA),
     dernierMessage: { extrait: 'Toujours rien sur mon compte. C\'est la troisième fois que je relance, que se passe-t-il ?', auteur: 'CLIENT', date: t('25/09 09:46') },
     aRepondre: true, nonLue: false, clientEnLigne: false,
   },
   {
-    id: id('conversation', 52), canal: 'WEB', reclamation: enConversation(deLaFile(2452)), client: { nom: 'Adama Sanogo' }, agent: null,
+    id: id('conversation', 52), canal: 'SMS', reclamation: enConversation(deLaFile(2452)), client: { nom: 'Adama Sanogo' }, agent: null,
     dernierMessage: { extrait: 'J\'ai fait opposition sur ma carte depuis l\'application. Que dois-je faire d\'autre ?', auteur: 'CLIENT', date: t('25/09 14:41') },
     aRepondre: true, nonLue: true, clientEnLigne: false,
   },
@@ -330,6 +333,7 @@ export const CONVERSATION_42: Record<'AGENT' | 'SUPERVISEUR' | 'ADMIN_ENTREPRISE
     deposeeLe: t('24/09 09:12'),
     messages: ficheBase.messages.filter((m) => m.type !== 'NOTE_INTERNE'),
     luParLeClientLe: t('25/09 15:09'),
+    reponseVers: { canal: 'WEB' as const, finFenetreLe: null },
   };
   const { dernierMessage: _dernier, ...detail } = base;
   return {
@@ -425,7 +429,7 @@ export const INDICATEURS: S<'Indicateurs'> = {
     { cle: id('agence', 3), libelle: 'Yopougon Siporex', total: 49 },
     { cle: id('agence', 4), libelle: 'Treichville', total: 21 },
     { cle: id('agence', 5), libelle: 'Bouaké Commerce', total: 18 },
-    { cle: 'aucune', libelle: 'Sans agence (lien web)', total: 79 },
+    { cle: 'aucune', libelle: 'Sans agence (lien web, WhatsApp ou SMS)', total: 79 },
   ],
   delaiPremiereReponseMoyenMinutes: 104,
   delaiResolutionMoyenMinutes: 1386,
@@ -467,3 +471,33 @@ export const VERIFICATION_CHAINE: S<'VerificationChaine'> = {
   lignes: 4812,
   premiereRupture: null,
 };
+
+/**
+ * Étape 20 : la conversation de Salimata Touré, sur WhatsApp, vue par Aya. Elle a écrit à 09:46 : la
+ * fenêtre de 24 h de Meta reste ouverte jusqu'au lendemain 09:46, la réponse part sur WhatsApp.
+ */
+export const CONVERSATION_WHATSAPP: S<'ConversationDetail'> = (() => {
+  const { dernierMessage: _dernier, ...resume } = CONVERSATIONS[0]!;
+  return {
+    ...resume,
+    description: 'Mon virement de salaire du 19 n\'est toujours pas arrivé sur mon compte. Mon employeur dit qu\'il est bien parti.',
+    deposeeLe: t('22/09 08:41'),
+    messages: [
+      {
+        id: id('message', 380), type: 'REPONSE_AU_CLIENT', canal: 'WHATSAPP', auteur: aya, creeLe: t('23/09 10:12'), piecesJointes: [],
+        contenu: 'Bonjour Mme Touré, nous avons demandé la trace du virement à la banque émettrice. Je reviens vers vous dès que j\'ai leur réponse.',
+      },
+      {
+        id: id('message', 381), type: 'MESSAGE_DU_CLIENT', canal: 'WHATSAPP', auteur: client, creeLe: t('24/09 17:20'), piecesJointes: [{ ...PHOTO_TICKET, id: id('piece', 380), nomFichier: 'whatsapp-1.jpg', creeLe: t('24/09 17:20') }],
+        contenu: 'Voici l\'attestation de mon employeur.',
+      },
+      {
+        id: id('message', 382), type: 'MESSAGE_DU_CLIENT', canal: 'WHATSAPP', auteur: client, creeLe: t('25/09 09:46'), piecesJointes: [],
+        contenu: 'Toujours rien sur mon compte. C\'est la troisième fois que je relance, que se passe-t-il ?',
+      },
+    ],
+    luParLeClientLe: t('23/09 10:15'),
+    reponseVers: { canal: 'WHATSAPP', finFenetreLe: t('26/09 09:46') },
+    operationsPossibles: FICHE_42.AGENT.operationsPossibles,
+  };
+})();

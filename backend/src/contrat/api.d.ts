@@ -1742,6 +1742,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plateforme/banques/{id}/canaux/{canal}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Raccorder le numéro WhatsApp ou SMS d'une banque (étape 20)
+         * @description WhatsApp : le numéro de la banque, son identifiant chez Meta (`identifiant`, phone_number_id), son
+         *     compte WhatsApp Business (`compte`, WABA) et le jeton d'accès obtenu à l'inscription intégrée de
+         *     Meta. Le jeton est chiffré et ne se relit plus ; à une modification, l'omettre garde l'actuel.
+         *     SMS : le numéro de réception de la banque chez la passerelle de Makor. Le premier raccordement
+         *     crée le point de dépôt du canal. Un numéro ou un identifiant déjà raccordé à une autre banque :
+         *     409 `NUMERO_DEJA_UTILISE`. Le canal s'ouvre ensuite à la banque par `modifierBanque`
+         *     (`whatsapp`, `smsEntrant`).
+         */
+        put: operations["raccorderCanal"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plateforme/facturation-canaux": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Messages WhatsApp et SMS reçus par banque sur un mois (refacturation, étape 20)
+         * @description Mois civil en temps universel. `whatsappEnvoyes` : messages remis à Meta pendant le mois ;
+         *     `whatsappFactures` : ceux que Meta a déclarés facturables, au-delà de ses gratuités (tarif du pays
+         *     du client) ; `whatsappEchecs` : messages abandonnés ; `whatsappRecus`, `smsRecus` : messages des
+         *     clients. Des totaux seulement, jamais un numéro ni un texte. Les SMS envoyés restent dans
+         *     `lireFacturationSms`. Figurent les banques existant à la fin du mois.
+         */
+        get: operations["lireFacturationCanaux"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/whatsapp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Vérification de l'adresse du webhook par Meta
+         * @description Appelée par Meta une fois, quand Makor abonne son application : renvoie `hub.challenge` si
+         *     `hub.verify_token` est le jeton de la configuration (WHATSAPP_JETON_VERIFICATION) ; sinon 403.
+         */
+        get: operations["verifierWebhookWhatsapp"];
+        put?: never;
+        /**
+         * Messages des clients et statuts des envois, transmis par Meta
+         * @description Corps signé par Meta : `X-Hub-Signature-256` est le HMAC-SHA256 du corps avec le secret de
+         *     l'application de Makor (WHATSAPP_SECRET_APP) ; absent ou faux, 401 `SIGNATURE_INVALIDE`, rien
+         *     n'est lu. Chaque message n'est traité qu'une fois (Meta réessaie jusqu'à 7 jours). Un numéro
+         *     raccordé à aucune banque, ou une banque qui n'a pas le canal ouvert : ignoré, 200. Une erreur
+         *     interne répond 500 : Meta réessaie, sans doublon.
+         */
+        post: operations["recevoirWebhookWhatsapp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/sms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * SMS d'un client, transmis par la passerelle de Makor
+         * @description Interface proposée à la passerelle de Makor (à confirmer avec son équipe) : un appel par SMS reçu,
+         *     `X-Signature` étant le HMAC-SHA256 du corps avec le secret partagé (SMS_ENTRANT_SECRET) ; absent ou
+         *     faux, 401 `SIGNATURE_INVALIDE`. `vers` est le numéro de la banque, `de` celui du client. Un même
+         *     `id` n'est traité qu'une fois. Un numéro raccordé à aucune banque : ignoré, 200.
+         */
+        post: operations["recevoirSmsEntrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/plateforme/consommation-ia": {
         parameters: {
             query?: never;
@@ -1860,8 +1962,11 @@ export interface components {
         StatutReclamation: "OUVERTE" | "EN_COURS" | "EN_ATTENTE_CLIENT" | "RESOLUE" | "CLOTUREE";
         /** @enum {string} */
         Priorite: "NORMALE" | "URGENTE";
-        /** @enum {string} */
-        CanalDepot: "QR_CODE" | "LIEN_WEB";
+        /**
+         * @description QR code en agence, lien web, ou numéro WhatsApp et SMS de la banque (étape 20)
+         * @enum {string}
+         */
+        CanalDepot: "QR_CODE" | "LIEN_WEB" | "WHATSAPP" | "SMS";
         /** @enum {string} */
         RoleUtilisateur: "SUPER_ADMIN" | "ADMIN_ENTREPRISE" | "SUPERVISEUR" | "AGENT";
         /**
@@ -1904,7 +2009,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "CHAT_WEB_REQUIS" | "RECLAMATION_CLOTUREE" | "DOUBLE_AUTHENTIFICATION_OBLIGATOIRE" | "DOUBLE_AUTHENTIFICATION_A_ACTIVER" | "DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE" | "DOUBLE_AUTHENTIFICATION_INACTIVE" | "DOUBLE_AUTHENTIFICATION_NON_PREPAREE" | "ERREUR_INTERNE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "CHAT_WEB_REQUIS" | "RECLAMATION_CLOTUREE" | "DOUBLE_AUTHENTIFICATION_OBLIGATOIRE" | "DOUBLE_AUTHENTIFICATION_A_ACTIVER" | "DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE" | "DOUBLE_AUTHENTIFICATION_INACTIVE" | "DOUBLE_AUTHENTIFICATION_NON_PREPAREE" | "SIGNATURE_INVALIDE" | "NUMERO_DEJA_UTILISE" | "CANAL_NON_RACCORDE" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -1992,6 +2097,8 @@ export interface components {
         /** @description 5 fichiers au plus, 5 Mo chacun, JPEG, PNG, WebP ou PDF */
         Fichiers: string[];
         BanquePublique: {
+            /** @description Numéro WhatsApp de la banque, quand le canal est ouvert (étape 20) : le portail propose d'y écrire */
+            whatsapp: string | null;
             /** @example Banque Alpha */
             nom: string;
             /** @example alpha */
@@ -2200,6 +2307,8 @@ export interface components {
         };
         /** @description Réponse de la banque ou message du client (jamais une note interne) */
         MessageVisible: {
+            /** @description Étape 20 : WhatsApp ou SMS si le message est passé par là */
+            canal: components["schemas"]["CanalConversation"] | null;
             /** Format: uuid */
             id: string;
             /** @enum {string} */
@@ -2250,7 +2359,7 @@ export interface components {
             motif: string;
         };
         /**
-         * @description Canal d'une conversation : WEB (chat du portail) ; WHATSAPP et SMS entrant à l'étape 19
+         * @description Canal d'une conversation ou d'un message : WEB (suivi et chat du portail), WHATSAPP, SMS (étape 20)
          * @enum {string}
          */
         CanalConversation: "WEB" | "WHATSAPP" | "SMS";
@@ -2437,6 +2546,8 @@ export interface components {
             nom: string | null;
         };
         Message: {
+            /** @description Étape 20 : où le client a écrit, ou par où la réponse lui est partie ; vide pour une note interne ou un message antérieur */
+            canal: components["schemas"]["CanalConversation"] | null;
             /** Format: uuid */
             id: string;
             type: components["schemas"]["TypeCommentaire"];
@@ -2556,6 +2667,7 @@ export interface components {
             };
         };
         ConversationDetail: {
+            reponseVers: components["schemas"]["ReponseVers"];
             /** Format: uuid */
             id: string;
             canal: components["schemas"]["CanalConversation"];
@@ -2577,8 +2689,19 @@ export interface components {
             /** @description REPONDRE_AU_CLIENT si l'appelant peut répondre d'ici */
             operationsPossibles: components["schemas"]["OperationTicket"][];
         };
+        /**
+         * @description Par où partira la prochaine réponse de la banque (étape 20) : WHATSAPP, le texte même, si le client y a
+         *     écrit en dernier il y a moins de 24 h ; SMS, le texte même, s'il a écrit par SMS ; sinon WEB : la
+         *     réponse reste dans son suivi et il en est averti par e-mail ou SMS, sans le texte.
+         */
+        ReponseVers: {
+            canal: components["schemas"]["CanalConversation"];
+            /** @description WhatsApp : fin de la fenêtre de 24 h ouverte par le dernier message du client */
+            finFenetreLe: components["schemas"]["HorodatageFacultatif"];
+        };
         /** @description Conversation de la réclamation, sur sa fiche */
         ConversationTicket: {
+            reponseVers: components["schemas"]["ReponseVers"];
             /** Format: uuid */
             id: string;
             canal: components["schemas"]["CanalConversation"];
@@ -2752,6 +2875,13 @@ export interface components {
             nonLues: number;
         };
         ParametresBanque: {
+            /**
+             * @description Numéro WhatsApp de la banque, quand Makor l'a raccordé et ouvert (étape 20)
+             * @example +2252722000000
+             */
+            whatsapp: string | null;
+            /** @description Numéro auquel les clients écrivent par SMS, quand Makor l'a raccordé et ouvert (étape 20) */
+            smsEntrant: string | null;
             nom: string;
             slug: string;
             prefixeTickets: string;
@@ -2859,12 +2989,16 @@ export interface components {
             actif: boolean;
             /**
              * Format: uri
-             * @description Adresse encodée dans le QR code ou à placer sur le site
+             * @description Adresse encodée dans le QR code ou à placer sur le site ; WhatsApp : https://wa.me/<numéro> ; SMS : sms:<numéro>
              */
             urlDepot: string;
         };
         EcriturePointDepot: {
-            canal: components["schemas"]["CanalDepot"];
+            /**
+             * @description Les points WhatsApp et SMS sont créés par Makor au raccordement du numéro
+             * @enum {string}
+             */
+            canal: "QR_CODE" | "LIEN_WEB";
             libelle: string;
             /**
              * Format: uuid
@@ -3130,6 +3264,11 @@ export interface components {
             actif?: boolean;
         };
         BanquePlateforme: {
+            /** @description WhatsApp Business ouvert (étape 20) */
+            whatsapp: boolean;
+            /** @description SMS entrant ouvert (étape 20) */
+            smsEntrant: boolean;
+            raccordements: components["schemas"]["Raccordements"];
             /** Format: uuid */
             id: string;
             nom: string;
@@ -3185,6 +3324,10 @@ export interface components {
             chatWeb?: boolean;
             /** @description Assistant IA (étape 18) ; exige le chat web (sinon 422 CHAT_WEB_REQUIS) ; fermer le chat ferme aussi l'assistant */
             assistantIa?: boolean;
+            /** @description WhatsApp Business (étape 20) ; exige le chat web (422 CHAT_WEB_REQUIS) et le numéro raccordé (422 CANAL_NON_RACCORDE) ; fermer le chat le ferme */
+            whatsapp?: boolean;
+            /** @description SMS entrant (étape 20) ; mêmes conditions que WhatsApp */
+            smsEntrant?: boolean;
         };
         IndicateursPlateforme: {
             du: components["schemas"]["Horodatage"];
@@ -3216,6 +3359,59 @@ export interface components {
                 segments: number;
                 echecs: number;
             }[];
+        };
+        FacturationCanaux: {
+            /** @example 2026-10 */
+            mois: string;
+            banques: {
+                banque: components["schemas"]["ReferenceNommee"];
+                whatsappEnvoyes: number;
+                /** @description Déclarés facturables par Meta */
+                whatsappFactures: number;
+                whatsappEchecs: number;
+                whatsappRecus: number;
+                smsRecus: number;
+            }[];
+        };
+        /** @description Numéros raccordés par Makor ; le jeton WhatsApp n'est jamais renvoyé */
+        Raccordements: {
+            whatsapp: {
+                /** @example +2252722000000 */
+                numero: string;
+                /** @description phone_number_id chez Meta */
+                identifiant: string;
+                /** @description Compte WhatsApp Business (WABA) */
+                compte: string;
+            } | null;
+            sms: {
+                numero: string;
+            } | null;
+        };
+        RaccordementCanal: {
+            /** @description Numéro de la banque, normalisé en E.164 (+225 par défaut) */
+            numero: string;
+            /** @description WhatsApp : phone_number_id (obligatoire) */
+            identifiant?: string;
+            /** @description WhatsApp : identifiant du compte WhatsApp Business (obligatoire) */
+            compte?: string;
+            /** @description WhatsApp : jeton d'accès de la banque ; obligatoire au premier raccordement */
+            jeton?: string;
+        };
+        /** @description Notification de Meta (messages reçus, statuts des envois) ; les champs inconnus sont ignorés */
+        WebhookWhatsapp: {
+            object: string;
+            entry: Record<string, never>[];
+        };
+        SmsEntrant: {
+            /** @description Identifiant du SMS chez la passerelle */
+            id: string;
+            /** @description Numéro du client */
+            de: string;
+            /** @description Numéro de la banque */
+            vers: string;
+            texte: string;
+            /** Format: date-time */
+            recuLe?: string;
         };
         /**
          * @description Nature d'un message de l'assistant : PRESENTATION (il se présente), SALUTATION, FAQ (réponse de la
@@ -3378,6 +3574,18 @@ export interface components {
             };
             content: {
                 "application/problem+json": components["schemas"]["Probleme"];
+            };
+        };
+        /** @description Reçu et traité (ou ignoré, pour un numéro inconnu) */
+        Recu: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    /** @constant */
+                    recu: true;
+                };
             };
         };
         /** @description Donnée correcte en forme mais refusée par une règle métier */
@@ -6175,6 +6383,124 @@ export interface operations {
             400: components["responses"]["Invalide"];
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
+        };
+    };
+    raccorderCanal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+                canal: "WHATSAPP" | "SMS";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RaccordementCanal"];
+            };
+        };
+        responses: {
+            200: components["responses"]["UneBanque"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    lireFacturationCanaux: {
+        parameters: {
+            query: {
+                mois: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Consommation WhatsApp et SMS entrants */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FacturationCanaux"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    verifierWebhookWhatsapp: {
+        parameters: {
+            query: {
+                "hub.mode": "subscribe";
+                "hub.verify_token": string;
+                "hub.challenge": string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Le défi, tel quel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: components["responses"]["Invalide"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    recevoirWebhookWhatsapp: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE */
+                "X-Hub-Signature-256"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookWhatsapp"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Recu"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+        };
+    };
+    recevoirSmsEntrant: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE */
+                "X-Signature"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmsEntrant"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Recu"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
         };
     };
     lireConsommationIa: {

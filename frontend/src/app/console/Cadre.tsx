@@ -90,7 +90,7 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
   if (parametres.isPending) return <Chargement pleinEcran />;
   if (parametres.isError) return <ErreurChargement erreur={parametres.error} surReessayer={() => void parametres.refetch()} pleinEcran />;
   const p = parametres.data;
-  const banque: S<'BanquePublique'> = { nom: p.nom, slug: p.slug, logoUrl: p.logoUrl, couleurPrimaire: p.couleurPrimaire, couleurSecondaire: p.couleurSecondaire };
+  const banque: S<'BanquePublique'> = { nom: p.nom, slug: p.slug, logoUrl: p.logoUrl, couleurPrimaire: p.couleurPrimaire, couleurSecondaire: p.couleurSecondaire, whatsapp: p.whatsapp };
   const page = pageDe(ROUTES_BANQUE, location.pathname) ?? 'reclamations';
   const recherche = page === 'reclamations' && !location.pathname.startsWith('/reclamations/') ? new URLSearchParams(location.search).get('recherche') ?? '' : '';
 

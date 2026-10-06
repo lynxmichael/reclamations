@@ -229,6 +229,13 @@ export function PageActivite() {
     placeholderData: keepPreviousData,
   });
 
+  // WhatsApp et SMS reçus (étape 20) : facultatif, comme l'assistant
+  const canaux = useQuery({
+    queryKey: ['facturation-canaux', choisi],
+    queryFn: () => appeler('lireFacturationCanaux', { requete: { mois: choisi } }),
+    placeholderData: keepPreviousData,
+  });
+
   if (indicateurs.isPending || sms.isPending) return <Chargement />;
   if (indicateurs.isError || sms.isError) {
     return <ErreurChargement erreur={indicateurs.error ?? sms.error} surReessayer={() => void Promise.all([indicateurs.refetch(), sms.refetch()])} />;
@@ -238,6 +245,16 @@ export function PageActivite() {
       indicateurs={indicateurs.data}
       sms={sms.data}
       ia={ia.data}
+      canaux={canaux.data}
+      surExporterCanaux={canaux.data ? () => {
+        const lignes = canaux.data.banques.map((b) => [b.banque.nom, b.whatsappEnvoyes, b.whatsappFactures, b.whatsappEchecs, b.whatsappRecus, b.smsRecus] as const);
+        enregistrer({
+          nom: `whatsapp-sms-${choisi}.csv`,
+          type: 'text/csv',
+          contenu: csv([['Banque', 'WhatsApp envoyés', 'WhatsApp facturés par Meta', 'WhatsApp en échec', 'WhatsApp reçus', 'SMS reçus'], ...lignes]),
+        });
+        annoncer('Facturation WhatsApp et SMS téléchargée.');
+      } : undefined}
       surExporterIa={ia.data ? () => {
         const lignes = ia.data.banques.map((b) => [b.banque.nom, b.tours, b.suggestions, b.parIa, b.regles, b.jetonsEntree, b.jetonsSortie, b.coutUsd] as const);
         enregistrer({

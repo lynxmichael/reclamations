@@ -385,8 +385,10 @@ async function main() {
   });
   await cr.doitEtreRefuse('Contexte système : lire les marques de lecture de la banque', '42501', () =>
     systeme.conversation.findMany({ select: { luBanqueLe: true } }));
-  await cr.doitEtreRefuse('Contexte système : modifier une conversation', '42501', () =>
-    systeme.conversation.updateMany({ data: { avisClientLe: null } }));
+  await cr.doitEtreRefuse('Contexte système : modifier les marques de lecture de la banque', '42501', () =>
+    systeme.conversation.updateMany({ data: { luBanqueLe: null } }));
+  await cr.doitReussir('Contexte système (étape 20) : lecture par le client et avis différé, d\'après les statuts de Meta', () =>
+    systeme.conversation.updateMany({ where: { id: conversationA.id }, data: { avisClientLe: null, luClientLe: new Date() } }));
 
   // ----------------------------------------------------------------------------------
   cr.section('Assistant IA (étape 18)');
@@ -460,6 +462,77 @@ async function main() {
     const b = await plateforme.banque.findMany({ select: { id: true, doubleAuthentificationObligatoire: true } });
     verifier(b.find((x) => x.id === A.tenantId)?.doubleAuthentificationObligatoire === true && b.find((x) => x.id === B.tenantId)?.doubleAuthentificationObligatoire === false, JSON.stringify(b));
   });
+
+  // ----------------------------------------------------------------------------------
+  cr.section('WhatsApp et SMS entrant (étape 20)');
+
+  const pointWaA = await proprietaire.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'WHATSAPP', libelle: 'WhatsApp' } });
+  const pointSmsB = await proprietaire.pointDepot.create({ data: { tenantId: B.tenantId, code: codePublic(), canal: 'SMS', libelle: 'SMS' } });
+  const waA = { tenantId: A.tenantId, canal: 'WHATSAPP' as const, identifiant: '1098765', numero: '+2252722000000', compteWhatsapp: '2098765', jetonChiffre: 'v1:a:b:c', pointDepotId: pointWaA.id };
+  await cr.doitReussir('Contexte système : raccorder le numéro WhatsApp d\'une banque, jeton chiffré compris', () => systeme.canalBanque.create({ data: waA }));
+  await systeme.canalBanque.create({ data: { tenantId: B.tenantId, canal: 'SMS', identifiant: '+2252722000001', numero: '+2252722000001', pointDepotId: pointSmsB.id } });
+  await cr.doitEtreRefuse('L\'Admin Entreprise raccorde lui-même un numéro', '42501', () =>
+    enA.canalBanque.create({ data: { ...waA, identifiant: '777', canal: 'SMS' } }));
+  await cr.doitReussir('En contexte A : son numéro seulement, sans identifiant chez Meta ni jeton', async () => {
+    const n = await enA.canalBanque.findMany({ select: { canal: true, numero: true, pointDepotId: true } });
+    verifier(n.length === 1 && n[0]!.numero === waA.numero, JSON.stringify(n));
+  });
+  await cr.doitEtreRefuse('En contexte banque, lire le jeton WhatsApp', '42501', () => enA.canalBanque.findMany({ select: { jetonChiffre: true } }));
+  await cr.doitEtreRefuse('En contexte banque, lire l\'identifiant chez Meta', '42501', () => enA.canalBanque.findMany({ select: { identifiant: true } }));
+  await cr.doitReussir('Super Admin : les raccordements de toutes les banques, sans jeton', async () => {
+    const n = await plateforme.canalBanque.findMany({ select: { tenantId: true, identifiant: true, numero: true, compteWhatsapp: true } });
+    verifier(n.length === 2, `${n.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('Super Admin : lire le jeton WhatsApp', '42501', () => plateforme.canalBanque.findMany({ select: { jetonChiffre: true } }));
+  await cr.doitEtreRefuse('Un même numéro chez deux banques', '23505', () =>
+    systeme.canalBanque.create({ data: { ...waA, tenantId: B.tenantId, pointDepotId: pointSmsB.id, canal: 'WHATSAPP' } }));
+  await refusCheck('WhatsApp sans jeton', () => systeme.canalBanque.create({ data: { ...waA, tenantId: B.tenantId, identifiant: '55', jetonChiffre: null, pointDepotId: pointSmsB.id } }));
+  await refusCheck('SMS dont l\'identifiant n\'est pas le numéro', () =>
+    systeme.canalBanque.update({ where: { tenantId_canal: { tenantId: B.tenantId, canal: 'SMS' } }, data: { identifiant: '+2252722000009' } }));
+  await refusCheck('Numéro hors format international', () =>
+    systeme.canalBanque.update({ where: { tenantId_canal: { tenantId: A.tenantId, canal: 'WHATSAPP' } }, data: { numero: '0722000000' } }));
+  await refusCheck('Point de dépôt WhatsApp rattaché à une agence', () =>
+    proprietaire.pointDepot.update({ where: { id: pointWaA.id }, data: { agenceId: A.agence.id } }));
+  await refusCheck('WhatsApp ouvert sans le chat web', () => plateforme.banque.update({ where: { id: B.tenantId }, data: { smsEntrant: true } }));
+  await cr.doitEtreRefuse('L\'Admin Entreprise ouvre lui-même WhatsApp (réservé au Super Admin)', '42501', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { whatsapp: true } }));
+  await cr.doitReussir('Le Super Admin ouvre WhatsApp à une banque qui a le chat', () =>
+    plateforme.banque.update({ where: { id: A.tenantId }, data: { whatsapp: true } }));
+
+  const sessionA = await enA.sessionCanal.create({ data: { tenantId: A.tenantId, canal: 'WHATSAPP', telephone: '+2250707070707', dernierMessageLe: new Date() } });
+  await proprietaire.sessionCanal.create({ data: { tenantId: B.tenantId, canal: 'SMS', telephone: '+2250707070707', dernierMessageLe: new Date() } });
+  await cr.doitReussir('En contexte A, seules les sessions de A sont visibles', async () => {
+    const n = await enA.sessionCanal.findMany();
+    verifier(n.length === 1 && n[0]!.id === sessionA.id, `${n.length} ligne(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, ouvrir une session chez B', '42501', () =>
+    enA.sessionCanal.create({ data: { tenantId: B.tenantId, canal: 'WHATSAPP', telephone: '+2250708080808', dernierMessageLe: new Date() } }));
+  await refusCheck('Session d\'une étape inconnue', () => enA.sessionCanal.update({ where: { id: sessionA.id }, data: { etape: 'PAIEMENT' } }));
+  await cr.doitEtreRefuse('Super Admin : lire les sessions (numéros, dépôts en préparation)', '42501', () => plateforme.sessionCanal.count());
+
+  await enA.messageEntrant.create({ data: { tenantId: A.tenantId, canal: 'WHATSAPP', idExterne: 'wamid.1', issue: 'EN_COURS', recuLe: new Date() } });
+  await cr.doitEtreRefuse('Un message reçu deux fois (Meta réessaie) : une seule ligne, toutes banques', '23505', () =>
+    proprietaire.messageEntrant.create({ data: { tenantId: B.tenantId, canal: 'WHATSAPP', idExterne: 'wamid.1', issue: 'DEPOT', recuLe: new Date() } }));
+  await refusCheck('Message rattaché sans commentaire', () =>
+    enA.messageEntrant.update({ where: { canal_idExterne: { canal: 'WHATSAPP', idExterne: 'wamid.1' } }, data: { issue: 'RATTACHE' } }));
+  await cr.doitEtreRefuse('En contexte banque, effacer un message reçu (facturation)', '42501', () =>
+    enA.messageEntrant.deleteMany({ where: { idExterne: 'wamid.1' } }));
+  await cr.doitEtreRefuse('Super Admin : lire les messages reçus', '42501', () => plateforme.messageEntrant.count());
+  await cr.doitReussir('Contexte système : effacer un message dont le traitement a échoué (Meta le renverra)', () =>
+    systeme.messageEntrant.deleteMany({ where: { idExterne: 'wamid.1' } }));
+  await refusCheck('Note interne avec un canal', () =>
+    enA.commentaire.create({ data: { tenantId: A.tenantId, reclamationId: reclamationA.id, type: 'NOTE_INTERNE', contenu: 'Note', canal: 'WHATSAPP', auteurUtilisateurId: A.agent.id } }));
+  await refusCheck('Expéditeur sur un e-mail', () =>
+    enA.notification.create({ data: { tenantId: A.tenantId, canal: 'EMAIL', modele: 'client.depot', destination: 'a@b.ci', contenu: 'x', expediteur: '+2252722000000' } }));
+  await refusCheck('Facturation de Meta sur un SMS', () =>
+    enA.notification.create({ data: { tenantId: A.tenantId, canal: 'SMS', modele: 'client.depot', destination: '+2250707070707', contenu: 'x', facturable: true } }));
+  await cr.doitReussir('Super Admin : facturation WhatsApp et SMS reçus, des totaux seulement', async () => {
+    const l = await transactionEn(base, contexte.plateforme(), (tx) => tx.$queryRaw<{ tenant_id: string }[]>`
+      SELECT * FROM facturation_canaux(now() - interval '1 day', now() + interval '1 day')`);
+    verifier(Array.isArray(l), 'pas de résultat');
+  });
+  await cr.doitEtreRefuse('En contexte banque, la facturation de toutes les banques', '42501', () =>
+    transactionEn(base, contexte.banque(A.tenantId), (tx) => tx.$queryRaw`SELECT * FROM facturation_canaux(now() - interval '1 day', now())`));
 
   // ----------------------------------------------------------------------------------
   cr.section('Transactions dans un contexte');

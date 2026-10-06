@@ -42,6 +42,11 @@ async function principal() {
     STOCKAGE_DOSSIER: mkdtempSync(join(tmpdir(), 'reclamations-navigateur-')),
     URL_PORTAIL: process.env.URL_PORTAIL_NAVIGATEUR ?? 'http://{slug}.localhost:4274',
     URL_CONSOLE: process.env.URL_CONSOLE_NAVIGATEUR ?? 'http://localhost:4273',
+    // Étape 20 : les tests simulent Meta et la passerelle SMS avec ces secrets (aucun envoi : pas de worker)
+    WHATSAPP_ENVOI: 'journal',
+    WHATSAPP_SECRET_APP: 'developpement-whatsapp-secret-0123456789',
+    WHATSAPP_JETON_VERIFICATION: 'developpement-verification',
+    SMS_ENTRANT_SECRET: 'developpement-sms-entrant-0123456789',
   });
   const bd = new BaseDonnees(urls.application);
   await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 60, enquetes: true, attribution: true, lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` });

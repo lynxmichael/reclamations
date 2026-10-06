@@ -11,10 +11,20 @@
 import { DateTime } from 'luxon';
 import type { CanalNotification } from '../../generated/prisma/enums.js';
 import { basculer, contexte, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import { SEGMENTS_SMS_MAX, SUITE_RESOLUTION, texteAccuse, texteCloture } from '../../domaine/canaux.js';
+import { disponibilite } from '../../domaine/conversation.js';
+import { texteReprise } from '../../domaine/ia/assistant.js';
 import { finEnquete } from '../../domaine/satisfaction.js';
+import { couperSms, versGsm } from '../../domaine/sms.js';
+import { canalDeReponse, FIL_WEB, type FilClient } from './conversations.js';
 import type { ParametresBanque } from './parametres.js';
 
 export type ModeleClient = 'client.depot' | 'client.statut' | 'client.reponse' | 'client.question' | 'client.resolution' | 'client.cloture';
+/**
+ * Messages de la conversation sur WhatsApp ou par SMS (étape 20) : réponse d'un agent, réponse
+ * automatique. Leur texte est effacé de la notification une fois envoyé (il est dans la réclamation).
+ */
+export type ModeleFil = 'conversation.reponse' | 'canal.reponse_auto';
 export type ModelePersonnel =
   | 'agent.assignation' | 'agent.message_client' | 'agent.contestation'
   | 'sla.alerte_preventive' | 'sla.depassement' | 'reclamation.urgente' | 'superviseur.escalade' | 'admin.escalade';
@@ -25,6 +35,13 @@ export type ModelePlateforme = 'plateforme.urgente' | 'plateforme.plafond';
  * la banque, activée par défaut (décision du 01/10/2026 : un SMS à chaque changement de statut).
  */
 const SMS_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution'];
+/**
+ * Étape 20 : le client qui écrit sur WhatsApp ou par SMS y reçoit le dépôt, la résolution et la
+ * clôture (avec le lien de l'enquête), quel que soit l'option des SMS ; les autres étapes selon elle.
+ */
+const FIL_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution', 'client.cloture'];
+/** Texte WhatsApp au-delà duquel le message est coupé (Meta : 4 096 caractères) */
+const LONGUEUR_WHATSAPP = 4000;
 
 export interface TicketNotifie {
   readonly id: string;
@@ -47,6 +64,45 @@ interface Texte {
   readonly sujet: string;
   readonly corps: string;
   readonly sms?: string;
+  /** Sur WhatsApp ou par SMS, dans le fil où écrit le client (étape 20) */
+  readonly fil?: string;
+}
+
+export interface MessageFil {
+  readonly tenantId: string;
+  readonly fil: FilClient;
+  /** Numéro du client, E.164 */
+  readonly destination: string;
+  readonly texte: string;
+  readonly modele: ModeleFil | ModeleClient;
+  readonly clientId?: string | null;
+  readonly reclamationId?: string | null;
+  /** Lien vers la suite d'un texte trop long (suivi de la réclamation) */
+  readonly lienSuite?: string | null;
+}
+
+/**
+ * Un message dans le fil WhatsApp ou SMS du client (étape 20), mis en boîte d'envoi. Le SMS part du
+ * numéro de la banque, ramené à l'alphabet GSM et coupé au-delà de 4 segments.
+ */
+export async function messageSurFil(tx: ClientTransaction, m: MessageFil): Promise<void> {
+  if (m.fil.canal === 'WEB') throw new Error('messageSurFil : canal WEB');
+  const suite = m.lienSuite ? `Suite : ${m.lienSuite}` : '';
+  const contenu = m.fil.canal === 'SMS'
+    ? couperSms(versGsm(m.texte), suite, SEGMENTS_SMS_MAX)
+    : m.texte.length > LONGUEUR_WHATSAPP ? `${m.texte.slice(0, LONGUEUR_WHATSAPP - 3).trimEnd()}...${suite ? ` ${suite}` : ''}` : m.texte;
+  await tx.notification.create({
+    data: {
+      tenantId: m.tenantId,
+      canal: m.fil.canal,
+      modele: m.modele,
+      destinataireClientId: m.clientId ?? null,
+      reclamationId: m.reclamationId ?? null,
+      destination: m.destination,
+      expediteur: m.fil.canal === 'SMS' ? m.fil.expediteur : null,
+      contenu,
+    },
+  });
 }
 
 export class Envois {
@@ -64,14 +120,27 @@ export class Envois {
 
   // ---- Client final --------------------------------------------------------
 
-  /** `avis` : une enquête de satisfaction vient d'être ouverte, son lien part avec la clôture (étape 15). */
-  async client(modele: ModeleClient, options: { avis?: boolean } = {}): Promise<void> {
+  /**
+   * `avis` : une enquête de satisfaction vient d'être ouverte, son lien part avec la clôture (étape 15).
+   * Étape 20 : le SMS part dans le fil WhatsApp ou SMS où écrit le client (`canalDeReponse`), sauf
+   * `sansFil` (le fil a échoué : SMS ordinaire) ; `emailSeul` : le fil a déjà reçu le message.
+   */
+  async client(modele: ModeleClient, options: { avis?: boolean; sansFil?: boolean; emailSeul?: boolean } = {}): Promise<void> {
     const client = await this.tx.clientFinal.findUniqueOrThrow({ where: { id: this.ticket.clientId } });
     const texte = this.texteClient(modele, client.nom, options.avis ?? false);
-    const lignes: { canal: CanalNotification; destination: string; sujet: string | null; contenu: string }[] = [];
+    const lignes: { canal: CanalNotification; destination: string; sujet: string | null; contenu: string; expediteur?: string | null }[] = [];
     if (client.email) lignes.push({ canal: 'EMAIL', destination: client.email, sujet: texte.sujet, contenu: texte.corps });
-    if (client.telephone && (SMS_TOUJOURS.includes(modele) || this.p.banque.smsChaqueChangementStatut)) {
-      lignes.push({ canal: 'SMS', destination: client.telephone, sujet: null, contenu: texte.sms ?? texte.corps });
+    const sms = SMS_TOUJOURS.includes(modele) || this.p.banque.smsChaqueChangementStatut;
+    if (client.telephone && !options.emailSeul) {
+      const fil = options.sansFil ? FIL_WEB : await canalDeReponse(this.tx, this.ticket, this.p, this.maintenant);
+      const surFil = fil.canal !== 'WEB' && (sms || FIL_TOUJOURS.includes(modele));
+      if (surFil && fil.canal === 'WHATSAPP') {
+        lignes.push({ canal: 'WHATSAPP', destination: client.telephone, sujet: null, contenu: texte.fil ?? texte.sms ?? texte.corps });
+      } else if (surFil && fil.canal === 'SMS') {
+        lignes.push({ canal: 'SMS', destination: client.telephone, sujet: null, contenu: versGsm(texte.fil ?? texte.sms ?? texte.corps), expediteur: fil.expediteur });
+      } else if (fil.canal === 'WEB' && sms) {
+        lignes.push({ canal: 'SMS', destination: client.telephone, sujet: null, contenu: texte.sms ?? texte.corps });
+      }
     }
     if (lignes.length === 0) return;
     await this.tx.notification.createMany({
@@ -79,6 +148,27 @@ export class Envois {
         ...l, tenantId: this.ticket.tenantId, modele, destinataireClientId: client.id, reclamationId: this.ticket.id,
       })),
     });
+  }
+
+  /**
+   * Réponse d'un agent (ou résolution) dans le fil WhatsApp ou SMS du client (étape 20). Ses pièces
+   * jointes restent dans le suivi, dont le lien est ajouté. Faux si le client n'a pas de téléphone.
+   */
+  async conversation(fil: FilClient, texte: string, piecesJointes = 0): Promise<boolean> {
+    const client = await this.tx.clientFinal.findUniqueOrThrow({ where: { id: this.ticket.clientId }, select: { id: true, telephone: true } });
+    if (fil.canal === 'WEB' || !client.telephone) return false;
+    const pj = piecesJointes ? `\n\n${piecesJointes > 1 ? `${piecesJointes} pieces jointes` : 'Piece jointe'} : ${this.lienSuivi}` : '';
+    await messageSurFil(this.tx, {
+      tenantId: this.ticket.tenantId, fil, destination: client.telephone, texte: `${texte}${pj}`, modele: 'conversation.reponse',
+      clientId: client.id, reclamationId: this.ticket.id, lienSuite: this.lienSuivi,
+    });
+    return true;
+  }
+
+  /** Réouverture de la banque, si elle est fermée : « demain à 8 h » */
+  private reprise(): string | null {
+    const d = disponibilite(this.maintenant, this.p.sla.calendrier);
+    return d.repriseLe ? texteReprise(d.repriseLe, this.maintenant, this.p.banque.fuseauHoraire) : null;
   }
 
   private texteClient(modele: ModeleClient, nom: string, avis: boolean): Texte {
@@ -93,12 +183,14 @@ export class Envois {
           sujet: `Réclamation ${numero} enregistrée`,
           corps: `${bonjour}Votre réclamation est enregistrée sous le numéro ${numero}.\nSuivez son avancement : ${lien}${signature}`,
           sms: `${banque} : réclamation ${numero} enregistrée. Suivi : ${lien}`,
+          fil: texteAccuse(numero, lien, this.reprise()),
         };
       case 'client.statut':
         return {
           sujet: `Réclamation ${numero} en cours de traitement`,
           corps: `${bonjour}Votre réclamation ${numero} est prise en charge.\nSuivi : ${lien}${signature}`,
           sms: `${banque} : votre réclamation ${numero} est en cours de traitement.`,
+          fil: `Votre reclamation ${numero} est prise en charge : un conseiller vous repond ici.`,
         };
       case 'client.reponse':
         return {
@@ -118,6 +210,7 @@ export class Envois {
           corps: `${bonjour}Votre réclamation ${numero} est résolue.\nConfirmez ou contestez la solution : ${lien}\n`
             + `Sans réaction de votre part sous ${this.p.sla.delaiClotureAutoJours} jours, elle sera clôturée.${signature}`,
           sms: `${banque} : réclamation ${numero} résolue. Confirmez ou contestez sous ${this.p.sla.delaiClotureAutoJours} jours : ${lien}`,
+          fil: `Votre reclamation ${numero} est resolue. ${SUITE_RESOLUTION}`,
         };
       case 'client.cloture':
         // Avec l'enquête (étape 15), le SMS dit « close » : le « ô » de « clôturée », hors de l'alphabet GSM, doublerait son coût
@@ -128,11 +221,13 @@ export class Envois {
               + `Votre avis nous aide à mieux vous servir : deux questions, moins d'une minute, jusqu'au ${this.date(finEnquete(this.maintenant))} :\n`
               + `${lien}/avis\nHistorique : ${lien}${signature}`,
             sms: `${banque} : réclamation ${numero} close. Votre avis : ${lien}/avis`,
+            fil: `${texteCloture(numero)} Votre avis nous aide : 2 questions, moins d'une minute : ${lien}/avis`,
           }
           : {
             sujet: `Réclamation ${numero} clôturée`,
             corps: `${bonjour}Votre réclamation ${numero} est clôturée.\nHistorique : ${lien}${signature}`,
             sms: `${banque} : votre réclamation ${numero} est clôturée.`,
+            fil: texteCloture(numero),
           };
     }
   }

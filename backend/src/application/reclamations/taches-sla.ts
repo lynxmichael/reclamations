@@ -1,7 +1,8 @@
 /**
  * Tâches planifiées du SLA (§6.4) : alerte préventive, dépassement + escalade, clôture automatique ;
  * depuis l'étape 16, attribution des réclamations en attente et escalade à l'Admin Entreprise ;
- * depuis l'étape 17, avis au client d'une réponse restée non lue dans le chat.
+ * depuis l'étape 17, avis au client d'une réponse restée non lue dans le chat ; depuis l'étape 20,
+ * effacement des sessions WhatsApp et SMS 24 h après le dernier message du client.
  *
  * Le worker les lance chaque minute (branchement BullMQ à l'étape 7). Chaque passage :
  *   1. repère les tickets échus, toutes banques confondues (contexte système, lecture seule) ;
@@ -13,6 +14,7 @@ import { contexte, clientEn, transactionEn, type ClientBase } from '../../infras
 import { minutesAvantAlerte } from '../../domaine/reclamation/sla.js';
 import { instantEscaladeAdmin, seuilEscaladeAdmin } from '../../domaine/reclamation/escalade.js';
 import { avisClientDu, limiteAvisClient } from '../../domaine/conversation.js';
+import { DUREE_SESSION_MS } from '../../domaine/canaux.js';
 import type { Acteur } from '../../domaine/reclamation/machine.js';
 import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
 import { adminsEntreprise, agent, superviseurs } from './notifications.js';
@@ -34,6 +36,7 @@ export interface BilanTaches {
   escaladesAdmin: number;
   cloturesAutomatiques: number;
   avisConversations: number;
+  sessionsCanal: number;
 }
 
 export class TachesSla {
@@ -51,6 +54,7 @@ export class TachesSla {
       escaladesAdmin: await this.escaladesAdmin(maintenant),
       cloturesAutomatiques: await this.cloturesAutomatiques(maintenant),
       avisConversations: await this.avisConversations(maintenant),
+      sessionsCanal: await this.effacerSessionsCanal(maintenant),
     };
   }
 
@@ -229,6 +233,8 @@ export class TachesSla {
    * Chat web (étape 17) : une réponse de la banque que le client n'a pas lue dans le chat 2 minutes
    * après lui est signalée par e-mail ou SMS, une fois pour une série de réponses rapprochées. Sur une
    * réclamation résolue ou clôturée entre-temps, la notification de l'action a déjà prévenu le client.
+   * Étape 20 : une réponse partie sur WhatsApp vaut avis ; si Meta ne l'a pas remise, la boîte d'envoi
+   * rouvre l'avis, qui part alors par e-mail ou SMS ordinaire (`sansFil`), jamais dans le fil en échec.
    */
   async avisConversations(maintenant: Date): Promise<number> {
     // SQL brut (deux colonnes comparées entre elles) : transaction explicite en contexte système
@@ -247,11 +253,20 @@ export class TachesSla {
         if (!conversation || !avisClientDu(conversation, maintenant)) return false;
         await tx.conversation.update({ where: { id: conversation.id }, data: { avisClientLe: maintenant } });
         if (!ENCORE_OUVERTES.includes(t.statut as never)) return false;
-        await this.cycle.envois(tx, t, p, maintenant).client(t.statut === 'EN_ATTENTE_CLIENT' ? 'client.question' : 'client.reponse');
+        await this.cycle.envois(tx, t, p, maintenant).client(t.statut === 'EN_ATTENTE_CLIENT' ? 'client.question' : 'client.reponse', { sansFil: true });
         return true;
       }, { sautSiVerrouille: true });
       if (fait) traites++;
     }
     return traites;
+  }
+
+  /**
+   * Étape 20 : une session WhatsApp ou SMS (réclamation choisie, dépôt en préparation, échanges avec
+   * l'assistant) est effacée 24 h après le dernier message du client.
+   */
+  async effacerSessionsCanal(maintenant: Date): Promise<number> {
+    const { count } = await this.systeme.sessionCanal.deleteMany({ where: { dernierMessageLe: { lt: new Date(maintenant.getTime() - DUREE_SESSION_MS) } } });
+    return count;
   }
 }

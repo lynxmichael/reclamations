@@ -476,6 +476,36 @@ describe('chat web (étape 17)', () => {
   });
 });
 
+describe('WhatsApp et SMS (étape 20)', () => {
+  it('à l\'ouverture, un client a écrit sur WhatsApp : la réponse y part, telle quelle, sans SMS', () => {
+    const m = nouvelle();
+    const ligne = m.conversations(SUP).donnees.find((c) => c.canal === 'WHATSAPP')!;
+    expect(ligne).toMatchObject({ aRepondre: true, clientEnLigne: false });
+    const agent = ligne.agent!.id;
+    const c = m.conversation(agent, ligne.id);
+    expect(c.messages.filter((x) => x.type === 'MESSAGE_DU_CLIENT').map((x) => x.canal)).toEqual(expect.arrayContaining(['WHATSAPP']));
+    expect(c.reponseVers.canal).toBe('WHATSAPP');
+    expect(new Date(c.reponseVers.finFenetreLe!).getTime()).toBeGreaterThan(new Date(m.maintenant).getTime());
+    const fiche = m.fiche(agent, c.reclamation.id);
+    expect(fiche.conversation).toMatchObject({ canal: 'WHATSAPP', reponseVers: { canal: 'WHATSAPP' } });
+    const envois = m.envois.length;
+    m.repondre(agent, c.reclamation.id, 'Bonjour, nous réinitialisons votre accès.');
+    expect(m.conversation(agent, ligne.id).messages.at(-1)).toMatchObject({ type: 'REPONSE_AU_CLIENT', canal: 'WHATSAPP' });
+    m.avancer(10);
+    expect(m.envois.length).toBe(envois);
+    // Plus de 24 h après son dernier message : la réponse reste dans son suivi
+    m.avancer(24 * 60);
+    expect(m.conversation(agent, ligne.id).reponseVers).toEqual({ canal: 'WEB', finFenetreLe: null });
+  });
+
+  it('le portail propose WhatsApp quand la banque l\'a ouvert', () => {
+    const m = nouvelle();
+    expect(m.formulaire('7K3QX9P2MA').banque.whatsapp).toBe('+2252722000000');
+    m.chatActif = false;
+    expect(m.formulaire('7K3QX9P2MA').banque.whatsapp).toBeNull();
+  });
+});
+
 describe('assistant IA (étape 18)', () => {
   const C = (texte: string) => ({ auteur: 'CLIENT' as const, texte });
 

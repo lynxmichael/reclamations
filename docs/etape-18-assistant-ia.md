@@ -1,7 +1,7 @@
 # Étape 18 — Assistant IA de première ligne
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 02/10/2026 · **Statut : à valider** (décisions V1 à V14).
+Version du 02/10/2026 · **Statut : validé le 05/10/2026** (décisions V1 à V14 retenues telles que proposées).
 
 C'est la quatrième fonction de la phase 2, cadrée à l'étape 14 (décisions I3 à I6). Sur le portail de la banque, **un assistant automatique** accueille le client, répond aux questions fréquentes avec **les réponses écrites par la banque**, prépare la réclamation que **le client envoie lui-même** et passe la main à un conseiller dès que le client le demande. Côté banque, l'agent peut lui demander **un brouillon de réponse**, qu'il relit, corrige et envoie lui-même.
 

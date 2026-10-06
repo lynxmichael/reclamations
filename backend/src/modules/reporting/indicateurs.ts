@@ -19,11 +19,11 @@ import type { S } from '../commun.js';
 export type Regroupement = S<'Regroupement'>;
 
 export const STATUTS = { OUVERTE: 'Ouverte', EN_COURS: 'En cours', EN_ATTENTE_CLIENT: 'En attente client', RESOLUE: 'Résolue', CLOTUREE: 'Clôturée' } as const;
-export const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web' } as const;
+export const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web', WHATSAPP: 'WhatsApp', SMS: 'SMS' } as const;
 export const PRIORITES = { NORMALE: 'Normale', URGENTE: 'Urgente' } as const;
 export const MODES_CLOTURE = { CONFIRMATION_CLIENT: 'Confirmée par le client', AUTOMATIQUE: 'Automatique', FORCEE: 'Forcée' } as const;
 export const MOTIFS_CLOTURE = { DOUBLON: 'Doublon', HORS_PERIMETRE: 'Hors périmètre', ABUS: 'Abus', AUTRE: 'Autre' } as const;
-export const SANS_AGENCE = { cle: 'aucune', libelle: 'Sans agence (lien web)' } as const;
+export const SANS_AGENCE = { cle: 'aucune', libelle: 'Sans agence (lien web, WhatsApp ou SMS)' } as const;
 
 /** Nombre de points d'une courbe (contrat : Evolution.points, 400 au plus) */
 export const POINTS_MAX = 400;
@@ -244,7 +244,10 @@ export async function indicateursBanque(
     total: totaux!.total,
     parStatut: (Object.keys(STATUTS) as (keyof typeof STATUTS)[]).map((s) => ({ cle: s, libelle: STATUTS[s], total: compte(parStatut, s) })),
     parCategorie: parCategorie.map((l) => ({ cle: l.cle!, libelle: nomCategorie.get(l.cle!) ?? 'Catégorie', total: l.n })).sort(tri),
-    parCanal: (Object.keys(CANAUX) as (keyof typeof CANAUX)[]).map((c) => ({ cle: c, libelle: CANAUX[c], total: compte(parCanal, c) })),
+    // WhatsApp et SMS (étape 20) : seulement quand des réclamations en viennent
+    parCanal: (Object.keys(CANAUX) as (keyof typeof CANAUX)[])
+      .map((c) => ({ cle: c, libelle: CANAUX[c], total: compte(parCanal, c) }))
+      .filter((c) => c.total > 0 || c.cle === 'QR_CODE' || c.cle === 'LIEN_WEB'),
     parAgence: parAgence.map((l) => (l.cle
       ? { cle: l.cle, libelle: nomAgence.get(l.cle) ?? 'Agence', total: l.n }
       : { ...SANS_AGENCE, total: l.n })).sort(tri),
@@ -403,6 +406,36 @@ export async function facturationSms(tx: ClientTransaction, mois: string): Promi
     banques: banques.map((b) => {
       const l = parBanque.get(b.id);
       return { banque: { id: b.id, nom: b.nom }, sms: Number(l?.sms ?? 0), segments: Number(l?.segments ?? 0), echecs: Number(l?.echecs ?? 0) };
+    }),
+  };
+}
+
+/**
+ * WhatsApp et SMS entrants d'un mois civil (étape 20, temps universel) : totaux par banque, par la
+ * fonction SQL facturation_canaux, sans numéro ni texte.
+ */
+export async function facturationCanaux(tx: ClientTransaction, mois: string): Promise<S<'FacturationCanaux'>> {
+  const debut = DateTime.fromISO(`${mois}-01T00:00:00`, { zone: 'utc' });
+  const fin = debut.plus({ months: 1 });
+  const [banques, lignes] = await enSerie([
+    () => tx.banque.findMany({ where: { creeLe: { lt: fin.toJSDate() } }, select: { id: true, nom: true }, orderBy: { nom: 'asc' } }),
+    () => tx.$queryRaw<{ tenant_id: string; whatsapp_envoyes: bigint; whatsapp_factures: bigint; whatsapp_echecs: bigint; whatsapp_recus: bigint; sms_recus: bigint }[]>`
+      SELECT tenant_id, whatsapp_envoyes, whatsapp_factures, whatsapp_echecs, whatsapp_recus, sms_recus
+      FROM facturation_canaux(${debut.toJSDate()}, ${fin.toJSDate()})`,
+  ]);
+  const parBanque = new Map(lignes.map((l) => [l.tenant_id, l]));
+  return {
+    mois,
+    banques: banques.map((b) => {
+      const l = parBanque.get(b.id);
+      return {
+        banque: { id: b.id, nom: b.nom },
+        whatsappEnvoyes: Number(l?.whatsapp_envoyes ?? 0),
+        whatsappFactures: Number(l?.whatsapp_factures ?? 0),
+        whatsappEchecs: Number(l?.whatsapp_echecs ?? 0),
+        whatsappRecus: Number(l?.whatsapp_recus ?? 0),
+        smsRecus: Number(l?.sms_recus ?? 0),
+      };
     }),
   };
 }

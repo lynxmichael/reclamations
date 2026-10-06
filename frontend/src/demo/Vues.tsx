@@ -171,7 +171,7 @@ export function EcranBanque({ d }: { d: Demo }) {
     logoUrl: moteur.banque.logoUrl,
     consommation: { agents: PARAMETRES.consommation.agents, ticketsCeMois: moteur.indicateurs(30).total },
   };
-  const points = POINTS_DEPOT.map((p) => ({ ...p, urlDepot: `https://${moteur.banque.slug}.${DOMAINE}/d/${p.code}` }));
+  const points = POINTS_DEPOT.map((p) => (p.canal === 'WHATSAPP' || p.canal === 'SMS' ? p : { ...p, urlDepot: `https://${moteur.banque.slug}.${DOMAINE}/d/${p.code}` }));
 
   let contenu;
   if (b.ficheId) {

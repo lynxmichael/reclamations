@@ -31,6 +31,7 @@ import { alertesDe, contexteAssistant, REPONSES_BANQUE, tourAssistant } from '..
 import { brouillonParRegles } from '@domaine/ia/consignes';
 import { categorieParRegles, faqParRegles, texteReprise, urgenceParRegles } from '@domaine/ia/assistant';
 import type { EchangeVu } from '../ecrans/portail/Assistant';
+import { canalDuFil } from '@domaine/canaux';
 
 /* ------------------------------------------------------------------ Types internes */
 
@@ -45,7 +46,12 @@ interface Message {
   auteur: Qui;
   creeLe: Date;
   pieces: S<'PieceJointe'>[];
+  /** Où le client a écrit, ou par où la réponse est partie (étape 20) */
+  canal?: S<'CanalConversation'>;
 }
+
+/** Numéro WhatsApp de la banque de démonstration (étape 20), ouvert avec le chat */
+export const WHATSAPP_DEMO = '+2252722000000';
 
 interface Evenement {
   type: TypeEvt;
@@ -103,6 +109,8 @@ export interface Ticket {
 
 interface Conversation extends EtatConversation {
   id: string;
+  /** Où le client a écrit en dernier : le portail, WhatsApp ou SMS (étape 20) */
+  canal: S<'CanalConversation'>;
   dernierMessageClientLe: Date | null;
   dernierMessageBanqueLe: Date | null;
   luClientLe: Date | null;
@@ -582,8 +590,18 @@ export class Moteur {
     t.evenements.push({ type, statutAvant: avant, statutApres: apres, acteur, visibleClient, date: new Date(this.maintenant) });
   }
 
-  private message(t: Ticket, type: S<'TypeCommentaire'>, contenu: string, auteur: Qui, pieces: S<'PieceJointe'>[] = []) {
-    t.messages.push({ id: this.nouvelId('3333'), type, contenu, auteur, creeLe: new Date(this.maintenant), pieces });
+  private message(t: Ticket, type: S<'TypeCommentaire'>, contenu: string, auteur: Qui, pieces: S<'PieceJointe'>[] = [], canal?: S<'CanalConversation'>) {
+    t.messages.push({ id: this.nouvelId('3333'), type, contenu, auteur, creeLe: new Date(this.maintenant), pieces, canal: type === 'NOTE_INTERNE' ? undefined : canal ?? 'WEB' });
+  }
+
+  /** Étape 20 : par où partira la réponse (WhatsApp dans les 24 h, SMS, sinon le suivi), comme l'API. */
+  private fil(t: Ticket) {
+    const c = this.chatActif ? t.conversation : null;
+    return canalDuFil(c, { whatsapp: this.chatActif, smsEntrant: this.chatActif }, this.maintenant);
+  }
+  private reponseVers(t: Ticket): S<'ReponseVers'> {
+    const f = this.fil(t);
+    return { canal: f.canal, finFenetreLe: f.finFenetreLe?.toISOString() ?? null };
   }
 
   private notifier(destinataireId: string, modele: string, sujet: string, contenu: string, reclamationId: string | null) {
@@ -707,7 +725,7 @@ export class Moteur {
   /* ============================================================== Portail public */
 
   banquePublique(): S<'BanquePublique'> {
-    return { nom: this.banque.nom, slug: this.banque.slug, logoUrl: this.banque.logoUrl, couleurPrimaire: this.banque.couleur, couleurSecondaire: null };
+    return { nom: this.banque.nom, slug: this.banque.slug, logoUrl: this.banque.logoUrl, couleurPrimaire: this.banque.couleur, couleurSecondaire: null, whatsapp: this.chatActif ? WHATSAPP_DEMO : null };
   }
 
   formulaire(codePoint: string): S<'FormulaireDepot'> {
@@ -943,6 +961,7 @@ export class Moteur {
           id: m.id,
           type: m.type as 'REPONSE_AU_CLIENT' | 'MESSAGE_DU_CLIENT',
           contenu: m.contenu,
+          canal: m.canal ?? null,
           auteur: m.type === 'MESSAGE_DU_CLIENT' ? 'CLIENT' : 'BANQUE',
           creeLe: m.creeLe.toISOString(),
           piecesJointes: m.pieces,
@@ -965,7 +984,7 @@ export class Moteur {
 
   private ouvrirConversation(t: Ticket): Conversation {
     t.conversation ??= {
-      id: this.nouvelId('7777'), dernierMessageClientLe: null, dernierMessageBanqueLe: null, luClientLe: null, luBanqueLe: null, avisClientLe: null,
+      id: this.nouvelId('7777'), canal: 'WEB', dernierMessageClientLe: null, dernierMessageBanqueLe: null, luClientLe: null, luBanqueLe: null, avisClientLe: null,
     };
     return t.conversation;
   }
@@ -990,7 +1009,7 @@ export class Moteur {
     const dernier = publics.at(-1);
     return {
       id: c.id,
-      canal: 'WEB',
+      canal: c.canal,
       reclamation: { id: t.id, numero: t.numero, statut: t.statut, priorite: t.priorite, categorie: this.categorie(t.categorieId).nom },
       client: { nom: this.client(t.clientId).nom },
       agent: t.agentId ? { id: t.agentId, nom: this.nomDe(t.agentId)! } : null,
@@ -999,7 +1018,7 @@ export class Moteur {
         : { extrait: extrait(t.description), auteur: 'CLIENT', date: t.creeLe.toISOString() },
       aRepondre: reponseDue(c, t.statut),
       nonLue: nonLueParLaBanque(c),
-      clientEnLigne: clientEnLigne(c, this.maintenant),
+      clientEnLigne: c.canal === 'WEB' && clientEnLigne(c, this.maintenant),
     };
   }
 
@@ -1043,13 +1062,14 @@ export class Moteur {
       messages: t.messages
         .filter((m) => m.type !== 'NOTE_INTERNE')
         .map((m) => ({
-          id: m.id, type: m.type, contenu: m.contenu, creeLe: m.creeLe.toISOString(), piecesJointes: m.pieces,
+          id: m.id, type: m.type, contenu: m.contenu, canal: m.canal ?? null, creeLe: m.creeLe.toISOString(), piecesJointes: m.pieces,
           auteur: { type: m.auteur.type, nom: m.auteur.type === 'UTILISATEUR' ? this.nomDe(m.auteur.id) : null },
         })),
       aRepondre: r.aRepondre,
       nonLue: r.nonLue,
       clientEnLigne: r.clientEnLigne,
       luParLeClientLe: c.luClientLe?.toISOString() ?? null,
+      reponseVers: this.reponseVers(t),
       operationsPossibles: this.operations(t, this.acteurUtilisateur(userId)),
     };
   }
@@ -1064,11 +1084,11 @@ export class Moteur {
     this.changer();
   }
 
-  messageClient(jeton: string, id: string, contenu: string) {
+  messageClient(jeton: string, id: string, contenu: string, canal: S<'CanalConversation'> = 'WEB') {
     const { t, acteur } = this.ticketDuClient(jeton, id);
     if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'Écrivez votre message');
     this.exigerOperation('MESSAGE_DU_CLIENT', t, acteur);
-    this.message(t, 'MESSAGE_DU_CLIENT', contenu.trim(), { type: 'CLIENT', id: t.clientId });
+    this.message(t, 'MESSAGE_DU_CLIENT', contenu.trim(), { type: 'CLIENT', id: t.clientId }, [], canal);
     if (t.statut === 'EN_ATTENTE_CLIENT') {
       this.exigerTransition('REPRENDRE_SUR_REPONSE', t, acteur);
       Object.assign(t, slaALaReprise(this.maintenant, t, this.sla));
@@ -1081,6 +1101,7 @@ export class Moteur {
     if (this.chatActif) {
       const c = this.ouvrirConversation(t);
       alerter = alerterAgent(c);
+      c.canal = canal;
       c.dernierMessageClientLe = new Date(this.maintenant);
       c.luClientLe = new Date(this.maintenant);
     }
@@ -1230,7 +1251,7 @@ export class Moteur {
         ? { mode: t.cloture.mode, motif: t.cloture.motif, precision: t.cloture.precision, par: t.cloture.parId ? { id: t.cloture.parId, nom: this.nomDe(t.cloture.parId)! } : null }
         : null,
       nbReouvertures: t.nbReouvertures,
-      messages: t.messages.map((m) => ({ id: m.id, type: m.type, contenu: m.contenu, auteur: qui(m.auteur), creeLe: m.creeLe.toISOString(), piecesJointes: m.pieces })),
+      messages: t.messages.map((m) => ({ id: m.id, type: m.type, contenu: m.contenu, canal: m.canal ?? null, auteur: qui(m.auteur), creeLe: m.creeLe.toISOString(), piecesJointes: m.pieces })),
       piecesJointes: t.pieces,
       chronologie: t.evenements.map((e) => ({
         type: e.type, statutAvant: e.statutAvant, statutApres: e.statutApres, acteur: qui(e.acteur), visibleClient: e.visibleClient, date: e.date.toISOString(),
@@ -1244,8 +1265,9 @@ export class Moteur {
       depotAssistant: !!t.viaAssistant,
       conversation: this.chatActif && t.conversation
         ? {
-          id: t.conversation.id, canal: 'WEB', aRepondre: reponseDue(t.conversation, t.statut), nonLue: nonLueParLaBanque(t.conversation),
-          clientEnLigne: clientEnLigne(t.conversation, this.maintenant), luParLeClientLe: t.conversation.luClientLe?.toISOString() ?? null,
+          id: t.conversation.id, canal: t.conversation.canal, aRepondre: reponseDue(t.conversation, t.statut), nonLue: nonLueParLaBanque(t.conversation),
+          clientEnLigne: t.conversation.canal === 'WEB' && clientEnLigne(t.conversation, this.maintenant), luParLeClientLe: t.conversation.luClientLe?.toISOString() ?? null,
+          reponseVers: this.reponseVers(t),
         }
         : null,
     };
@@ -1294,10 +1316,12 @@ export class Moteur {
       this.priseEnCharge(t, userId);
     }
     if (attendreReponse) this.exigerTransition('QUESTIONNER_CLIENT', t, acteur);
-    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId });
+    // Étape 20 : là où le client a écrit (WhatsApp dans les 24 h, SMS), la réponse elle-même part ; elle vaut avis
+    const fil = this.fil(t).canal;
+    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId }, [], fil);
     t.premiereReponseLe ??= new Date(this.maintenant);
     // Chat web (étape 17) : le client a ouvert le chat, le SMS attend 2 minutes qu'il lise
-    const differe = this.reponseDansConversation(t);
+    const differe = this.reponseDansConversation(t, fil !== 'WEB') || fil !== 'WEB';
     if (attendreReponse) {
       Object.assign(t, slaEnPause(this.maintenant, t, this.sla));
       t.aEteQuestionne = true;
@@ -1335,7 +1359,7 @@ export class Moteur {
     const acteur = this.acteurUtilisateur(userId);
     if (!contenu.trim()) throw erreur(422, 'MESSAGE_VIDE', 'La réponse finale au client est obligatoire');
     this.exigerTransition('RESOUDRE', t, acteur);
-    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId });
+    this.message(t, 'REPONSE_AU_CLIENT', contenu.trim(), { type: 'UTILISATEUR', id: userId }, [], this.fil(t).canal);
     t.premiereReponseLe ??= new Date(this.maintenant);
     this.reponseDansConversation(t, true);
     const r = slaALaResolution(this.maintenant, t.creeLe, t, this.sla);
@@ -1433,7 +1457,7 @@ export class Moteur {
       parStatut,
       parCategorie: compte((t) => t.categorieId, (k) => this.categorie(k).nom),
       parCanal: compte((t) => t.canal, (k) => (k === 'QR_CODE' ? 'QR code en agence' : 'Lien web')),
-      parAgence: compte((t) => t.agenceId ?? 'aucune', (k) => (k === 'aucune' ? 'Sans agence (lien web)' : AGENCES.find((a) => a.id === k)!.nom)),
+      parAgence: compte((t) => t.agenceId ?? 'aucune', (k) => (k === 'aucune' ? 'Sans agence (lien web, WhatsApp ou SMS)' : AGENCES.find((a) => a.id === k)!.nom)),
       delaiPremiereReponseMoyenMinutes: moyenne(repondues.map((t) => delaiPremiereReponse(t.premiereReponseLe!, t.creeLe, this.sla))),
       delaiResolutionMoyenMinutes: moyenne(resolues.map((t) => Math.floor(minutesOuvreesEntre(t.creeLe, t.resolueLe!, this.calendrier)))),
       tauxRespectSla: resolues.length ? resolues.filter((t) => t.slaRespecte).length / resolues.length : null,

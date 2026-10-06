@@ -1,6 +1,94 @@
 {
- "date": "2 octobre 2026 à 19:46",
- "classement": [],
+ "date": "5 octobre 2026 à 15:27",
+ "classement": [
+  {
+   "nom": "OpenAI",
+   "modele": "GPT-6 Luna (à reconfirmer)",
+   "triExact": 0,
+   "triIntention": 0,
+   "triNeufs": 0,
+   "brouillonQualite": 0,
+   "brouillonsSansAlerte": 0,
+   "echecs": 100,
+   "dureeP50": 267,
+   "dureeP95": 323,
+   "jetonsTri": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "jetonsBrouillon": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "coutMensuel": 0,
+   "notes": {
+    "donnees": 80,
+    "interdits": 0,
+    "qualite": 0,
+    "cout": 100,
+    "temps": 100,
+    "total": 49
+   }
+  },
+  {
+   "nom": "Anthropic",
+   "modele": "Claude Haiku 4.5",
+   "triExact": 0,
+   "triIntention": 0,
+   "triNeufs": 0,
+   "brouillonQualite": 0,
+   "brouillonsSansAlerte": 0,
+   "echecs": 100,
+   "dureeP50": 290,
+   "dureeP95": 348,
+   "jetonsTri": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "jetonsBrouillon": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "coutMensuel": 0,
+   "notes": {
+    "donnees": 70,
+    "interdits": 0,
+    "qualite": 0,
+    "cout": 100,
+    "temps": 100,
+    "total": 46
+   }
+  },
+  {
+   "nom": "Mistral AI",
+   "modele": "Mistral Small 4",
+   "triExact": 0,
+   "triIntention": 0,
+   "triNeufs": 0,
+   "brouillonQualite": 0,
+   "brouillonsSansAlerte": 0,
+   "echecs": 100,
+   "dureeP50": 193,
+   "dureeP95": 229,
+   "jetonsTri": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "jetonsBrouillon": {
+    "entree": 0,
+    "sortie": 0
+   },
+   "coutMensuel": 0,
+   "notes": {
+    "donnees": 60,
+    "interdits": 0,
+    "qualite": 0,
+    "cout": 100,
+    "temps": 100,
+    "total": 43
+   }
+  }
+ ],
  "regles": {
   "nom": "Règles, sans IA",
   "modele": "—",
@@ -11,7 +99,7 @@
   "brouillonsSansAlerte": 100,
   "echecs": 0,
   "dureeP50": 0,
-  "dureeP95": 1,
+  "dureeP95": 2,
   "jetonsTri": {
    "entree": 0,
    "sortie": 0
@@ -30,9 +118,5 @@
    "total": null
   }
  },
- "nonTestes": [
-  "Anthropic",
-  "OpenAI",
-  "Mistral AI"
- ]
+ "nonTestes": []
 }

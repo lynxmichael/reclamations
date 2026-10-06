@@ -73,7 +73,7 @@ test.describe.serial('activité des agences', () => {
     const fichier = readFileSync((await (await attente).path())!, 'utf8');
     expect(fichier).toContain('Agence;Code;Ville;Active');
     expect(fichier).toMatch(/Plateau;AG01;Abidjan;Oui/);
-    expect(fichier).toMatch(/Sans agence \(lien web\);/);
+    expect(fichier).toMatch(/Sans agence \(lien web, WhatsApp ou SMS\);/);
 
     // Son tableau de bord : filtré sur l'agence
     await detail.getByRole('link', { name: 'Son tableau de bord' }).click();
