@@ -4,15 +4,15 @@
  * calculées à la main avec ces horaires (même méthode que l'exemple vérifié de l'étape 4).
  */
 import type { S } from '../../api/types';
-import { id, t } from './commun';
+import { ALPHA, DOMAINE, id, t } from './commun';
 import { ADJOUA, AYA, FATOU, IBRAHIM, MAMADOU, SERGE, agence, categorie, ref } from './parametrage';
 
 type Resume = S<'ReclamationResume'>;
 
 function resume(
   n: number,
-  r: Omit<Resume, 'id' | 'numero' | 'enRetard' | 'escaladee' | 'echeanceSlaLe' | 'agentSuggere'> & {
-    echeanceSlaLe?: string | null; escaladee?: boolean; agentSuggere?: Resume['agentSuggere'];
+  r: Omit<Resume, 'id' | 'numero' | 'enRetard' | 'escaladee' | 'echeanceSlaLe' | 'agentSuggere' | 'doublonPossible' | 'envoiNonRemis'> & {
+    echeanceSlaLe?: string | null; escaladee?: boolean; agentSuggere?: Resume['agentSuggere']; doublonPossible?: boolean; envoiNonRemis?: boolean;
   },
 ): Resume {
   return {
@@ -24,10 +24,26 @@ function resume(
     echeanceSlaLe: r.echeanceSlaLe ?? null,
     enRetard: r.sla.etat === 'DEPASSE',
     escaladee: r.escaladee ?? false,
+    // Étape 21 : le même client a une autre réclamation de la même catégorie en cours
+    doublonPossible: r.doublonPossible ?? false,
+    // Étape 22 : un message au client n'a pas été remis, et rien ne l'a remplacé
+    envoiNonRemis: r.envoiNonRemis ?? false,
   };
 }
 
 export const FILE: Resume[] = [
+  // Étape 21 : saisie par Aya au guichet du Plateau, pour une cliente sans smartphone
+  resume(2454, {
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'GUICHET', categorie: categorie(4), agence: agence(1), agent: ref(AYA),
+    client: { nom: 'Ahou Kouamé' }, creeLe: t('25/09 15:02'), echeanceSlaLe: t('05/10 08:02'), envoiNonRemis: true,
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 2400, minutesRestantes: 2392 },
+  }),
+  // Étape 21 : Yao Kouassi, sans nouvelles, redépose sa réclamation de mercredi (ALP-2026-002442)
+  resume(2453, {
+    statut: 'OUVERTE', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(1), agence: agence(1), agent: null, agentSuggere: ref(MAMADOU),
+    client: { nom: 'Yao Kouassi' }, creeLe: t('25/09 14:50'), echeanceSlaLe: t('29/09 15:50'), doublonPossible: true,
+    sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 960, minutesRestantes: 940 },
+  }),
   resume(2452, {
     statut: 'OUVERTE', priorite: 'URGENTE', canal: 'QR_CODE', categorie: categorie(5), agence: agence(1), agent: null, agentSuggere: ref(MAMADOU),
     client: { nom: 'Adama Sanogo' }, creeLe: t('25/09 14:32'), echeanceSlaLe: t('28/09 09:02'),
@@ -80,7 +96,7 @@ export const FILE: Resume[] = [
   }),
   resume(2442, {
     statut: 'EN_COURS', priorite: 'NORMALE', canal: 'QR_CODE', categorie: categorie(1), agence: agence(1), agent: ref(AYA),
-    client: { nom: 'Yao Kouassi' }, creeLe: t('24/09 09:12'), echeanceSlaLe: t('28/09 17:22'),
+    client: { nom: 'Yao Kouassi' }, creeLe: t('24/09 09:12'), echeanceSlaLe: t('28/09 17:22'), doublonPossible: true,
     sla: { etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 960, minutesRestantes: 582 },
   }),
   resume(2441, {
@@ -100,10 +116,14 @@ export const FILE: Resume[] = [
   }),
 ];
 
+/** Étape 21 : Adjoua N'Guessan est absente du 24 au 28/09 ; ses réclamations sont « à réassigner ». */
+export const INDISPONIBLES = [ADJOUA.id];
+
 /** Compteurs des onglets, dérivés de la file (réclamations non clôturées). */
 export function compteurs(file: Resume[], moiId: string | null): S<'PageReclamations'>['compteurs'] {
   const actives = file.filter((r) => r.statut !== 'CLOTUREE');
   return {
+    aReassigner: moiId === null ? actives.filter((r) => r.agent && INDISPONIBLES.includes(r.agent.id)).length : 0,
     recues: moiId === null ? actives.filter((r) => r.agent === null).length : 0,
     assignees: actives.filter((r) => r.agent?.id === moiId).length,
     urgentes: actives.filter((r) => r.priorite === 'URGENTE').length,
@@ -134,8 +154,26 @@ const aya = { type: 'UTILISATEUR' as const, nom: 'Aya Konan' };
 const serge = { type: 'UTILISATEUR' as const, nom: 'Serge Kouadio' };
 
 export const PHOTO_TICKET: S<'PieceJointe'> = {
-  id: id('piece', 1), nomFichier: 'ticket-distributeur.jpg', typeMime: 'image/jpeg', tailleOctets: 1_258_291, creeLe: t('24/09 18:02'),
+  id: id('piece', 1), nomFichier: 'ticket-distributeur.jpg', typeMime: 'image/jpeg', tailleOctets: 1_258_291, creeLe: t('24/09 18:02'), antivirus: 'SAIN',
 };
+
+/* ------------------------------------------------------------ Messages au client (étape 22) */
+
+type Envoi = S<'EnvoiClient'>;
+const envoi = (n: number, e: Omit<Envoi, 'id' | 'motif' | 'tentatives' | 'prochaineTentativeLe' | 'envoyeLe' | 'remiseLe' | 'renvoyable'> & Partial<Envoi>): Envoi => ({
+  id: id('notification', 900 + n), motif: null, tentatives: 1, prochaineTentativeLe: null, envoyeLe: e.creeLe, remiseLe: null, renvoyable: false, ...e,
+});
+const SMS_YAO = '+225 07 •• •• •• 11';
+const EMAIL_YAO = 'y••••@exemple.ci';
+
+/** Yao Kouassi (2442) : accusé, prise en charge, question, par SMS (remis) et par e-mail (accepté). */
+const ENVOIS_42: Envoi[] = [
+  envoi(6, { canal: 'EMAIL', objet: 'Question de la banque', destinationMasquee: EMAIL_YAO, etat: 'ENVOYE', creeLe: t('24/09 10:20') }),
+  envoi(5, { canal: 'SMS', objet: 'Question de la banque', destinationMasquee: SMS_YAO, etat: 'REMIS', creeLe: t('24/09 10:20'), remiseLe: t('24/09 10:21') }),
+  envoi(4, { canal: 'EMAIL', objet: 'Changement de statut', destinationMasquee: EMAIL_YAO, etat: 'ENVOYE', creeLe: t('24/09 10:05') }),
+  envoi(2, { canal: 'EMAIL', objet: 'Accusé de dépôt', destinationMasquee: EMAIL_YAO, etat: 'ENVOYE', creeLe: t('24/09 09:12') }),
+  envoi(1, { canal: 'SMS', objet: 'Accusé de dépôt', destinationMasquee: SMS_YAO, etat: 'REMIS', creeLe: t('24/09 09:12'), remiseLe: t('24/09 09:12') }),
+];
 
 export const DESCRIPTION_42 =
   "Mercredi soir vers 19 h, j'ai voulu retirer 50 000 FCFA au distributeur de l'agence du Plateau. " +
@@ -156,6 +194,22 @@ export const CHAT_42: S<'Message'>[] = [
     contenu: 'Merci beaucoup ! Je le verrai quand sur mon compte ?',
   },
 ];
+
+/**
+ * Étape 21 : les autres réclamations de Yao Kouassi. Celle de cet après-midi (2453) n'est encore à
+ * personne : Aya la voit sans pouvoir l'ouvrir ; le superviseur, oui.
+ */
+type DuClient = S<'ReclamationDuClient'>;
+const YAO_53: DuClient = {
+  id: id('reclamation', 2453), numero: 'ALP-2026-002453', categorie: categorie(1), statut: 'OUVERTE', creeLe: t('25/09 14:50'), agent: null, doublonPossible: true, accessible: true,
+};
+const YAO_42: DuClient = {
+  id: id('reclamation', 2442), numero: 'ALP-2026-002442', categorie: categorie(1), statut: 'EN_COURS', creeLe: t('24/09 09:12'), agent: ref(AYA), doublonPossible: true, accessible: true,
+};
+const YAO_ANCIENNE: DuClient = {
+  id: id('reclamation', 2198), numero: 'ALP-2026-002198', categorie: categorie(2), statut: 'CLOTUREE', creeLe: '2026-06-12T10:15:00Z', agent: ref(MAMADOU), doublonPossible: false, accessible: true,
+};
+const pourAya = (d: DuClient): DuClient => ({ ...d, accessible: d.agent?.id === AYA.id });
 
 const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPossibles'> = {
   id: id('reclamation', 2442),
@@ -197,6 +251,11 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
   },
   cloture: null,
   nbReouvertures: 0,
+  saisiePar: null,
+  duMemeClient: [YAO_53, YAO_ANCIENNE],
+  rattacheeA: null,
+  doublonsRattaches: [],
+  envois: ENVOIS_42,
   messages: [
     {
       id: id('message', 1), type: 'REPONSE_AU_CLIENT', canal: 'WEB', auteur: aya, creeLe: t('24/09 10:20'), piecesJointes: [],
@@ -234,13 +293,15 @@ const ficheBase: Omit<S<'ReclamationDetail'>, 'actionsPossibles' | 'operationsPo
 export const FICHE_42: Record<'AGENT' | 'SUPERVISEUR' | 'ADMIN_ENTREPRISE', S<'ReclamationDetail'>> = {
   AGENT: {
     ...ficheBase,
+    // Étape 21 : la réclamation 2453 n'est pas à Aya, elle ne peut pas y rattacher celle-ci
+    duMemeClient: ficheBase.duMemeClient.map(pourAya),
     actionsPossibles: ['QUESTIONNER_CLIENT', 'RESOUDRE'],
-    operationsPossibles: ['CONSULTER', 'CHANGER_PRIORITE', 'ESCALADER', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT'],
+    operationsPossibles: ['CONSULTER', 'CHANGER_PRIORITE', 'ESCALADER', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT', 'RENVOYER_LIEN'],
   },
   SUPERVISEUR: {
     ...ficheBase,
-    actionsPossibles: ['QUESTIONNER_CLIENT', 'RESOUDRE', 'CLOTURER_DE_FORCE'],
-    operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT'],
+    actionsPossibles: ['QUESTIONNER_CLIENT', 'RESOUDRE', 'CLOTURER_DE_FORCE', 'RATTACHER'],
+    operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT', 'RENVOYER_LIEN'],
   },
   ADMIN_ENTREPRISE: {
     ...ficheBase,
@@ -273,8 +334,114 @@ export const FICHE_52: S<'ReclamationDetail'> = {
   chronologie: [{ type: 'CREATION', statutAvant: null, statutApres: 'OUVERTE', acteur: client, visibleClient: true, date: t('25/09 14:32') }],
   attributionSuggeree: { agent: ref(MAMADOU), groupe: { id: id('groupe', 1), nom: 'Monétique' } },
   conversation: null,
+  duMemeClient: [],
+  envois: [envoi(10, { canal: 'SMS', objet: 'Accusé de dépôt', destinationMasquee: '+225 05 •• •• •• 88', etat: 'REMIS', creeLe: t('25/09 14:32'), remiseLe: t('25/09 14:32') })],
   actionsPossibles: ['CLOTURER_DE_FORCE'],
-  operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE'],
+  operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE', 'RENVOYER_LIEN'],
+};
+
+/**
+ * Étape 21 : ALP-2026-002453, redéposée par Yao Kouassi faute de nouvelles. Le superviseur la
+ * rattache à ALP-2026-002442, qu'Aya traite déjà.
+ */
+export const FICHE_53: S<'ReclamationDetail'> = {
+  ...ficheBase,
+  id: YAO_53.id,
+  numero: YAO_53.numero,
+  statut: 'OUVERTE',
+  description: "Je reviens pour le retrait de 50 000 FCFA du distributeur du Plateau : l'argent n'est toujours pas revenu sur mon compte et personne ne m'a rappelé.",
+  agent: null,
+  pointDepot: { id: id('point', 2), libelle: 'Espace guichets' },
+  creeLe: YAO_53.creeLe,
+  sla: {
+    etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 960, echeanceLe: t('29/09 15:50'), alertePreventiveLe: t('29/09 09:50'),
+    enPauseDepuis: null, minutesRestantes: 940, enRetard: false, respecte: null,
+  },
+  jalons: { prisEnChargeLe: null, premiereReponseLe: null, resolueLe: null, clotureLe: null, clotureAutoPrevueLe: null, escaladeeLe: null, escaladeeAdminLe: null },
+  messages: [],
+  chronologie: [{ type: 'CREATION', statutAvant: null, statutApres: 'OUVERTE', acteur: client, visibleClient: true, date: YAO_53.creeLe }],
+  attributionSuggeree: { agent: ref(MAMADOU), groupe: { id: id('groupe', 1), nom: 'Monétique' } },
+  conversation: null,
+  duMemeClient: [YAO_42, YAO_ANCIENNE],
+  envois: [
+    envoi(12, { canal: 'EMAIL', objet: 'Accusé de dépôt', destinationMasquee: EMAIL_YAO, etat: 'ENVOYE', creeLe: YAO_53.creeLe }),
+    envoi(11, { canal: 'SMS', objet: 'Accusé de dépôt', destinationMasquee: SMS_YAO, etat: 'REMIS', creeLe: YAO_53.creeLe, remiseLe: YAO_53.creeLe }),
+  ],
+  actionsPossibles: ['CLOTURER_DE_FORCE', 'RATTACHER'],
+  operationsPossibles: ['CONSULTER', 'ASSIGNER', 'CHANGER_PRIORITE', 'NOTE_INTERNE', 'RENVOYER_LIEN'],
+};
+
+/** Étape 21 : ALP-2026-002454, saisie par Aya au guichet du Plateau pour Ahou Kouamé, sans smartphone. */
+export const FICHE_54: S<'ReclamationDetail'> = {
+  ...ficheBase,
+  id: id('reclamation', 2454),
+  numero: 'ALP-2026-002454',
+  statut: 'OUVERTE',
+  canal: 'GUICHET',
+  categorie: categorie(4),
+  description: 'La cliente conteste deux prélèvements de 7 500 FCFA intitulés « frais de tenue de compte » sur son relevé d\'août : elle dit en avoir déjà payé pour le trimestre. Elle a remis son relevé, scanné ci-dessous.',
+  pointDepot: { id: id('point', 11), libelle: 'Guichet' },
+  agent: ref(AYA),
+  client: { id: id('client', 9), nom: 'Ahou Kouamé', email: null, telephone: '+2250101020304' },
+  creeLe: t('25/09 15:02'),
+  saisiePar: ref(AYA),
+  piecesJointes: [
+    { id: id('piece', 9), nomFichier: 'releve-aout.pdf', typeMime: 'application/pdf', tailleOctets: 412_000, creeLe: t('25/09 15:02'), antivirus: 'SAIN' },
+    // Étape 22 : un document Word, accepté sans macro et analysé par l'antivirus
+    { id: id('piece', 10), nomFichier: 'courrier-contestation.docx', typeMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', tailleOctets: 38_912, creeLe: t('25/09 15:02'), antivirus: 'SAIN' },
+  ],
+  sla: {
+    etat: 'DANS_LES_DELAIS', delaiCibleMinutes: 2400, echeanceLe: t('05/10 08:02'), alertePreventiveLe: t('01/10 14:02'),
+    enPauseDepuis: null, minutesRestantes: 2392, enRetard: false, respecte: null,
+  },
+  jalons: { prisEnChargeLe: null, premiereReponseLe: null, resolueLe: null, clotureLe: null, clotureAutoPrevueLe: null, escaladeeLe: null, escaladeeAdminLe: null },
+  messages: [],
+  chronologie: [
+    { type: 'CREATION', statutAvant: null, statutApres: 'OUVERTE', acteur: aya, visibleClient: true, date: t('25/09 15:02') },
+    { type: 'PIECE_JOINTE', statutAvant: null, statutApres: null, acteur: aya, visibleClient: true, date: t('25/09 15:02') },
+    { type: 'ASSIGNATION', statutAvant: null, statutApres: null, acteur: aya, visibleClient: false, date: t('25/09 15:02') },
+  ],
+  conversation: null,
+  duMemeClient: [],
+  // Étape 22 : le téléphone d'Ahou Kouamé était éteint ; la passerelle a renvoyé « non remis »
+  envois: [
+    envoi(13, {
+      canal: 'SMS', objet: 'Accusé de dépôt', destinationMasquee: '+225 01 •• •• •• 04', etat: 'NON_REMIS', motif: 'INJOIGNABLE', creeLe: t('25/09 15:02'), renvoyable: true,
+    }),
+  ],
+  actionsPossibles: ['PRENDRE_EN_CHARGE'],
+  operationsPossibles: ['CONSULTER', 'CHANGER_PRIORITE', 'ESCALADER', 'NOTE_INTERNE', 'REPONDRE_AU_CLIENT', 'RENVOYER_LIEN'],
+};
+
+/** Étape 21 : récépissé de la saisie au guichet, avec le QR code du suivi (montré une fois au personnel). */
+export const ACCUSE_SAISIE_54: S<'AccuseSaisie'> = {
+  id: FICHE_54.id,
+  numero: FICHE_54.numero,
+  lienSuivi: `https://${ALPHA.slug}.${DOMAINE}/suivi/Ahk5bTJjZ3VpY2hldDU0`,
+  creeLe: FICHE_54.creeLe,
+  envoiPar: ['SMS'],
+  agent: ref(AYA),
+};
+
+/** Étape 21 : saisie incomplète (réponse 400 de saisirReclamation). */
+export const ERREUR_SAISIE: S<'Probleme'> = {
+  type: 'https://reclamations.example/erreurs/validation',
+  title: '2 champs à corriger',
+  status: 400,
+  code: 'VALIDATION',
+  erreurs: [
+    { champ: 'agenceId', message: 'Choisissez l\'agence du guichet' },
+    { champ: 'telephone', message: 'Ce numéro a 8 chiffres ; un numéro ivoirien en compte 10, par exemple 07 08 09 10 11' },
+  ],
+};
+
+/** Étape 21 : réassignation en lot des réclamations d'Adjoua, absente. */
+export const RESULTAT_EN_LOT: S<'ResultatAssignationEnLot'> = {
+  assignees: [
+    { id: id('reclamation', 2447), numero: 'ALP-2026-002447', agent: ref(MAMADOU) },
+    { id: id('reclamation', 2443), numero: 'ALP-2026-002443', agent: ref(AYA) },
+  ],
+  laissees: [],
 };
 
 /* ------------------------------------------------------------ Conversations (étape 17) */
@@ -350,13 +517,14 @@ export const AGENTS_ASSIGNABLES = [AYA, MAMADOU, ADJOUA, IBRAHIM].map(ref);
 
 export const NOTIFICATIONS_AGENT: S<'PageNotifications'> = {
   donnees: [
+    { id: id('notification', 5), modele: 'agent.envoi_non_remis', sujet: 'SMS non remis au client', contenu: 'ALP-2026-002454 : « Accusé de dépôt » n\'a pas été remis au +225 01 •• •• •• 04 (téléphone injoignable).', reclamationId: id('reclamation', 2454), creeLe: t('25/09 15:04'), lueLe: null },
     { id: id('notification', 4), modele: 'sla.alerte_preventive', sujet: 'Seuil d\'alerte atteint', contenu: 'ALP-2026-002448 : 75 % du délai consommé, échéance aujourd\'hui à 16:00.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 15:00'), lueLe: null },
     { id: id('notification', 3), modele: 'agent.assignation', sujet: 'Nouvelle réclamation assignée', contenu: 'ALP-2026-002448 (Fraude suspectée) vous a été assignée par Serge Kouadio.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 10:04'), lueLe: null },
     { id: id('notification', 2), modele: 'reclamation.urgente', sujet: 'Réclamation urgente', contenu: 'ALP-2026-002448, Fraude suspectée, déposée à l\'agence Plateau.', reclamationId: id('reclamation', 2448), creeLe: t('25/09 10:00'), lueLe: t('25/09 10:06') },
     { id: id('notification', 1), modele: 'agent.message_client', sujet: 'Message du client', contenu: 'Le client a répondu sur ALP-2026-002442.', reclamationId: id('reclamation', 2442), creeLe: t('24/09 18:02'), lueLe: t('25/09 08:01') },
   ],
-  pagination: { page: 1, parPage: 20, total: 4 },
-  nonLues: 2,
+  pagination: { page: 1, parPage: 20, total: 5 },
+  nonLues: 3,
 };
 
 /* ------------------------------------------------------------ Tableau de bord (§6.6) */
@@ -429,7 +597,7 @@ export const INDICATEURS: S<'Indicateurs'> = {
     { cle: id('agence', 3), libelle: 'Yopougon Siporex', total: 49 },
     { cle: id('agence', 4), libelle: 'Treichville', total: 21 },
     { cle: id('agence', 5), libelle: 'Bouaké Commerce', total: 18 },
-    { cle: 'aucune', libelle: 'Sans agence (lien web, WhatsApp ou SMS)', total: 79 },
+    { cle: 'aucune', libelle: 'Sans agence (lien web, téléphone, WhatsApp ou SMS)', total: 79 },
   ],
   delaiPremiereReponseMoyenMinutes: 104,
   delaiResolutionMoyenMinutes: 1386,

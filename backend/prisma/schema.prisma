@@ -70,6 +70,10 @@ enum CanalDepot {
   LIEN_WEB
   WHATSAPP
   SMS
+  /// Saisie par le personnel au guichet d'une agence (étape 21)
+  GUICHET
+  /// Saisie par le personnel pendant un appel (étape 21)
+  TELEPHONE
 
   @@map("canal_depot")
 }
@@ -140,6 +144,8 @@ enum TypeEvenement {
   DEPASSEMENT_SLA
   MESSAGE
   PIECE_JOINTE
+  /// Doublon joint à la réclamation principale du même client (étape 21) : il est clôturé
+  RATTACHEMENT
 
   @@map("type_evenement")
 }
@@ -204,6 +210,15 @@ enum CanalNotification {
   WHATSAPP
 
   @@map("canal_notification")
+}
+
+/// Étape 22 : analyse antivirus d'une pièce jointe
+enum EtatAntivirus {
+  EN_ATTENTE
+  SAIN
+  INFECTE
+
+  @@map("etat_antivirus")
 }
 
 enum StatutNotification {
@@ -689,6 +704,8 @@ model Reclamation {
   /// Précision obligatoire pour une clôture forcée
   commentaireCloture  String?             @map("commentaire_cloture")
   clotureParId        String?             @map("cloture_par_id") @db.Uuid
+  /// Doublon rattaché à la réclamation principale du même client (étape 21), clôturé « Doublon »
+  rattacheeAId        String?             @map("rattachee_a_id") @db.Uuid
 
   creeLe    DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
@@ -702,6 +719,8 @@ model Reclamation {
   agent         Utilisateur?   @relation("AgentAssigne", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   escaladeeVers Utilisateur?   @relation("EscaladeeVers", fields: [tenantId, escaladeeVersId], references: [tenantId, id], onDelete: Restrict)
   cloturePar    Utilisateur?   @relation("ClotureePar", fields: [tenantId, clotureParId], references: [tenantId, id], onDelete: Restrict)
+  rattacheeA    Reclamation?   @relation("Rattachement", fields: [tenantId, rattacheeAId], references: [tenantId, id], onDelete: Restrict)
+  doublons      Reclamation[]  @relation("Rattachement")
 
   commentaires  Commentaire[]
   piecesJointes PieceJointe[]
@@ -721,6 +740,7 @@ model Reclamation {
   @@index([tenantId, agenceId, creeLe])
   @@index([tenantId, categorieId, creeLe])
   @@index([tenantId, canal, creeLe])
+  @@index([tenantId, rattacheeAId])
   // Tâches planifiées des workers (alertes SLA, clôture automatique)
   @@index([statut, alertePreventiveLe])
   @@index([statut, echeanceSlaLe])
@@ -924,20 +944,25 @@ model AppelIa {
 /// Fichier joint (image ou PDF, 5 au plus au dépôt), avec empreinte SHA-256.
 /// Un fichier joint à une note interne n'est jamais visible du client.
 model PieceJointe {
-  id                     String     @id @default(uuid(7)) @db.Uuid
-  tenantId               String     @map("tenant_id") @db.Uuid
-  reclamationId          String     @map("reclamation_id") @db.Uuid
+  id                     String        @id @default(uuid(7)) @db.Uuid
+  tenantId               String        @map("tenant_id") @db.Uuid
+  reclamationId          String        @map("reclamation_id") @db.Uuid
   /// Message auquel le fichier est joint ; vide pour les fichiers du dépôt
-  commentaireId          String?    @map("commentaire_id") @db.Uuid
-  nomFichier             String     @map("nom_fichier") @db.VarChar(255)
-  typeMime               String     @map("type_mime") @db.VarChar(100)
-  tailleOctets           Int        @map("taille_octets")
+  commentaireId          String?       @map("commentaire_id") @db.Uuid
+  nomFichier             String        @map("nom_fichier") @db.VarChar(255)
+  typeMime               String        @map("type_mime") @db.VarChar(100)
+  tailleOctets           Int           @map("taille_octets")
   /// Clé dans le stockage objet (disque local en développement, compatible S3 en production)
-  cleStockage            String     @unique @map("cle_stockage") @db.VarChar(255)
-  empreinteSha256        String     @map("empreinte_sha256") @db.Char(64)
-  deposeParType          TypeActeur @map("depose_par_type")
-  deposeParUtilisateurId String?    @map("depose_par_utilisateur_id") @db.Uuid
-  creeLe                 DateTime   @default(now()) @map("cree_le") @db.Timestamptz(3)
+  cleStockage            String        @unique @map("cle_stockage") @db.VarChar(255)
+  empreinteSha256        String        @map("empreinte_sha256") @db.Char(64)
+  deposeParType          TypeActeur    @map("depose_par_type")
+  deposeParUtilisateurId String?       @map("depose_par_utilisateur_id") @db.Uuid
+  /// Étape 22 : analyse antivirus ; téléchargeable seulement SAIN, effacé du stockage si INFECTE
+  antivirus              EtatAntivirus @default(EN_ATTENTE)
+  analyseeLe             DateTime?     @map("analysee_le") @db.Timestamptz(3)
+  /// Nom du virus trouvé (INFECTE seulement)
+  virus                  String?       @db.VarChar(120)
+  creeLe                 DateTime      @default(now()) @map("cree_le") @db.Timestamptz(3)
 
   reclamation          Reclamation  @relation(fields: [tenantId, reclamationId], references: [tenantId, id], onDelete: Restrict)
   commentaire          Commentaire? @relation(fields: [tenantId, commentaireId], references: [tenantId, id], onDelete: Restrict)
@@ -1030,6 +1055,12 @@ model Notification {
   /// WhatsApp (étape 20) : catégorie et facturation indiquées par Meta à la remise du message
   categorieTarif            String?            @map("categorie_tarif") @db.VarChar(30)
   facturable                Boolean?
+  /// Étape 22 : échec temporaire, heure de la tentative suivante (1, 5, 30 puis 120 minutes)
+  prochaineTentativeLe      DateTime?          @map("prochaine_tentative_le") @db.Timestamptz(3)
+  /// Étape 22 : accusé de remise (SMS de la passerelle, WhatsApp de Meta)
+  remiseLe                  DateTime?          @map("remise_le") @db.Timestamptz(3)
+  /// Étape 22 : non remis, pourquoi (NUMERO_INVALIDE, INJOIGNABLE, EXPIRE, REFUSE, ADRESSE_INVALIDE, WHATSAPP_INDISPONIBLE, ERREUR_TECHNIQUE)
+  motifEchec                String?            @map("motif_echec") @db.VarChar(40)
   /// Empêche un double envoi (ex. sla.alerte_preventive:<réclamation>:<destinataire>)
   cleDeduplication          String?            @unique @map("cle_deduplication") @db.VarChar(200)
   envoyeeLe                 DateTime?          @map("envoyee_le") @db.Timestamptz(3)

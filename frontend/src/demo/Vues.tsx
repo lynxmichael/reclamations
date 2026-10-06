@@ -72,7 +72,14 @@ export function EcranClient({ d }: { d: Demo }) {
     case 'accuse':
       return <Accuse banque={banque} accuse={c.accuse} envoiPar="par SMS et par e-mail" surSuivre={() => a.suivre()} surAutre={a.nouveauDepot} />;
     case 'suivi':
-      return <Suivi suivi={moteur.suivi(c.jeton)} surDemanderCode={(canal) => a.demanderCode(c.jeton, canal)} surAvis={() => a.avis(c.jeton)} />;
+      return (
+        <Suivi
+          suivi={moteur.suivi(c.jeton)}
+          surDemanderCode={(canal) => a.demanderCode(c.jeton, canal)}
+          surAvis={() => a.avis(c.jeton)}
+          surChemin={(chemin) => a.suivre(decodeURIComponent(chemin.replace(/^\/suivi\//, '')))}
+        />
+      );
     case 'avis': {
       const avis = moteur.lireAvis(c.jeton);
       return <Avis key={`${c.jeton}-${avis.etat}`} avis={avis} erreur={c.erreur} surEnvoyer={(r) => a.donnerAvis(c.jeton, r)} surSuivi={() => a.suivre(c.jeton)} />;
@@ -101,6 +108,7 @@ export function EcranClient({ d }: { d: Demo }) {
           banque={banque}
           reclamation={moteur.maReclamation(session, c.id)}
           surRetour={a.espace}
+          surOuvrir={a.ouvrir}
           surQuitter={a.quitter}
           surConfirmer={() => a.confirmer(c.id)}
           surContester={(motif) => a.contester(c.id, motif)}
@@ -201,6 +209,7 @@ export function EcranBanque({ d }: { d: Demo }) {
             surExporter={a.exporter}
             surValiderSuggestion={(r, agent) => d.actionsFiche(r.id).assigner?.(agent.id)}
             enAvant={d.demoId}
+            indisponibles={moteur.indisponibles()}
           />
         );
         break;
@@ -298,7 +307,7 @@ export function EcranBanque({ d }: { d: Demo }) {
       maintenant={maintenant}
       surNaviguer={a.naviguer}
       surCloche={a.cloche}
-      surOuvrirNotification={a.ouvrirFiche}
+      surOuvrirNotification={(id) => id && a.ouvrirFiche(id)}
       surToutLire={a.toutLire}
     >
       {contenu}

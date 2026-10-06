@@ -50,6 +50,23 @@ export class PublicControleur {
     return this.service.verifierCode(e.chemin.jetonSuivi, (e.corps as { code: string }).code, appel);
   }
 
+  // ---- Étape 21 : retrouver ses réclamations ---------------------------------------
+
+  @Operation('lireBanquePortail')
+  banquePortail(@EntreesValidees() e: Entrees) {
+    return this.service.banquePortail(e.chemin.slug);
+  }
+
+  @Operation('demanderCodeAcces')
+  demanderCodeAcces(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
+    return this.service.demanderCodeAcces(e.chemin.slug, e.corps as { contact: string; jetonAntiRobot: string }, appel);
+  }
+
+  @Operation('verifierCodeAcces')
+  verifierCodeAcces(@EntreesValidees() e: Entrees, @AppelCourant() appel: Appel) {
+    return this.service.verifierCodeAcces(e.chemin.slug, e.corps as { contact: string; code: string }, appel);
+  }
+
   @Operation('lireLogo')
   async logo(@EntreesValidees() e: Entrees, @Res() res: Response) {
     const { contenu, type } = await this.service.logo(e.chemin.fichier);

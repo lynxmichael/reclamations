@@ -356,6 +356,87 @@ paths:
         '422': { $ref: '#/components/responses/RegleMetier' }
         '429': { $ref: '#/components/responses/TropDeRequetes' }
 
+  /public/banques/{slug}:
+    get:
+      tags: [Dépôt et suivi]
+      operationId: lireBanquePortail
+      summary: Nom et couleurs de la banque du portail (étape 21)
+      description: Pour l'accueil du portail et « Retrouver mes réclamations », sans QR code ni lien de suivi.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: La banque
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BanquePublique' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/banques/{slug}/acces:
+    post:
+      tags: [Dépôt et suivi]
+      operationId: demanderCodeAcces
+      summary: Retrouver ses réclamations — recevoir un code (étape 21)
+      description: |
+        Le client a perdu son lien de suivi : il donne son téléphone ou son e-mail. S'il a des réclamations
+        dans cette banque, un code à 6 chiffres part à ce numéro ou à cette adresse (10 minutes). La réponse
+        est la même dans tous les cas : elle ne dit pas si le numéro est connu. Exige un défi anti-robot ;
+        3 demandes par heure et par numéro ou adresse.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DemandeAcces' }
+      responses:
+        '200':
+          description: Code envoyé s'il y a des réclamations à ce numéro ou à cette adresse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpEnvoye' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /public/banques/{slug}/acces/verification:
+    post:
+      tags: [Dépôt et suivi]
+      operationId: verifierCodeAcces
+      summary: Retrouver ses réclamations — vérifier le code (étape 21)
+      description: |
+        Bon code : la session de l'espace client (30 minutes), avec toutes ses réclamations dans cette
+        banque. Un numéro inconnu se comporte comme un code faux. 5 essais par code, et par numéro ou
+        adresse en 10 minutes.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationAcces' }
+      responses:
+        '200':
+          description: Session ouverte
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionClient' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   /public/logos/{fichier}:
     get:
       tags: [Dépôt et suivi]
@@ -564,6 +645,7 @@ paths:
       tags: [Espace client]
       operationId: telechargerPieceJointeClient
       summary: Télécharger une pièce jointe visible du client
+      description: "Étape 22 : seulement si l'antivirus l'a déclarée saine ; sinon 409 `FICHIER_EN_ANALYSE` ou `FICHIER_SUPPRIME`."
       x-roles: [CLIENT]
       security:
         - jetonClient: []
@@ -574,6 +656,7 @@ paths:
         '200': { $ref: '#/components/responses/Fichier' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
 
   # ===========================================================================
   #  Authentification du personnel
@@ -872,6 +955,81 @@ paths:
         '400': { $ref: '#/components/responses/Invalide' }
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
+
+    post:
+      tags: [Réclamations]
+      operationId: saisirReclamation
+      summary: Saisir la réclamation d'un client, au guichet ou au téléphone (étape 21)
+      description: |
+        Pour le client sans smartphone, ou qui appelle : un agent ou un superviseur saisit la réclamation
+        à sa place. `GUICHET` exige l'agence ; `TELEPHONE` l'accepte en option (l'agence dont parle le
+        client). Mêmes règles qu'au portail : catégorie active, description, nom, un téléphone ou un
+        e-mail au moins, 5 pièces jointes. `consentementInforme` : le client a été informé de la politique
+        de données de la banque ; la version en vigueur est enregistrée, et la chronologie et le journal
+        d'audit disent qui l'a saisie. L'accusé de dépôt part au client comme au portail (SMS, e-mail),
+        avec le lien de suivi, que la réponse donne aussi pour le récépissé imprimé. Un agent se l'assigne
+        par défaut (`meLAssigner`) ; sinon, l'attribution habituelle (étape 16). Idempotent avec
+        l'en-tête `Idempotency-Key`. 60 saisies par heure et par personne.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: saisir
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/SaisieReclamation' }
+            encoding:
+              fichiers:
+                contentType: image/jpeg, image/png, image/webp, application/pdf
+      responses:
+        '201':
+          description: Réclamation enregistrée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccuseSaisie' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '413': { $ref: '#/components/responses/FichierTropVolumineux' }
+        '415': { $ref: '#/components/responses/TypeNonSupporte' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /banque/reclamations/assignation-en-lot:
+    post:
+      tags: [Réclamations]
+      operationId: assignerEnLot
+      summary: Assigner ou répartir plusieurs réclamations (étape 21)
+      description: |
+        Par exemple les dossiers d'un agent absent ou d'un compte désactivé (file `a-reassigner`).
+        `agentId` : toutes à cet agent actif. `repartir` : chacune à l'agent actif et présent le moins
+        chargé — des groupes de sa catégorie et de son agence si l'attribution automatique est ouverte et
+        qu'ils en ont un, sinon de toute la banque. Chacune comme `assignerReclamation` : machine d'états,
+        chronologie, journal d'audit, notification au nouvel agent. Une réclamation impossible à assigner
+        (clôturée, introuvable, déjà à cet agent, aucun agent disponible) est laissée telle quelle et
+        listée avec sa raison.
+      x-roles: [SUPERVISEUR]
+      security:
+        - jetonPersonnel: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignationEnLot' }
+      responses:
+        '200':
+          description: Réclamations assignées et laissées
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultatAssignationEnLot' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
 
   /banque/reclamations/export:
     get:
@@ -1182,11 +1340,100 @@ paths:
         '409': { $ref: '#/components/responses/Conflit' }
         '422': { $ref: '#/components/responses/RegleMetier' }
 
+  /banque/reclamations/{id}/rattachement:
+    post:
+      tags: [Réclamations]
+      operationId: rattacherReclamation
+      summary: Rattacher un doublon à la réclamation principale du même client (étape 21)
+      description: |
+        La réclamation `id` est un doublon de `principaleId` : même client, toutes deux non clôturées.
+        Elle est clôturée (motif « Doublon », précision « Rattachée à … »), son SLA s'arrête, sans
+        enquête de satisfaction ; elle garde ses messages et pièces jointes, consultables depuis la
+        principale. Le client reçoit un seul message, avec le lien de suivi de la principale. Réservé au
+        superviseur, ou à l'agent assigné aux deux. Une autre cliente, la même réclamation, une principale
+        clôturée ou elle-même rattachée : 422 `RATTACHEMENT_IMPOSSIBLE`.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: rattacher
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Rattachement' }
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+
+  /banque/reclamations/{id}/lien-suivi:
+    post:
+      tags: [Réclamations]
+      operationId: renvoyerLienSuivi
+      summary: Renvoyer au client son lien de suivi (étape 21)
+      description: |
+        Le client a perdu le SMS ou l'e-mail de l'accusé. Le lien part aux seules coordonnées du dossier :
+        par SMS (ou sur WhatsApp, là où il écrit) et par e-mail. Réservé à l'agent assigné et au
+        superviseur, à tout statut ; 3 fois par heure et par réclamation ; inscrit au journal d'audit.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: renvoyerLienSuivi
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Lien renvoyé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LienSuiviRenvoye' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
+  /banque/reclamations/{id}/envois/{envoiId}/renvoi:
+    post:
+      tags: [Réclamations]
+      operationId: renvoyerMessage
+      summary: Renvoyer au client un message non remis (étape 22)
+      description: |
+        Le même message, à la même coordonnée (celle du dossier). Seulement s'il est non remis et que son
+        texte est gardé (accusé, réponse, résolution, clôture, lien de suivi…), pas un code ni un message
+        de conversation : sinon 422 `MESSAGE_NON_RENVOYABLE`. Réservé à l'agent assigné et au superviseur ;
+        3 renvois par heure et par réclamation ; inscrit au journal d'audit.
+      x-roles: [AGENT, SUPERVISEUR]
+      x-action: renvoyerMessage
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/EnvoiId'
+      responses:
+        '200': { $ref: '#/components/responses/Reclamation' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
+        '422': { $ref: '#/components/responses/RegleMetier' }
+        '429': { $ref: '#/components/responses/TropDeRequetes' }
+
   /banque/reclamations/{id}/pieces-jointes/{pieceId}:
     get:
       tags: [Réclamations]
       operationId: telechargerPieceJointe
       summary: Télécharger une pièce jointe
+      description: |
+        Toujours en pièce jointe (`Content-Disposition: attachment`), jamais affichée par le navigateur.
+        Étape 22 : seulement si l'antivirus l'a déclarée saine ; sinon 409 `FICHIER_EN_ANALYSE` ou `FICHIER_SUPPRIME`.
       x-roles: [AGENT, SUPERVISEUR, ADMIN_ENTREPRISE]
       security:
         - jetonPersonnel: []
@@ -1198,6 +1445,7 @@ paths:
         '401': { $ref: '#/components/responses/NonAuthentifie' }
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
+        '409': { $ref: '#/components/responses/Conflit' }
 
   # ===========================================================================
   #  Banque : tableau de bord et notifications
@@ -2511,8 +2759,10 @@ paths:
       operationId: lireFacturationSms
       summary: SMS et segments envoyés par banque sur un mois (refacturation)
       description: |
-        Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois ;
-        `echecs` : SMS créés pendant le mois et abandonnés après 5 tentatives. Toutes les banques
+        Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois
+        (facturés, même si l'opérateur ne les remet pas) ; `remis` (étape 22) : ceux que l'accusé de remise
+        dit arrivés au téléphone ; `echecs` : SMS créés pendant le mois et non remis (refusés par la
+        passerelle, abandonnés après 5 tentatives, ou non remis selon l'accusé). Toutes les banques
         existant à la fin du mois figurent, même sans SMS.
       x-roles: [SUPER_ADMIN]
       security:
@@ -2679,6 +2929,36 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/SmsEntrant' }
+      responses:
+        '200': { $ref: '#/components/responses/Recu' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+
+  /webhooks/sms/remise:
+    post:
+      tags: [Canaux]
+      operationId: recevoirRemiseSms
+      summary: Accusé de remise d'un SMS envoyé, transmis par la passerelle de Makor (étape 22)
+      description: |
+        Interface proposée à la passerelle (à confirmer avec son équipe), signée comme les SMS reçus
+        (`X-Signature`, HMAC-SHA256 du corps avec SMS_ENTRANT_SECRET ; absente ou fausse : 401). Le SMS est
+        retrouvé par `reference` (l'identifiant envoyé avec le SMS) ou par `id` (celui rendu par la
+        passerelle). REMIS : remis au téléphone ; NON_REMIS, EXPIRE (téléphone éteint trop longtemps) et
+        REJETE (refusé par l'opérateur) : non remis, l'agent est prévenu. EN_COURS est ignoré. Un SMS
+        inconnu, ou déjà remis ou non remis, est ignoré : 200.
+      x-roles: [PUBLIC]
+      security: []
+      parameters:
+        - name: X-Signature
+          in: header
+          required: false
+          description: "sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE"
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RemiseSms' }
       responses:
         '200': { $ref: '#/components/responses/Recu' }
         '400': { $ref: '#/components/responses/Invalide' }
@@ -2867,6 +3147,18 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    EnvoiId:
+      name: envoiId
+      in: path
+      required: true
+      description: Un message au client (fiche, champ envois)
+      schema: { type: string, format: uuid }
+    Slug:
+      name: slug
+      in: path
+      required: true
+      description: Adresse du portail de la banque (`<slug>.<domaine>`)
+      schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', examples: ['alpha'] }
     CodePoint:
       name: code
       in: path
@@ -2911,10 +3203,12 @@ components:
     File:
       name: file
       in: query
-      description: File de traitement (§6.2)
+      description: |
+        File de traitement (§6.2). `a-reassigner` (étape 21) : réclamations non clôturées d'un agent
+        désactivé, ou absent aujourd'hui (attribution ouverte) ; vide pour un agent.
       schema:
         type: string
-        enum: [toutes, recues, assignees, urgentes, en-retard, escaladees]
+        enum: [toutes, recues, assignees, urgentes, en-retard, escaladees, a-reassigner]
         default: toutes
     FiltreStatut:
       name: statut
@@ -3031,7 +3325,7 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
     FichierTropVolumineux:
-      description: Fichier au-delà de 5 Mo (1 Mo pour un logo)
+      description: Fichier au-delà de 10 Mo (1 Mo pour un logo)
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Probleme' }
@@ -3104,8 +3398,8 @@ components:
       enum: [NORMALE, URGENTE]
     CanalDepot:
       type: string
-      description: "QR code en agence, lien web, ou numéro WhatsApp et SMS de la banque (étape 20)"
-      enum: [QR_CODE, LIEN_WEB, WHATSAPP, SMS]
+      description: "QR code en agence, lien web, numéro WhatsApp et SMS de la banque (étape 20), saisie par le personnel au guichet ou au téléphone (étape 21)"
+      enum: [QR_CODE, LIEN_WEB, WHATSAPP, SMS, GUICHET, TELEPHONE]
     RoleUtilisateur:
       type: string
       enum: [SUPER_ADMIN, ADMIN_ENTREPRISE, SUPERVISEUR, AGENT]
@@ -3120,7 +3414,7 @@ components:
       type: string
       enum: [CREATION, PRISE_EN_CHARGE, QUESTION_AU_CLIENT, REPONSE_DU_CLIENT, RESOLUTION, CONFIRMATION, CONTESTATION,
         CLOTURE_AUTOMATIQUE, CLOTURE_FORCEE, ASSIGNATION, CHANGEMENT_PRIORITE, ESCALADE, ESCALADE_ADMIN,
-        ALERTE_SLA_PREVENTIVE, DEPASSEMENT_SLA, MESSAGE, PIECE_JOINTE]
+        ALERTE_SLA_PREVENTIVE, DEPASSEMENT_SLA, MESSAGE, PIECE_JOINTE, RATTACHEMENT]
     ModeCloture:
       type: string
       enum: [CONFIRMATION_CLIENT, AUTOMATIQUE, FORCEE]
@@ -3140,11 +3434,11 @@ components:
       type: string
       description: Actions de la machine d'états (étape 4)
       enum: [PRENDRE_EN_CHARGE, QUESTIONNER_CLIENT, REPRENDRE_SUR_REPONSE, RESOUDRE, CONFIRMER, CONTESTER,
-        CLOTURER_AUTOMATIQUEMENT, CLOTURER_DE_FORCE]
+        CLOTURER_AUTOMATIQUEMENT, CLOTURER_DE_FORCE, RATTACHER]
     OperationTicket:
       type: string
       description: Opérations sans changement de statut (étape 4)
-      enum: [CONSULTER, ASSIGNER, CHANGER_PRIORITE, ESCALADER, NOTE_INTERNE, REPONDRE_AU_CLIENT, MESSAGE_DU_CLIENT]
+      enum: [CONSULTER, ASSIGNER, CHANGER_PRIORITE, ESCALADER, NOTE_INTERNE, REPONDRE_AU_CLIENT, MESSAGE_DU_CLIENT, RENVOYER_LIEN]
     EtatChrono:
       type: string
       description: |
@@ -3227,6 +3521,13 @@ components:
         - SIGNATURE_INVALIDE
         - NUMERO_DEJA_UTILISE
         - CANAL_NON_RACCORDE
+        # Étape 21 : doublons
+        - RATTACHEMENT_IMPOSSIBLE
+        # Étape 22 : pièces jointes analysées, envois au client
+        - FICHIER_INFECTE
+        - FICHIER_EN_ANALYSE
+        - FICHIER_SUPPRIME
+        - MESSAGE_NON_RENVOYABLE
         # Serveur
         - ERREUR_INTERNE
 
@@ -3267,7 +3568,7 @@ components:
         nom: { type: string }
     Sante:
       type: object
-      required: [statut, base, redis, worker, envois, disque, version]
+      required: [statut, base, redis, worker, envois, disque, antivirus, version]
       properties:
         statut:
           type: string
@@ -3287,6 +3588,10 @@ components:
           type: string
           enum: [ok, presque_plein, inconnu]
           description: espace libre du volume des pièces jointes (moins de 5 % ou de 2 Gio → presque_plein)
+        antivirus:
+          type: string
+          enum: [ok, indisponible, desactive]
+          description: "Étape 22 : ClamAV répond (ok) ; desactive en développement seulement (ANTIVIRUS=aucun)"
         version:
           type: string
           description: étiquette de l'image déployée (VERSION de .env.production)
@@ -3304,16 +3609,26 @@ components:
       examples: ['#0B5FFF']
     PieceJointe:
       type: object
-      required: [id, nomFichier, typeMime, tailleOctets, creeLe]
+      required: [id, nomFichier, typeMime, tailleOctets, creeLe, antivirus]
       properties:
         id: { type: string, format: uuid }
         nomFichier: { type: string, examples: ['releve.pdf'] }
         typeMime: { type: string, examples: ['application/pdf'] }
         tailleOctets: { type: integer, minimum: 1 }
         creeLe: { $ref: '#/components/schemas/Horodatage' }
+        antivirus: { $ref: '#/components/schemas/EtatAntivirus' }
+    EtatAntivirus:
+      type: string
+      description: |
+        Étape 22 : analyse antivirus (ClamAV). SAIN : téléchargeable. EN_ATTENTE : l'antivirus ne répondait
+        pas au dépôt, le fichier sera analysé sous peu (téléchargement refusé, 409 FICHIER_EN_ANALYSE).
+        INFECTE : un virus a été trouvé après coup, le fichier est effacé (409 FICHIER_SUPPRIME).
+      enum: [EN_ATTENTE, SAIN, INFECTE]
     Fichiers:
       type: array
-      description: 5 fichiers au plus, 5 Mo chacun, JPEG, PNG, WebP ou PDF
+      description: |
+        5 fichiers au plus, 10 Mo chacun : JPEG, PNG, WebP, PDF ou Word (.docx sans macro), reconnus au
+        contenu. Chaque fichier est analysé par l'antivirus : infecté, il est refusé (422 FICHIER_INFECTE).
       maxItems: 5
       items: { type: string, format: binary }
 
@@ -3366,11 +3681,11 @@ components:
           required: [maxFichiers, maxOctets, types]
           properties:
             maxFichiers: { type: integer, const: 5 }
-            maxOctets: { type: integer, examples: [5242880] }
+            maxOctets: { type: integer, examples: [10485760] }
             types:
               type: array
               items: { type: string }
-              examples: [['image/jpeg', 'image/png', 'image/webp', 'application/pdf']]
+              examples: [['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']]
     DefiAntiRobot:
       type: object
       description: Défi de preuve de travail (étape 11), champs d'ALTCHA en français
@@ -3427,8 +3742,13 @@ components:
     SuiviPublic:
       type: object
       description: Chronologie seule — ni description, ni messages, ni coordonnées
-      required: [numero, statut, categorie, creeLe, banque, etapes, avis]
+      required: [numero, statut, categorie, creeLe, banque, etapes, avis, rattacheeA]
       properties:
+        rattacheeA:
+          description: "Étape 21 : doublon joint à la réclamation principale du même client, à suivre à cette adresse du portail"
+          oneOf:
+            - $ref: '#/components/schemas/RattacheeA'
+            - type: 'null'
         avis:
           description: Enquête de satisfaction de la réclamation clôturée (étape 15) ; vide s'il n'y en a pas
           oneOf:
@@ -3540,8 +3860,13 @@ components:
     ReclamationClient:
       type: object
       required: [id, numero, statut, categorie, description, creeLe, clotureAutoPrevueLe, messages, piecesJointes, etapes, actionsPossibles,
-        operationsPossibles, avis, chat]
+        operationsPossibles, avis, chat, rattacheeA]
       properties:
+        rattacheeA:
+          description: "Étape 21 : doublon joint à la réclamation principale"
+          oneOf:
+            - $ref: '#/components/schemas/RattacheeA'
+            - type: 'null'
         chat:
           description: Chat web (étape 17) ; vide si Makor ne l'a pas ouvert à la banque (fil de messages simple)
           oneOf:
@@ -3730,8 +4055,15 @@ components:
     # ---- Banque : réclamations --------------------------------------------------------
     ReclamationResume:
       type: object
-      required: [id, numero, statut, priorite, canal, categorie, agence, agent, agentSuggere, client, creeLe, echeanceSlaLe, enRetard, escaladee, sla]
+      required: [id, numero, statut, priorite, canal, categorie, agence, agent, agentSuggere, client, creeLe, echeanceSlaLe, enRetard, escaladee, sla,
+        doublonPossible, envoiNonRemis]
       properties:
+        envoiNonRemis:
+          type: boolean
+          description: "Étape 22 : un message au client n'a pas été remis, et rien ne l'a remplacé depuis"
+        doublonPossible:
+          type: boolean
+          description: "Étape 21 : le même client a une autre réclamation non clôturée de la même catégorie, déposée à moins de 30 jours d'écart"
         id: { type: string, format: uuid }
         numero: { type: string, examples: ['ALP-2026-000042'] }
         statut: { $ref: '#/components/schemas/StatutReclamation' }
@@ -3784,8 +4116,9 @@ components:
         compteurs:
           type: object
           description: "Réclamations non clôturées de chaque file, pour l'utilisateur connecté et sans les autres filtres : les pastilles des onglets"
-          required: [recues, assignees, urgentes, enRetard, escaladees]
+          required: [recues, assignees, urgentes, enRetard, escaladees, aReassigner]
           properties:
+            aReassigner: { type: integer, minimum: 0, description: "Étape 21 : d'un agent désactivé ou absent aujourd'hui (0 pour un agent)" }
             recues: { type: integer, minimum: 0, description: "Non assignées (0 pour un agent)" }
             assignees: { type: integer, minimum: 0, description: "Assignées à l'utilisateur connecté" }
             urgentes: { type: integer, minimum: 0 }
@@ -3875,8 +4208,32 @@ components:
       type: object
       required: [id, numero, statut, priorite, canal, description, categorie, agence, pointDepot, agent, escaladeeVers, client,
         creeLe, sla, jalons, cloture, nbReouvertures, messages, piecesJointes, chronologie, actionsPossibles, operationsPossibles, avis,
-        attributionSuggeree, conversation, depotAssistant]
+        attributionSuggeree, conversation, depotAssistant, saisiePar, duMemeClient, rattacheeA, doublonsRattaches, envois]
       properties:
+        envois:
+          type: array
+          maxItems: 50
+          description: "Étape 22 : les messages envoyés au client pour cette réclamation, les plus récents d'abord (jamais leur texte)"
+          items: { $ref: '#/components/schemas/EnvoiClient' }
+        saisiePar:
+          description: "Étape 21 : saisie au guichet ou au téléphone par cette personne de la banque"
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        duMemeClient:
+          type: array
+          maxItems: 10
+          description: "Étape 21 : les autres réclamations du même client, les plus récentes d'abord"
+          items: { $ref: '#/components/schemas/ReclamationDuClient' }
+        rattacheeA:
+          description: "Étape 21 : doublon joint à cette réclamation principale"
+          oneOf:
+            - $ref: '#/components/schemas/RattacheeA'
+            - type: 'null'
+        doublonsRattaches:
+          type: array
+          description: "Étape 21 : doublons joints à cette réclamation"
+          items: { $ref: '#/components/schemas/RattacheeA' }
         depotAssistant: { type: boolean, description: "Déposée avec l'assistant automatique du portail (étape 18)" }
         conversation:
           description: Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque
@@ -3953,6 +4310,171 @@ components:
           type: array
           description: Opérations permises à l'utilisateur connecté
           items: { $ref: '#/components/schemas/OperationTicket' }
+    # ---- Étape 21 : saisie par le personnel, doublons, réaffectation, réclamations retrouvées ----
+    ReclamationDuClient:
+      type: object
+      description: Une autre réclamation du même client, sur la fiche
+      required: [id, numero, categorie, statut, creeLe, agent, doublonPossible, accessible]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        categorie: { $ref: '#/components/schemas/ReferenceNommee' }
+        statut: { $ref: '#/components/schemas/StatutReclamation' }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        doublonPossible:
+          type: boolean
+          description: Même catégorie, toutes deux non clôturées, déposées à moins de 30 jours d'écart
+        accessible:
+          type: boolean
+          description: L'utilisateur connecté peut l'ouvrir (un agent, seulement les siennes)
+    RattacheeA:
+      type: object
+      required: [id, numero, chemin]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string }
+        chemin:
+          type: [string, 'null']
+          description: "Pour le client : sa page de suivi sur le portail ; vide pour le personnel"
+          examples: ['/suivi/Qm9uam91ckJhbnF1ZUFscGhh']
+    SaisieReclamation:
+      type: object
+      description: Un e-mail ou un téléphone au moins, comme au portail (arbitrage 1)
+      required: [canal, categorieId, description, nom, consentementInforme]
+      anyOf:
+        - required: [email]
+        - required: [telephone]
+      properties:
+        canal: { type: string, enum: [GUICHET, TELEPHONE] }
+        agenceId: { type: string, format: uuid, description: "Obligatoire au guichet ; au téléphone, l'agence dont parle le client" }
+        categorieId: { type: string, format: uuid }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        nom: { type: string, minLength: 2, maxLength: 160 }
+        email: { type: string, format: email, maxLength: 254 }
+        telephone: { type: string, maxLength: 25, description: "Format libre, normalisé en E.164 (+225 par défaut)" }
+        consentementInforme: { type: boolean, const: true, description: "Le client a été informé de la politique de données de la banque" }
+        urgente: { type: boolean, default: false, description: "Priorité urgente dès la saisie (sinon celle de la catégorie)" }
+        meLAssigner: { type: boolean, default: true, description: "Un agent se l'assigne ; ignoré pour un superviseur" }
+        fichiers: { $ref: '#/components/schemas/Fichiers' }
+    AccuseSaisie:
+      type: object
+      required: [id, numero, lienSuivi, creeLe, envoiPar, agent]
+      properties:
+        id: { type: string, format: uuid }
+        numero: { type: string, examples: ['ALP-2026-000042'] }
+        lienSuivi: { type: string, format: uri, description: "Pour le QR code du récépissé ; il n'est plus montré au personnel ensuite" }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        envoiPar:
+          type: array
+          description: Canaux de l'accusé envoyé au client
+          items: { $ref: '#/components/schemas/CanalOtp' }
+        agent:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+    Rattachement:
+      type: object
+      required: [principaleId]
+      properties:
+        principaleId: { type: string, format: uuid, description: "Réclamation principale du même client, non clôturée" }
+    EnvoiClient:
+      type: object
+      description: Un message au client (étape 22) ; sa coordonnée masquée, jamais son texte
+      required: [id, canal, objet, destinationMasquee, etat, motif, tentatives, prochaineTentativeLe, creeLe, envoyeLe, remiseLe, renvoyable]
+      properties:
+        id: { type: string, format: uuid }
+        canal: { type: string, enum: [EMAIL, SMS, WHATSAPP] }
+        objet: { type: string, examples: ['Résolution'] }
+        destinationMasquee: { type: string, examples: ['+225 07 •• •• •• 11'] }
+        etat: { $ref: '#/components/schemas/EtatEnvoi' }
+        motif:
+          description: Non remis, pourquoi
+          oneOf:
+            - $ref: '#/components/schemas/MotifEchec'
+            - type: 'null'
+        tentatives: { type: integer, minimum: 0 }
+        prochaineTentativeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        creeLe: { $ref: '#/components/schemas/Horodatage' }
+        envoyeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        remiseLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+        renvoyable: { type: boolean, description: "Non remis et renvoyable par l'utilisateur connecté (renvoyerMessage)" }
+    EtatEnvoi:
+      type: string
+      description: |
+        EN_ATTENTE : pas encore parti ; NOUVEL_ESSAI : échec temporaire, nouvelle tentative à prochaineTentativeLe ;
+        ENVOYE : accepté par la passerelle ou le serveur d'e-mail ; REMIS : accusé de remise (SMS, WhatsApp) ;
+        LU : lu sur WhatsApp ; NON_REMIS : définitivement non remis (motif)
+      enum: [EN_ATTENTE, NOUVEL_ESSAI, ENVOYE, REMIS, LU, NON_REMIS]
+    MotifEchec:
+      type: string
+      enum: [NUMERO_INVALIDE, INJOIGNABLE, EXPIRE, REFUSE, ADRESSE_INVALIDE, WHATSAPP_INDISPONIBLE, ERREUR_TECHNIQUE]
+    LienSuiviRenvoye:
+      type: object
+      required: [envois]
+      properties:
+        envois:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [canal, destinationMasquee]
+            properties:
+              canal: { type: string, enum: [SMS, EMAIL, WHATSAPP] }
+              destinationMasquee: { type: string, examples: ['+225 07 •• •• •• 11'] }
+    AssignationEnLot:
+      type: object
+      description: "Soit `agentId`, soit `repartir`"
+      required: [reclamationIds]
+      oneOf:
+        - required: [agentId]
+        - required: [repartir]
+      properties:
+        reclamationIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        agentId: { type: string, format: uuid, description: "Toutes à cet agent actif" }
+        repartir: { type: boolean, const: true, description: "Chacune à l'agent disponible le moins chargé" }
+    ResultatAssignationEnLot:
+      type: object
+      required: [assignees, laissees]
+      properties:
+        assignees:
+          type: array
+          items:
+            type: object
+            required: [id, numero, agent]
+            properties:
+              id: { type: string, format: uuid }
+              numero: { type: string }
+              agent: { $ref: '#/components/schemas/ReferenceNommee' }
+        laissees:
+          type: array
+          items:
+            type: object
+            required: [id, numero, raison]
+            properties:
+              id: { type: string, format: uuid }
+              numero: { type: [string, 'null'], description: "Vide si la réclamation est introuvable" }
+              raison: { type: string, examples: ['Aucun agent disponible'] }
+    DemandeAcces:
+      type: object
+      required: [contact, jetonAntiRobot]
+      properties:
+        contact: { type: string, minLength: 6, maxLength: 254, description: "Téléphone (format libre, +225 par défaut) ou e-mail donné au dépôt", examples: ['07 08 09 10 11'] }
+        jetonAntiRobot: { $ref: '#/components/schemas/JetonAntiRobot' }
+    VerificationAcces:
+      type: object
+      required: [contact, code]
+      properties:
+        contact: { type: string, minLength: 6, maxLength: 254 }
+        code: { type: string, pattern: '^[0-9]{6}$' }
     AvisReclamation:
       type: object
       required: [etat, ouverteLe, expireLe, reponse]
@@ -4595,8 +5117,9 @@ components:
           items: { type: string, format: uuid }
     Absence:
       type: object
-      required: [id, agent, du, au, creeLe]
+      required: [id, agent, du, au, creeLe, reclamationsEnCours]
       properties:
+        reclamationsEnCours: { type: integer, minimum: 0, description: "Étape 21 : réclamations non clôturées assignées à l'agent, à réassigner pendant son absence" }
         id: { type: string, format: uuid }
         agent: { $ref: '#/components/schemas/ReferenceNommee' }
         du: { type: string, format: date, description: "Premier jour d'absence" }
@@ -4620,8 +5143,9 @@ components:
     # ---- Personnel -------------------------------------------------------------------------
     Utilisateur:
       type: object
-      required: [id, email, nom, prenom, telephone, role, statut, superviseur, totpActif, derniereConnexionLe, verrouilleJusquA]
+      required: [id, email, nom, prenom, telephone, role, statut, superviseur, totpActif, derniereConnexionLe, verrouilleJusquA, reclamationsEnCours]
       properties:
+        reclamationsEnCours: { type: integer, minimum: 0, description: "Étape 21 : réclamations non clôturées qui lui sont assignées" }
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         nom: { type: string }
@@ -4855,12 +5379,13 @@ components:
           type: array
           items:
             type: object
-            required: [banque, sms, segments, echecs]
+            required: [banque, sms, segments, remis, echecs]
             properties:
               banque: { $ref: '#/components/schemas/ReferenceNommee' }
               sms: { type: integer, description: "SMS envoyés" }
               segments: { type: integer, description: "Segments facturés par la passerelle" }
-              echecs: { type: integer }
+              remis: { type: integer, minimum: 0, description: "Étape 22 : remis selon l'accusé de remise de la passerelle" }
+              echecs: { type: integer, description: "Non remis : refusés par la passerelle, après 5 essais, ou selon l'accusé de remise" }
     FacturationCanaux:
       type: object
       required: [mois, banques]
@@ -4919,6 +5444,19 @@ components:
           type: array
           maxItems: 1000
           items: { type: object }
+    RemiseSms:
+      type: object
+      description: Accusé de remise d'un SMS (étape 22) ; `id` ou `reference` au moins
+      anyOf:
+        - required: [id]
+        - required: [reference]
+      required: [statut]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128, description: "Identifiant du SMS chez la passerelle" }
+        reference: { type: string, format: uuid, description: "Identifiant envoyé avec le SMS (Idempotency-Key)" }
+        statut: { type: string, enum: [REMIS, NON_REMIS, EXPIRE, REJETE, EN_COURS] }
+        code: { type: string, maxLength: 60, description: "Code de l'opérateur, gardé pour le diagnostic" }
+        recuLe: { type: string, format: date-time }
     SmsEntrant:
       type: object
       required: [id, de, vers, texte]

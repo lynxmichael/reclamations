@@ -14,7 +14,7 @@ export function formulaire(banque: S<'BanquePublique'>, assistant = false): S<'F
     agences: [],
     categories: CATEGORIES.filter((c) => c.active).map(({ id, nom, description }) => ({ id, nom, description })),
     politiqueDonnees: { version: '2026-09', url: '/politique-donnees' },
-    fichiers: { maxFichiers: 5, maxOctets: 5_242_880, types: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] },
+    fichiers: { maxFichiers: 5, maxOctets: 10_485_760, types: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] },
   };
 }
 
@@ -55,8 +55,33 @@ export function suivi(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
     banque,
     etapes: etapes42,
     avis: null,
+    rattacheeA: null,
   };
 }
+
+/**
+ * Étape 21 : ALP-2026-002453, que Yao Kouassi avait redéposée, est jointe à ALP-2026-002442 ;
+ * son lien de suivi mène désormais à celle-ci.
+ */
+export function suiviRattache(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
+  const prefixe = banque.slug === 'alpha' ? 'ALP' : 'HZN';
+  return {
+    numero: `${prefixe}-2026-002453`,
+    statut: 'CLOTUREE',
+    categorie: 'Carte bancaire',
+    creeLe: t('25/09 14:50'),
+    banque,
+    etapes: [
+      { type: 'CREATION', statut: 'OUVERTE', date: t('25/09 14:50') },
+      { type: 'RATTACHEMENT', statut: 'CLOTUREE', date: t('25/09 15:08') },
+    ],
+    avis: null,
+    rattacheeA: { id: id('reclamation', 2442), numero: `${prefixe}-2026-002442`, chemin: `/suivi/${JETON_SUIVI}` },
+  };
+}
+
+/** Étape 21 : réponse de demanderCodeAcces, la même que le numéro soit connu ou non. */
+export const OTP_ACCES: S<'OtpEnvoye'> = { canal: 'SMS', destinationMasquee: '+225 07 •• •• •• 11', expireDans: 600 };
 
 /** ALP-2026-002180 close par le client le 24/09 : l'enquête de satisfaction l'attend (étape 15). */
 export function suiviClos(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
@@ -73,6 +98,7 @@ export function suiviClos(banque: S<'BanquePublique'>): S<'SuiviPublic'> {
       { type: 'CONFIRMATION', statut: 'CLOTUREE', date: t('24/09 10:05') },
     ],
     avis: { etat: 'A_DONNER', expireLe: t('01/10 10:05') },
+    rattacheeA: null,
   };
 }
 
@@ -133,6 +159,7 @@ export const MA_RECLAMATION_EN_COURS: S<'ReclamationClient'> = {
   actionsPossibles: [],
   operationsPossibles: ['CONSULTER', 'MESSAGE_DU_CLIENT'],
   avis: null,
+  rattacheeA: null,
   chat: null,
 };
 
@@ -163,7 +190,7 @@ export const MA_RECLAMATION_RESOLUE: S<'ReclamationClient'> = {
     {
       id: id('message', 20), type: 'REPONSE_AU_CLIENT', auteur: 'BANQUE', canal: null, creeLe: t('24/09 15:30'),
       contenu: 'Bonjour M. Kouassi, le second prélèvement était une erreur de traitement. Les 2 500 FCFA ont été reversés sur votre compte ce jour ; vous trouverez l\'avis de régularisation ci-joint.',
-      piecesJointes: [{ id: id('piece', 20), nomFichier: 'avis-regularisation.pdf', typeMime: 'application/pdf', tailleOctets: 184_320, creeLe: t('24/09 15:30') }],
+      piecesJointes: [{ id: id('piece', 20), nomFichier: 'avis-regularisation.pdf', typeMime: 'application/pdf', tailleOctets: 184_320, creeLe: t('24/09 15:30'), antivirus: 'SAIN' }],
     },
   ],
   piecesJointes: [{ ...PHOTO_TICKET, id: id('piece', 19), nomFichier: 'releve-septembre.pdf', typeMime: 'application/pdf', tailleOctets: 402_113, creeLe: t('18/09 10:47') }],
@@ -175,5 +202,6 @@ export const MA_RECLAMATION_RESOLUE: S<'ReclamationClient'> = {
   actionsPossibles: ['CONFIRMER', 'CONTESTER'],
   operationsPossibles: ['CONSULTER'],
   avis: null,
+  rattacheeA: null,
   chat: null,
 };

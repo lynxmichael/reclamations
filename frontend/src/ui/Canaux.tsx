@@ -3,7 +3,7 @@
  * (reponseVers, calculé par l'API). Le nombre de SMS facturés est compté comme le worker le comptera
  * (domaine/sms.ts, partagé avec l'API).
  */
-import { Globe, MessageCircle, Smartphone } from 'lucide-react';
+import { Globe, MessageCircle, Phone, QrCode, Smartphone, Store } from 'lucide-react';
 import { segmentsSms, versGsm } from '@domaine/sms';
 import type { S } from '../api/types';
 import { cx } from './composants';
@@ -21,6 +21,13 @@ const STYLE: Record<Canal, string> = {
 export function IconeCanal({ canal, taille = 14 }: { canal: Canal; taille?: number }) {
   const Icone = canal === 'WHATSAPP' ? MessageCircle : canal === 'SMS' ? Smartphone : Globe;
   return <Icone aria-hidden size={taille} strokeWidth={2.4} />;
+}
+
+/** Canal de dépôt d'une réclamation : QR code, lien web, WhatsApp, SMS, guichet ou téléphone (étape 21). */
+export function IconeDepot({ canal, taille = 14 }: { canal: S<'CanalDepot'>; taille?: number }) {
+  if (canal === 'WHATSAPP' || canal === 'SMS') return <IconeCanal canal={canal} taille={taille} />;
+  const Icone = canal === 'QR_CODE' ? QrCode : canal === 'GUICHET' ? Store : canal === 'TELEPHONE' ? Phone : Globe;
+  return <Icone aria-hidden size={taille} />;
 }
 
 /** Pastille du canal ; rien pour le portail, sauf `toujours` */

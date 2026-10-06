@@ -31,6 +31,9 @@ export const CANAL: Record<S<'CanalDepot'>, string> = {
   LIEN_WEB: 'Lien web',
   WHATSAPP: 'WhatsApp',
   SMS: 'SMS',
+  // Étape 21 : saisie par le personnel
+  GUICHET: 'Guichet',
+  TELEPHONE: 'Téléphone',
 };
 
 /** Canal d'une conversation (étape 17) ; WhatsApp et SMS entrant à l'étape 20 */
@@ -63,6 +66,8 @@ export const EVENEMENT: Record<S<'TypeEvenement'>, string> = {
   CONTESTATION: 'Contestée par le client',
   CLOTURE_AUTOMATIQUE: 'Clôture automatique',
   CLOTURE_FORCEE: 'Clôture forcée',
+  // Étape 21 : sur le doublon, « jointe à… » (statut Clôturée) ; sur la principale, le doublon reçu
+  RATTACHEMENT: 'Doublon rattaché',
   ASSIGNATION: 'Assignation',
   CHANGEMENT_PRIORITE: 'Changement de priorité',
   ESCALADE: 'Escalade',
@@ -91,6 +96,7 @@ export const EVENEMENT_CLIENT: Partial<Record<S<'TypeEvenement'>, string>> = {
   CONTESTATION: 'Vous avez contesté la résolution',
   CLOTURE_AUTOMATIQUE: 'Réclamation clôturée',
   CLOTURE_FORCEE: 'Réclamation clôturée par la banque',
+  RATTACHEMENT: 'Jointe à votre autre réclamation',
 };
 
 export const ACTION: Record<S<'ActionStatut'>, string> = {
@@ -102,6 +108,7 @@ export const ACTION: Record<S<'ActionStatut'>, string> = {
   CONTESTER: 'Contester',
   CLOTURER_AUTOMATIQUEMENT: 'Clôturer automatiquement',
   CLOTURER_DE_FORCE: 'Clôturer de force',
+  RATTACHER: 'Rattacher à une autre réclamation',
 };
 
 export const OPERATION: Record<S<'OperationTicket'>, string> = {
@@ -112,6 +119,7 @@ export const OPERATION: Record<S<'OperationTicket'>, string> = {
   NOTE_INTERNE: 'Note interne',
   REPONDRE_AU_CLIENT: 'Répondre au client',
   MESSAGE_DU_CLIENT: 'Écrire à la banque',
+  RENVOYER_LIEN: 'Renvoyer le lien de suivi',
 };
 
 export const MOTIF_CLOTURE: Record<S<'MotifClotureForcee'>, string> = {
@@ -150,6 +158,16 @@ export const ETAT_AVIS: Record<S<'EtatAvis'>, string> = {
   TERMINE: 'Sans réponse (enquête terminée)',
 };
 
+/** Étape 22 : état d'un message au client, d'après la boîte d'envoi et les accusés de remise */
+export const ETAT_ENVOI: Record<S<'EtatEnvoi'>, string> = {
+  EN_ATTENTE: 'En cours d\'envoi',
+  NOUVEL_ESSAI: 'Nouvel essai prévu',
+  ENVOYE: 'Envoyé',
+  REMIS: 'Remis',
+  LU: 'Lu',
+  NON_REMIS: 'Non remis',
+};
+
 export const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const;
 
 /** Actions inscrites au journal d'audit (backend : journaliser), en français. */
@@ -170,11 +188,18 @@ export const ACTION_AUDIT: Record<string, string> = {
   'reclamation.escalade': 'Escalade',
   'reclamation.urgente': 'Alerte urgente',
   'reclamation.export': 'Export CSV',
+  'reclamation.brouillon_demande': 'Brouillon demandé à l\'assistant IA',
+  'reclamation.saisie': 'Saisie pour un client (guichet, téléphone)',
+  'reclamation.lien_suivi_renvoye': 'Lien de suivi renvoyé au client',
+  'reclamation.rattachement': 'Doublon rattaché',
+  'reclamation.message_renvoye': 'Message renvoyé au client',
+  'piece_jointe.infectee': 'Pièce jointe infectée effacée',
   'sla.alerte_preventive': 'Alerte SLA envoyée',
   'sla.depassement': 'Dépassement SLA et escalade',
   'sla.escalade_admin': 'Escalade à l\'Admin Entreprise',
   'client.code_envoye': 'Code envoyé au client',
   'client.session_ouverte': 'Espace client ouvert',
+  'client.code_acces_envoye': 'Code envoyé pour retrouver ses réclamations',
   'client.avis_donne': 'Avis du client (enquête)',
   'auth.connexion': 'Connexion',
   'auth.deconnexion': 'Déconnexion',

@@ -280,12 +280,12 @@ export function PageActivite() {
         />
       )}
       surExporterSms={() => {
-        const lignes = sms.data.banques.map((b) => [b.banque.nom, b.sms, b.segments, b.echecs] as const);
-        const total = sms.data.banques.reduce((t, b) => [t[0] + b.sms, t[1] + b.segments, t[2] + b.echecs], [0, 0, 0]);
+        const lignes = sms.data.banques.map((b) => [b.banque.nom, b.sms, b.segments, b.remis, b.echecs] as const);
+        const total = sms.data.banques.reduce((t, b) => [t[0] + b.sms, t[1] + b.segments, t[2] + b.remis, t[3] + b.echecs], [0, 0, 0, 0]);
         enregistrer({
           nom: `facturation-sms-${choisi}.csv`,
           type: 'text/csv',
-          contenu: csv([['Banque', 'SMS envoyés', 'Segments facturés', 'Échecs'], ...lignes, ['Total', ...total]]),
+          contenu: csv([['Banque', 'SMS envoyés', 'Segments facturés', 'Remis', 'Non remis'], ...lignes, ['Total', ...total]]),
         });
         annoncer('Facturation SMS téléchargée.');
       }}

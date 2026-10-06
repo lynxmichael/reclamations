@@ -66,6 +66,11 @@ const TITRES: Partial<Record<CodeErreur, string>> = {
   SIGNATURE_INVALIDE: 'Signature invalide',
   NUMERO_DEJA_UTILISE: 'Numéro déjà raccordé',
   CANAL_NON_RACCORDE: 'Numéro à raccorder d\'abord',
+  RATTACHEMENT_IMPOSSIBLE: 'Rattachement impossible',
+  FICHIER_INFECTE: 'Fichier infecté',
+  FICHIER_EN_ANALYSE: 'Analyse antivirus en cours',
+  FICHIER_SUPPRIME: 'Fichier supprimé',
+  MESSAGE_NON_RENVOYABLE: 'Message non renvoyable',
   ERREUR_INTERNE: 'Erreur interne',
 };
 

@@ -133,6 +133,8 @@ describe('lien avec le cycle de vie (étape 4)', () => {
     'transition', 'noterPremiereReponse', 'commentaire', 'joindre', 'evenement', 'auditer', 'envois',
     // Attribution par le système (étape 16), au dépôt et par le worker : pas d'opération d'API
     'attribuer',
+    // Création commune au dépôt du client et à la saisie par le personnel (étape 21)
+    'creer',
   ]);
   const actionsDuService = Object.getOwnPropertyNames(CycleDeVie.prototype).filter((n) => !INTERNES.has(n));
   const parAction = new Map(operations.filter((o) => o.op['x-action']).map((o) => [o.op['x-action'] as string, o]));
@@ -155,6 +157,10 @@ describe('lien avec le cycle de vie (étape 4)', () => {
     noteInterne: OPERATIONS.NOTE_INTERNE,
     repondreAuClient: OPERATIONS.REPONDRE_AU_CLIENT,
     messageDuClient: OPERATIONS.MESSAGE_DU_CLIENT,
+    // Étape 21
+    rattacher: TRANSITIONS.RATTACHER,
+    renvoyerLienSuivi: OPERATIONS.RENVOYER_LIEN,
+    renvoyerMessage: OPERATIONS.RENVOYER_LIEN,
   };
 
   it.each(Object.keys(REGLE))('%s : les rôles de l\'API sont ceux de la machine d\'états', (action) => {

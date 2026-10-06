@@ -15,6 +15,8 @@ export interface ParametresBanque {
     readonly enqueteSatisfaction: boolean;
     /** Attribution et escalade automatiques (étape 16) : MANUELLE quand Makor n'a pas ouvert la fonction */
     readonly modeAttribution: ModeAttribution;
+    /** La fonction est ouverte (groupes, absences), quel que soit le mode choisi par la banque */
+    readonly attributionOuverte: boolean;
     /** Seuils d'escalade à l'Admin Entreprise ; tous deux vides (ou fonction fermée) : pas de second niveau */
     readonly escaladeAdmin: { readonly pourcent: number | null; readonly urgentPourcent: number | null } | null;
     /** Chat web du portail et boîte de réception (étape 17), ouverts par Makor */
@@ -47,6 +49,7 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
       smsChaqueChangementStatut: banque.smsChaqueChangementStatut,
       enqueteSatisfaction: banque.enqueteSatisfaction,
       modeAttribution: banque.attributionAutomatique ? banque.modeAttribution : 'MANUELLE',
+      attributionOuverte: banque.attributionAutomatique,
       escaladeAdmin: banque.attributionAutomatique
         ? { pourcent: banque.seuilEscaladeAdminPourcent, urgentPourcent: banque.seuilEscaladeAdminUrgentPourcent }
         : null,

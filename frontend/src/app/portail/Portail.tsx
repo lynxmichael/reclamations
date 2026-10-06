@@ -12,6 +12,9 @@
  *                             chat web quand la banque l'a (étape 17) : relu toutes les 5 secondes tant que
  *                             la page est visible (lireConversationClient, marquerConversationLueClient)
  *   /politique-donnees        politique de données (?point={code} pour les couleurs de la banque)
+ *   /                         accueil aux couleurs de la banque de l'adresse (lireBanquePortail, étape 21)
+ *   /retrouver                lien perdu : code au téléphone ou à l'e-mail du dépôt, puis l'espace client
+ *                             (demanderCodeAcces avec défi anti-robot, verifierCodeAcces, étape 21)
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
@@ -29,6 +32,7 @@ import { CodeOtp } from '../../ecrans/portail/CodeOtp';
 import { Depot, type SaisieDepot } from '../../ecrans/portail/Depot';
 import { MaReclamation } from '../../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../../ecrans/portail/MesReclamations';
+import { AccueilPortail, Retrouver } from '../../ecrans/portail/Retrouver';
 import { Suivi } from '../../ecrans/portail/Suivi';
 import { LienPolitique, TelechargerPiece } from '../../ui/contextes';
 import { useAnnoncer } from '../commun/Annonces';
@@ -52,6 +56,22 @@ function lienPolitique(url: string, code: string): string {
   } catch {
     return `/politique-donnees?point=${encodeURIComponent(code)}`;
   }
+}
+
+/**
+ * Étape 21 : la banque du portail, d'après l'adresse (<slug>.<domaine>, alpha.localhost en
+ * développement). Sans sous-domaine (localhost, adresse IP), pas de banque.
+ */
+export function slugDuPortail(hote = window.location.hostname): string | null {
+  const parties = hote.toLowerCase().split('.');
+  if (parties.length < 2 || /^\d+$/.test(parties.at(-1)!) || parties[0] === 'www') return null;
+  return /^[a-z0-9-]+$/.test(parties[0]!) ? parties[0]! : null;
+}
+
+/** Où revenir en quittant l'espace client : le suivi qui l'a ouvert, ou « Retrouver mes réclamations ». */
+function cheminRetour(jetonSuivi: string | null): string {
+  if (jetonSuivi === '') return '/retrouver';
+  return jetonSuivi ? `/suivi/${encodeURIComponent(jetonSuivi)}` : '/';
 }
 
 function envoiPar(telephone: string, email: string): string {
@@ -291,6 +311,7 @@ export function PageSuivi({ session }: { session: SessionClient }) {
     <Suivi
       suivi={s}
       surAvis={() => navigate(`/suivi/${encodeURIComponent(jeton)}/avis`)}
+      surChemin={(chemin) => navigate(chemin)}
       surDemanderCode={(canal) => {
         // Une session déjà ouverte dans cet onglet évite un nouveau SMS
         if (dejaOuverte) void ouvrirEspace().catch(() => demande.mutate(canal));
@@ -358,7 +379,7 @@ function useEspace(session: SessionClient) {
   const quitter = () => {
     volontaire.current = true;
     session.fermer();
-    navigate(retour.current ? `/suivi/${encodeURIComponent(retour.current)}` : '/', { replace: true });
+    navigate(cheminRetour(retour.current), { replace: true });
   };
   useEffect(() => {
     // Seulement quand la session expire pendant la visite, pas quand le client la quitte
@@ -374,7 +395,7 @@ export function PageMesReclamations({ session }: { session: SessionClient }) {
   const liste = useQuery({ queryKey: ['mes-reclamations'], queryFn: () => session.appeler('listerMesReclamations'), enabled: ouverte });
   const banque = session.banque();
   useTitre(banque ? `Vos réclamations — ${banque.nom}` : null);
-  if (!ouverte || !banque) return <Navigate to={retour ? `/suivi/${encodeURIComponent(retour)}` : '/'} replace />;
+  if (!ouverte || !banque) return <Navigate to={cheminRetour(retour)} replace />;
   if (liste.isPending) return <Chargement pleinEcran />;
   if (liste.isError) return <ErreurChargement erreur={liste.error} surReessayer={() => void liste.refetch()} pleinEcran />;
   return <MesReclamations banque={banque} reclamations={liste.data.donnees} surOuvrir={(id) => navigate(`/mes-reclamations/${id}`)} surQuitter={quitter} />;
@@ -465,7 +486,7 @@ export function PageMaReclamation({ session }: { session: SessionClient }) {
     onError: echec,
   });
 
-  if (!ouverte || !banque) return <Navigate to={retour ? `/suivi/${encodeURIComponent(retour)}` : '/'} replace />;
+  if (!ouverte || !banque) return <Navigate to={cheminRetour(retour)} replace />;
   if (r.isPending) return <Chargement pleinEcran />;
   if (r.isError) {
     if (r.error instanceof ErreurApi && r.error.statut === 404) return <Navigate to="/mes-reclamations" replace />;
@@ -486,6 +507,7 @@ export function PageMaReclamation({ session }: { session: SessionClient }) {
         occupe={occupe}
         surRetour={() => navigate('/mes-reclamations')}
         surAvis={(chemin) => navigate(chemin)}
+        surOuvrir={(autre) => navigate(`/mes-reclamations/${autre}`)}
         surQuitter={quitter}
         surConfirmer={() => confirmer.mutate()}
         surContester={(motif) => contester.mutate(motif)}
@@ -513,8 +535,25 @@ function CadreNeutre({ children }: { children: ReactNode }) {
   );
 }
 
-export function PageAccueil() {
-  useTitre('Réclamations');
+/** Étape 21 : la banque de l'adresse, pour l'accueil et « Retrouver mes réclamations ». */
+function useBanquePortail(session: SessionClient) {
+  const slug = slugDuPortail();
+  const banque = useQuery({
+    queryKey: ['banque-portail', slug],
+    queryFn: () => session.appeler('lireBanquePortail', { chemin: { slug: slug! } }),
+    enabled: !!slug,
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  return { slug, banque };
+}
+
+export function PageAccueil({ session }: { session: SessionClient }) {
+  const { slug, banque } = useBanquePortail(session);
+  const navigate = useNavigate();
+  useTitre(banque.data ? `Réclamations — ${banque.data.nom}` : 'Réclamations');
+  if (slug && banque.isPending) return <Chargement pleinEcran />;
+  if (banque.data) return <AccueilPortail banque={banque.data} surRetrouver={() => navigate('/retrouver')} />;
   return (
     <CadreNeutre>
       <div className="px-5 pt-8 pb-10">
@@ -531,6 +570,73 @@ export function PageAccueil() {
         </ul>
       </div>
     </CadreNeutre>
+  );
+}
+
+export function PageRetrouver({ session }: { session: SessionClient }) {
+  const { slug, banque } = useBanquePortail(session);
+  const navigate = useNavigate();
+  const appeler = session.appeler;
+  const [contact, setContact] = useState('');
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [code, setCode] = useState<{ otp: S<'OtpEnvoye'>; erreur: string | null } | null>(null);
+  const antiRobot = useAntiRobot(appeler);
+  useTitre(banque.data ? `Retrouver mes réclamations — ${banque.data.nom}` : null);
+
+  const demande = useMutation({
+    mutationFn: (c: string) => antiRobot.avec((jetonAntiRobot) => appeler('demanderCodeAcces', { chemin: { slug: slug! }, corps: { contact: c, jetonAntiRobot } })),
+    onMutate: (c) => {
+      setContact(c);
+      setErreur(null);
+    },
+    onSuccess: (otp) => setCode({ otp, erreur: null }),
+    onError: (e) => {
+      const champ = e instanceof ErreurApi ? e.probleme.erreurs?.find((x) => x.champ === 'contact')?.message : undefined;
+      if (code) setCode({ ...code, erreur: messageErreur(e) });
+      else setErreur(champ ?? messageErreur(e));
+    },
+  });
+  const verification = useMutation({
+    mutationFn: (saisi: string) => appeler('verifierCodeAcces', { chemin: { slug: slug! }, corps: { contact, code: saisi } }),
+    onSuccess: (s) => {
+      // Pas de lien de suivi derrière cette session : en la quittant, on revient ici
+      session.ouvrir(s, banque.data!, '');
+      navigate('/mes-reclamations', { replace: true });
+    },
+    onError: (e) => setCode((c) => (c ? { ...c, erreur: messageErreur(e) } : c)),
+  });
+
+  if (slug && banque.isPending) return <Chargement pleinEcran />;
+  if (!banque.data) {
+    if (banque.isError && !(banque.error instanceof ErreurApi && banque.error.statut === 404)) {
+      return <ErreurChargement erreur={banque.error} surReessayer={() => void banque.refetch()} pleinEcran />;
+    }
+    return <Introuvable titre="Portail inconnu">Ouvrez l'adresse du portail de votre banque, ou le lien reçu par SMS ou par e-mail.</Introuvable>;
+  }
+  if (code) {
+    return (
+      <CodeOtp
+        banque={banque.data}
+        numero={contact}
+        otp={code.otp}
+        saisi=""
+        erreur={code.erreur}
+        surValider={(saisi) => verification.mutate(saisi)}
+        surRenvoyer={() => demande.mutate(contact)}
+        surRetour={() => setCode(null)}
+        aide="Rien reçu ? Ce numéro ou cette adresse n'a peut-être servi à aucune réclamation : essayez l'autre coordonnée donnée au dépôt."
+      />
+    );
+  }
+  return (
+    <Retrouver
+      banque={banque.data}
+      contact={contact}
+      erreur={erreur}
+      occupe={demande.isPending}
+      surEnvoyer={(c) => demande.mutate(c)}
+      surRetour={() => navigate('/')}
+    />
   );
 }
 

@@ -4,13 +4,14 @@
  * ouvert la fonction à la banque ; sinon l'API répond FONCTION_NON_OUVERTE.
  */
 import { useEffect } from 'react';
+import { useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Absences } from '../../ecrans/back-office/Absences';
 import { Attribution } from '../../ecrans/back-office/Attribution';
 import type { S } from '../../api/types';
 import { useEcriture } from '../commun/ecriture';
 import { Chargement, ErreurChargement } from '../commun/Etats';
-import { nomDe, useConsole, useParametres } from './contexte';
+import { ROUTES_BANQUE, nomDe, useConsole, useParametres } from './contexte';
 
 const MESSAGE_MODE: Record<S<'ModeAttribution'>, string> = {
   MANUELLE: 'Attribution manuelle : le superviseur assigne chaque réclamation.',
@@ -78,6 +79,7 @@ export function PageAttribution() {
 export function PageAbsences() {
   const { appeler } = useConsole();
   const parametres = useParametres();
+  const navigate = useNavigate();
   useTitre('Absences');
   const absences = useQuery({ queryKey: ['absences'], queryFn: () => appeler('listerAbsences') });
   const agents = useAgentsDeLaBanque();
@@ -90,6 +92,7 @@ export function PageAbsences() {
       absences={absences.data}
       agents={(agents.data ?? []).map((a) => ({ id: a.id, nom: a.nom }))}
       aujourdhui={aujourdhui(parametres.fuseauHoraire)}
+      surAReassigner={(agentId) => navigate(`${ROUTES_BANQUE.reclamations}?file=a-reassigner&agentId=${agentId}`)}
       actions={{
         occupe,
         erreurs,

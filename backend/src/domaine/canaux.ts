@@ -141,7 +141,7 @@ export const TEXTES_CANAL = {
   NOM: 'Pour finir, quel est votre nom et prenom ?',
   NOM_INVALIDE: 'Indiquez votre nom et prenom, en toutes lettres.',
   NON_PRIS_EN_CHARGE: 'Je ne peux lire que du texte, des photos et des documents PDF. Ecrivez votre message, s\'il vous plait.',
-  FICHIER_REFUSE: 'Ce fichier n\'a pas pu etre joint : photos (JPEG, PNG, WebP) et PDF de 5 Mo au plus.',
+  FICHIER_REFUSE: 'Ce fichier n\'a pas pu etre joint : photos (JPEG, PNG, WebP), PDF ou Word (.docx) de 10 Mo au plus, sans macro ni virus.',
   ERREUR: 'Votre message n\'a pas pu etre pris en compte. Ecrivez-nous a nouveau, s\'il vous plait.',
 } as const;
 

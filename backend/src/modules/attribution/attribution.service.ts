@@ -210,8 +210,18 @@ export class ServiceAttribution {
 
   // ---- Absences ------------------------------------------------------------------------------
 
-  private vueAbsence = (a: { id: string; du: Date; au: Date; creeLe: Date; utilisateur: { id: string; prenom: string; nom: string } }): S<'Absence'> =>
-    ({ id: a.id, agent: { id: a.utilisateur.id, nom: nom(a.utilisateur) }, du: jourIso(a.du), au: jourIso(a.au), creeLe: a.creeLe.toISOString() });
+  private vueAbsence = (enCours: ReadonlyMap<string, number>) => (a: { id: string; du: Date; au: Date; creeLe: Date; utilisateur: { id: string; prenom: string; nom: string } }): S<'Absence'> =>
+    ({
+      id: a.id, agent: { id: a.utilisateur.id, nom: nom(a.utilisateur) }, du: jourIso(a.du), au: jourIso(a.au), creeLe: a.creeLe.toISOString(),
+      reclamationsEnCours: enCours.get(a.utilisateur.id) ?? 0,
+    });
+
+  /** Étape 21 : réclamations non clôturées de chaque agent, à réassigner pendant son absence. */
+  private async enCours(tx: ClientTransaction, agentIds: readonly string[]): Promise<Map<string, number>> {
+    if (!agentIds.length) return new Map();
+    const lignes = await tx.reclamation.groupBy({ by: ['agentId'], where: { agentId: { in: [...agentIds] }, statut: { not: 'CLOTUREE' } }, _count: { _all: true } });
+    return new Map(lignes.map((l) => [l.agentId!, l._count._all]));
+  }
 
   private static readonly AGENT = { select: { id: true, prenom: true, nom: true } } as const;
 
@@ -223,7 +233,7 @@ export class ServiceAttribution {
         include: { utilisateur: ServiceAttribution.AGENT },
         orderBy: [{ du: 'asc' }, { au: 'asc' }, { id: 'asc' }],
       });
-      return absences.map(this.vueAbsence);
+      return absences.map(this.vueAbsence(await this.enCours(tx, absences.map((x) => x.utilisateurId))));
     });
   }
 
@@ -242,7 +252,7 @@ export class ServiceAttribution {
         include: { utilisateur: ServiceAttribution.AGENT },
       });
       await this.audit(tx, moi, appel, 'personnel.absence_ajoutee', 'absence_agent', creee.id, { agentId: agent.id, du: a.du, au: a.au });
-      return this.vueAbsence(creee);
+      return this.vueAbsence(await this.enCours(tx, [agent.id]))(creee);
     });
   }
 

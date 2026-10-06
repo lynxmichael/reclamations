@@ -321,7 +321,7 @@ Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
 Comme les critères 12 à 15, il se signe à part. Gardez un téléphone avec Google Authenticator ou Microsoft Authenticator à portée de main.
 
-1. Fatou, **Activité des agences**, période « Les 30 derniers jours ». **Attendu :** une ligne par agence (Plateau, Cocody Angré, Bouaké Commerce), puis « Sans agence (lien web, WhatsApp ou SMS) » en dernier. La somme de la colonne « Reçues » est égale au nombre de « Réclamations reçues » du **Tableau de bord** sur la même période. Les quatre repères sont en tête.
+1. Fatou, **Activité des agences**, période « Les 30 derniers jours ». **Attendu :** une ligne par agence (Plateau, Cocody Angré, Bouaké Commerce), puis « Sans agence (lien web, téléphone, WhatsApp ou SMS) » en dernier. La somme de la colonne « Reçues » est égale au nombre de « Réclamations reçues » du **Tableau de bord** sur la même période. Les quatre repères sont en tête.
 2. Elle déplie le Plateau. **Attendu :** ses catégories principales, les agents qui traitent ses réclamations, et le QR code « Hall d'accueil » avec son volume.
    - **Son tableau de bord** ouvre le tableau de bord filtré « Agence : Plateau ».
    - **Ses réclamations** ouvre la liste de toute la banque, filtrée sur l'agence.
@@ -376,6 +376,54 @@ Preuve automatique :
 
 Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
+### Critère 18 (phase 2, étape 21) — Guichet, doublons et réaffectation
+
+*Un client sans smartphone dépose sa réclamation au guichet ou au téléphone ; celui qui a perdu son lien la retrouve ; une réclamation déposée deux fois n'est traitée qu'une fois ; les dossiers d'un agent absent ou parti ne restent pas sans personne.*
+
+Comme les critères 12 à 17, il se signe à part. Il se passe pendant les heures d'ouverture, avec la Banque Alpha du jeu de démonstration (attribution ouverte, mode suggestion) et un téléphone qui reçoit les SMS (ou la boîte d'envoi en développement).
+
+1. Aya, **Réclamations › Nouvelle réclamation** : **Au guichet**, sans choisir d'agence ni donner de téléphone, **Enregistrer**. **Attendu :** « Un téléphone ou un e-mail au moins », puis, le téléphone donné, « Choisissez l'agence du guichet » ; chaque erreur disparaît dès que le champ est corrigé.
+2. Elle choisit l'agence Plateau, « Carte bancaire », écrit ce que dit la cliente, ajoute une photo, coche « J'ai informé le client… » et enregistre. **Attendu :** le récépissé (numéro, date, agence, QR code du suivi), « Elle vous est assignée » ; **Imprimer le récépissé** n'imprime que lui. Le téléphone reçoit le numéro et le lien. Sur la fiche : dépôt « Au guichet de l'agence », « Saisie par Aya Konan, avec l'accord du client » ; au journal d'audit, `reclamation.saisie` à son nom. **Au téléphone**, l'agence devient facultative ; un superviseur n'a pas « Me l'assigner ».
+3. Sur le téléphone, ouvrir l'adresse du portail de la banque (`https://alpha.<domaine>`) : **Retrouver mes réclamations**, saisir le numéro du dépôt, **Recevoir un code**. **Attendu :** un code par SMS ; une fois saisi, l'espace client avec toutes ses réclamations. Avec un numéro qui n'a jamais servi : le même écran « Saisissez le code reçu », et aucun SMS. Une quatrième demande dans l'heure pour le même numéro est refusée.
+4. Sur le même téléphone, redéposer la même réclamation par le QR code (« Déjà une réclamation ? Retrouvez-la » est sous le formulaire). **Attendu :** dans les files de Serge, les deux réclamations portent « Doublon possible ».
+5. Serge ouvre la plus récente : bandeau « Doublon possible », panneau **Du même client**. **Rattacher à…**, la réclamation d'Aya est proposée, **Rattacher et clôturer**. **Attendu :** clôturée (motif Doublon), « Doublon rattaché à … » ; un seul SMS au client, avec le lien de la réclamation d'Aya ; pas d'enquête. Le lien de suivi du doublon affiche « Jointe à votre autre réclamation » et mène à l'autre. Sur la réclamation d'Aya, **Doublons rattachés**.
+6. Aya ouvre une réclamation à elle dont le client a une autre réclamation en cours qu'elle n'a pas : le bandeau la signale, mais elle ne peut ni l'ouvrir ni rattacher.
+7. Sur une fiche, **Renvoyer le lien de suivi**. **Attendu :** « Lien de suivi renvoyé par SMS au +225 07 •• •• •• 11 » ; le lien part aux seules coordonnées du dossier ; à la quatrième fois dans l'heure, refus.
+8. Serge, **Absences** : Mamadou est absent aujourd'hui et demain dans le jeu de démonstration (sinon, le déclarer). **Attendu :** la ligne indique « N à réassigner » ; le lien ouvre l'onglet **À réassigner** de ses réclamations. Un client de Mamadou écrit : l'alerte va à Serge. **Tout sélectionner**, **Répartir entre les agents disponibles**. **Attendu :** « N réclamations assignées », aucune à Mamadou.
+9. Fatou, **Personnel** : désactiver un agent qui a des réclamations en cours. **Attendu :** la fenêtre annonce qu'elles iront dans la file « À réassigner » ; ses superviseurs reçoivent une notification qui ouvre cette file. Le réactiver.
+10. **Tableau de bord** et **Activité des agences** : les canaux Guichet et Téléphone sont comptés à part ; les saisies par téléphone sans agence vont à « Sans agence ».
+
+Preuve automatique :
+
+- `guichet.e2e.test.ts` : 19 tests. Saisie au guichet et au téléphone (idempotence, refus, points internes absents du portail), retrouver ses réclamations (réponse uniforme, anti-robot, limites), lien renvoyé, doublons et rattachement (droits, refus, effets, suivi), dossiers à réassigner (désactivation, absence, alertes, assignation en lot).
+- `navigateur/14-guichet-doublons.spec.ts` : 4 tests.
+- Tests unitaires de `domaine/doublons` (5) et de la réassignation en lot de `domaine/attribution` (3).
+- Vérifications de sécurité : 14 contrôles. Saisie, rattachement et lot cloisonnés par banque ; un agent ne rattache qu'à une réclamation qu'il peut ouvrir ; points Guichet et Téléphone invisibles au portail ; la colonne de rattachement seule modifiable par la banque.
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
+### Critère 19 (phase 2, étape 22) — Envois non remis et pièces jointes
+
+*Quand un SMS ou un e-mail n'arrive pas au client, l'agent le sait et peut le renvoyer ; le client joint aussi un document Word ; aucun fichier infecté n'est enregistré ni téléchargé.*
+
+Comme les critères 12 à 18, il se signe à part. Il se passe avec la Banque Alpha du jeu de démonstration, un téléphone qui reçoit les SMS et la passerelle SMS de Makor raccordée, qui envoie ses accusés de remise à `https://console.<domaine>/api/v1/webhooks/sms/remise`. En développement, sans passerelle, `npm run canal -- remise <numéro> NON_REMIS` simule l'accusé du dernier SMS envoyé à ce numéro.
+
+1. Sur le téléphone, déposer par le QR code une réclamation avec une photo et un courrier Word (.docx). **Attendu :** sous le choix des fichiers, « JPEG, PNG, WebP, PDF, Word .docx sans macro », « Chaque fichier est vérifié par un antivirus » ; la réclamation part. Un fichier .doc (ancien format) est écarté dès le choix : « ancien format Word, à enregistrer en .docx ou en PDF » ; un document Word à macros, même renommé en .docx : « refusé : il contient des macros ».
+2. Serge ouvre la réclamation : les deux pièces jointes se téléchargent ; le courrier s'ouvre dans Word. Le panneau **Messages au client** liste l'accusé de dépôt : SMS au « +225 07 •• •• •• 11 », « Remis » (ou « Envoyé » en attendant l'accusé), jamais le texte du message.
+3. Éteindre le téléphone, puis répondre au client depuis la fiche. **Attendu :** quand la passerelle renvoie « expiré » (à la fin de la durée de validité du SMS qu'elle fixe, souvent 24 à 48 h) ou « non remis » (numéro hors service), l'agent assigné (sinon les superviseurs) reçoit « SMS non remis au client » dans l'application ; la file affiche « Message non remis » ; la fiche, le bandeau rouge et le motif (« téléphone resté éteint ou hors réseau »). Si le client a aussi un e-mail, parti au même moment, pas d'alerte : il a été prévenu.
+4. Rallumer le téléphone ; **Renvoyer**. **Attendu :** « Nouvelle réponse » renvoyé par SMS au même numéro, avec le même texte ; le bandeau disparaît ; au journal d'audit, `reclamation.message_renvoye` ; un second renvoi du même message est refusé, et au-delà de 3 renvois dans l'heure aussi.
+5. Le Super Admin, **Activité et SMS** : colonnes « Remis » et « Non remis » ; les SMS partis restent comptés dans « SMS envoyés » et les segments facturés, remis ou non.
+6. Sur le serveur, `./deploiement/verifier.sh --local`. **Attendu :** « antivirus : ClamAV joint par l'API, fichier de test EICAR reconnu ». Arrêter ClamAV (`docker compose … stop clamav`) : la santé passe à « dégradée » (antivirus indisponible) ; un fichier déposé à ce moment s'affiche « Analyse antivirus en cours » et ne se télécharge pas ; relancer ClamAV (`… start clamav`) : dans les minutes qui suivent, il devient téléchargeable, sans rien faire.
+
+Preuve automatique :
+
+- `envois.e2e.test.ts` : 9 tests. Refus définitif de la passerelle (non remis, alerte, fiche sans numéro complet ni texte), renvoi (droits, isolation, une fois, 3 par heure, journal), nouvel essai espacé et e-mail qui remplace le SMS (pas d'alerte), accusés de remise (signature, référence ou identifiant, une seule fois, inconnus ignorés), facturation des SMS remis et non remis ; Word accepté et téléchargeable, macros, ActiveX, mot de passe, archive piégée et ancien .doc refusés, virus refusé au dépôt et dans une réponse d'agent, antivirus injoignable (fichier en analyse, puis analysé par le worker, infecté effacé, superviseur prévenu, journal d'audit).
+- `navigateur/15-envois-pieces-jointes.spec.ts` : 3 tests.
+- Tests unitaires de `domaine/envois` (4), des refus de la passerelle et de la boîte d'envoi, du contrôle des documents Word (11) et de l'adaptateur ClamAV (4).
+- Vérifications de sécurité : 17 contrôles. État des envois et résultat de l'antivirus écrits par le seul système ; motifs et noms de virus contrôlés ; pièce jointe immuable sauf le résultat de l'analyse, une seule fois ; facturation SMS réservée au Super Admin.
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
 ## 3. Contrôles d'exploitation (hors section 10, avant la mise en production)
 
 | Contrôle | Commande | Attendu | Résultat |
@@ -385,6 +433,7 @@ Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 | Restauration d'essai | `docker compose … run --rm restauration restaurer derniere` (clé privée saisie) | « Sauvegarde vérifiée » : journal intact, fichiers complets | ☐ |
 | Copies hors du VPS verrouillées (étape 12) | `docker compose … exec sauvegarde sauvegarder --controler` | « Verrouillage COMPLIANCE : copie verrouillée, effacement refusé » | ☐ |
 | Alerte de supervision | arrêter le worker 5 minutes (`docker compose … stop worker`) | alerte reçue (santé « dégradée ») ; relancer : retour à « ok » | ☐ |
+| Antivirus (étape 22) | `./deploiement/verifier.sh --local` | « ClamAV joint par l'API, fichier de test EICAR reconnu » | ☐ |
 
 ## 4. Procès-verbal de recette
 
@@ -414,6 +463,8 @@ Phase 2, à signer à la livraison de chaque fonction :
 | 15. Assistant IA de première ligne (étape 18) | | |
 | 16. Activité des agences et double authentification (étape 19) | | |
 | 17. WhatsApp Business et SMS entrant (étape 20) | | |
+| 18. Guichet, doublons et réaffectation (étape 21) | | |
+| 19. Envois non remis et pièces jointes (étape 22) | | |
 
 | | Nom | Date | Signature |
 |---|---|---|---|

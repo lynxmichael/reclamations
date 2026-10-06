@@ -14,7 +14,7 @@ import { PageAbsences, PageAttribution } from './Attribution';
 import { PageConversations } from './Conversations';
 import { PageAssistant, PageAudit, PageBanque, PageCategories, PageHoraires, PagePersonnel, PagePoints } from './Parametrage';
 import { PageAdministrateurs, PageAlertes, PageBanques, PageJournalPlateforme, PagePlans } from './Plateforme';
-import { PageFiche, PageFiles } from './Reclamations';
+import { PageFiche, PageFiles, PageNouvelle } from './Reclamations';
 import { PageCompte } from './Compte';
 import { PageActivite, PageAgences, PageTableau } from './Reporting';
 import '../../styles.css';
@@ -39,6 +39,7 @@ const routeur = createBrowserRouter([
     children: [
       { path: '/', element: <Accueil /> },
       { path: ROUTES_BANQUE.reclamations, element: <Reserve roles={[...BANQUE]}><PageFiles /></Reserve> },
+      { path: `${ROUTES_BANQUE.reclamations}/nouvelle`, element: <Reserve roles={['AGENT', 'SUPERVISEUR']}><PageNouvelle /></Reserve> },
       { path: `${ROUTES_BANQUE.reclamations}/:id`, element: <Reserve roles={[...BANQUE]}><PageFiche /></Reserve> },
       { path: ROUTES_BANQUE.conversations, element: <Reserve roles={[...BANQUE]}><PageConversations /></Reserve> },
       { path: `${ROUTES_BANQUE.conversations}/:id`, element: <Reserve roles={[...BANQUE]}><PageConversations /></Reserve> },

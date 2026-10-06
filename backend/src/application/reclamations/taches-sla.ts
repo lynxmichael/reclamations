@@ -16,7 +16,7 @@ import { instantEscaladeAdmin, seuilEscaladeAdmin } from '../../domaine/reclamat
 import { avisClientDu, limiteAvisClient } from '../../domaine/conversation.js';
 import { DUREE_SESSION_MS } from '../../domaine/canaux.js';
 import type { Acteur } from '../../domaine/reclamation/machine.js';
-import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
+import { banqueOuverte, chargerContexte, choisir, responsables } from './attribution.js';
 import { adminsEntreprise, agent, superviseurs } from './notifications.js';
 import type { CycleDeVie } from './cycle-de-vie.js';
 import { chargerParametres } from './parametres.js';
@@ -149,7 +149,10 @@ export class TachesSla {
     return traites;
   }
 
-  /** 75 % du délai consommé : l'agent (ou, sans agent, les superviseurs) est prévenu une fois. */
+  /**
+   * 75 % du délai consommé : l'agent est prévenu une fois ; sans agent, ou l'agent absent ou désactivé
+   * (étape 21), son superviseur (à défaut, tous les superviseurs).
+   */
   async alertesPreventives(maintenant: Date): Promise<number> {
     const candidats = await this.systeme.reclamation.findMany({
       where: { statut: { in: [...ACTIFS] }, alertePreventiveEnvoyeeLe: null, alertePreventiveLe: { lte: maintenant } },
@@ -163,7 +166,7 @@ export class TachesSla {
           where: { id: t.id }, data: { alertePreventiveEnvoyeeLe: maintenant }, include: { categorie: { select: { nom: true } } },
         });
         await this.cycle.evenement(tx, t, 'ALERTE_SLA_PREVENTIVE', SYSTEME, maintenant, { donnees: { echeance: t.echeanceSlaLe } });
-        const destinataires = t.agentId ? await agent(tx, t.agentId) : await superviseurs(tx, null);
+        const destinataires = await responsables(tx, p, maintenant, t.agentId);
         const consomme = `${Math.round((minutesAvantAlerte(t.delaiCibleMinutes, p.sla.seuilAlertePourcent) / t.delaiCibleMinutes) * 100)} % du délai consommé`;
         await this.cycle.envois(tx, apres, p, maintenant).personnel('sla.alerte_preventive', destinataires, true, consomme);
         await this.cycle.auditer(tx, t, SYSTEME, 'sla.alerte_preventive', {});
@@ -196,7 +199,9 @@ export class TachesSla {
         });
         await this.cycle.evenement(tx, t, 'DEPASSEMENT_SLA', SYSTEME, maintenant, { donnees: { echeance: t.echeanceSlaLe } });
         await this.cycle.evenement(tx, t, 'ESCALADE', SYSTEME, maintenant, { donnees: { origine: 'SLA', vers: apres.escaladeeVersId } });
-        const destinataires = [...(await agent(tx, t.agentId)), ...(await superviseurs(tx, t.agentId))];
+        // Étape 21 : un agent absent ou désactivé n'est plus prévenu, son superviseur l'est toujours
+        const prevenus = [...(await responsables(tx, p, maintenant, t.agentId)), ...(await superviseurs(tx, t.agentId))];
+        const destinataires = prevenus.filter((d, i) => prevenus.findIndex((x) => x.id === d.id) === i);
         await this.cycle.envois(tx, apres, p, maintenant).personnel('sla.depassement', destinataires, true);
         await this.cycle.auditer(tx, t, SYSTEME, 'sla.depassement', {});
         return true;

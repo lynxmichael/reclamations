@@ -19,11 +19,11 @@ import type { S } from '../commun.js';
 export type Regroupement = S<'Regroupement'>;
 
 export const STATUTS = { OUVERTE: 'Ouverte', EN_COURS: 'En cours', EN_ATTENTE_CLIENT: 'En attente client', RESOLUE: 'Résolue', CLOTUREE: 'Clôturée' } as const;
-export const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web', WHATSAPP: 'WhatsApp', SMS: 'SMS' } as const;
+export const CANAUX = { QR_CODE: 'QR code en agence', LIEN_WEB: 'Lien web', WHATSAPP: 'WhatsApp', SMS: 'SMS', GUICHET: 'Guichet', TELEPHONE: 'Téléphone' } as const;
 export const PRIORITES = { NORMALE: 'Normale', URGENTE: 'Urgente' } as const;
 export const MODES_CLOTURE = { CONFIRMATION_CLIENT: 'Confirmée par le client', AUTOMATIQUE: 'Automatique', FORCEE: 'Forcée' } as const;
 export const MOTIFS_CLOTURE = { DOUBLON: 'Doublon', HORS_PERIMETRE: 'Hors périmètre', ABUS: 'Abus', AUTRE: 'Autre' } as const;
-export const SANS_AGENCE = { cle: 'aucune', libelle: 'Sans agence (lien web, WhatsApp ou SMS)' } as const;
+export const SANS_AGENCE = { cle: 'aucune', libelle: 'Sans agence (lien web, téléphone, WhatsApp ou SMS)' } as const;
 
 /** Nombre de points d'une courbe (contrat : Evolution.points, 400 au plus) */
 export const POINTS_MAX = 400;
@@ -36,7 +36,7 @@ export interface Periode {
 export interface FiltresIndicateurs extends Periode {
   readonly categorieId?: string;
   readonly agenceId?: string;
-  readonly canal?: 'QR_CODE' | 'LIEN_WEB';
+  readonly canal?: keyof typeof CANAUX;
   /** Tableau de bord d'un agent (étape 11) : ses réclamations seulement */
   readonly agentId?: string;
 }
@@ -54,7 +54,7 @@ export function filtresDe(q: Record<string, unknown>, p: Periode): FiltresIndica
     ...p,
     ...(q.categorieId ? { categorieId: String(q.categorieId) } : {}),
     ...(q.agenceId ? { agenceId: String(q.agenceId) } : {}),
-    ...(q.canal ? { canal: q.canal as 'QR_CODE' | 'LIEN_WEB' } : {}),
+    ...(q.canal ? { canal: q.canal as keyof typeof CANAUX } : {}),
   };
 }
 
@@ -337,7 +337,8 @@ export async function indicateursAgences(
       agents: agents.filter((l) => l.agence === cle)
         .map((l) => ({ cle: l.cle, libelle: `${l.prenom} ${l.nom}`, total: l.n })).sort(parTotal).slice(0, 5),
       pointsDepot: points
-        .filter((p) => p.agenceId === cle || volumes.has(p.id))
+        // Sans agence : les seuls points qui ont reçu des réclamations (étape 21 : le point « Téléphone » n'a pas d'agence)
+        .filter((p) => (cle !== null && p.agenceId === cle) || volumes.has(p.id))
         .map((p) => ({ id: p.id, libelle: p.libelle, canal: p.canal, actif: p.actif, total: volumes.get(p.id) ?? 0 }))
         .sort((x, y) => y.total - x.total || x.libelle.localeCompare(y.libelle, 'fr')),
     };
@@ -397,15 +398,15 @@ export async function facturationSms(tx: ClientTransaction, mois: string): Promi
   const fin = debut.plus({ months: 1 });
   const [banques, lignes] = await enSerie([
     () => tx.banque.findMany({ where: { creeLe: { lt: fin.toJSDate() } }, select: { id: true, nom: true }, orderBy: { nom: 'asc' } }),
-    () => tx.$queryRaw<{ tenant_id: string; sms: bigint; segments: bigint; echecs: bigint }[]>`
-      SELECT tenant_id, sms, segments, echecs FROM facturation_sms(${debut.toJSDate()}, ${fin.toJSDate()})`,
+    () => tx.$queryRaw<{ tenant_id: string; sms: bigint; segments: bigint; remis: bigint; echecs: bigint }[]>`
+      SELECT tenant_id, sms, segments, remis, echecs FROM facturation_sms(${debut.toJSDate()}, ${fin.toJSDate()})`,
   ]);
   const parBanque = new Map(lignes.map((l) => [l.tenant_id, l]));
   return {
     mois,
     banques: banques.map((b) => {
       const l = parBanque.get(b.id);
-      return { banque: { id: b.id, nom: b.nom }, sms: Number(l?.sms ?? 0), segments: Number(l?.segments ?? 0), echecs: Number(l?.echecs ?? 0) };
+      return { banque: { id: b.id, nom: b.nom }, sms: Number(l?.sms ?? 0), segments: Number(l?.segments ?? 0), remis: Number(l?.remis ?? 0), echecs: Number(l?.echecs ?? 0) };
     }),
   };
 }

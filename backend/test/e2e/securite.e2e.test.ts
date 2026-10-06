@@ -148,7 +148,7 @@ describe('validation, fichiers, idempotence et limites de débit', () => {
     expect(r.corps.code).toBe('CATEGORIE_INVALIDE');
   });
 
-  it('fichier d\'un type refusé : 415 ; plus de 5 fichiers : 422 ; plus de 5 Mo : 413', async () => {
+  it('fichier d\'un type refusé : 415 ; plus de 5 fichiers : 422 ; plus de 10 Mo : 413 (étape 22)', async () => {
     const base = { categorieId: j.alpha.categories['Crédit'], description: 'Test', nom: 'Client Test', telephone: '0700000107', consentement: true, versionPolitique: '2026-09' };
     const exe = await client.appeler('deposerReclamation', { chemin: { code: j.alpha.points.qr }, corps: base, fichiers: [{ champ: 'fichiers', nom: 'facture.pdf', contenu: FICHIERS.exe }] });
     expect(exe.statut).toBe(415);
@@ -159,7 +159,7 @@ describe('validation, fichiers, idempotence et limites de débit', () => {
     expect(six.statut).toBe(422);
     expect(six.corps.code).toBe('TROP_DE_FICHIERS');
     const gros = await client.appeler('deposerReclamation', {
-      chemin: { code: j.alpha.points.qr }, corps: base, fichiers: [{ champ: 'fichiers', nom: 'gros.pdf', contenu: Buffer.concat([FICHIERS.pdf, Buffer.alloc(5 * 1024 * 1024)]) }],
+      chemin: { code: j.alpha.points.qr }, corps: base, fichiers: [{ champ: 'fichiers', nom: 'gros.pdf', contenu: Buffer.concat([FICHIERS.pdf, Buffer.alloc(10 * 1024 * 1024)]) }],
     });
     expect(gros.statut).toBe(413);
   });
@@ -222,7 +222,7 @@ describe('validation, fichiers, idempotence et limites de débit', () => {
     await redis.del(CLE_BATTEMENT_WORKER);
     const s = await client.appeler('lireSante');
     expect(s.statut).toBe(200);
-    expect(s.corps).toMatchObject({ statut: 'degrade', base: 'ok', redis: 'ok', worker: 'absent', envois: 'ok' });
+    expect(s.corps).toMatchObject({ statut: 'degrade', base: 'ok', redis: 'ok', worker: 'absent', envois: 'ok', antivirus: 'ok' });
     await redis.set(CLE_BATTEMENT_WORKER, new Date().toISOString(), 'EX', 60);
     const apres = await client.appeler('lireSante');
     expect(apres.corps).toMatchObject({ base: 'ok', redis: 'ok', worker: 'ok', envois: 'ok' });

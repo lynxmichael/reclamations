@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SmsHttp } from './adaptateurs.js';
+import { ErreurEnvoi, SmsHttp } from './adaptateurs.js';
 import { contraste, emailHtml } from './gabarit-email.js';
 
 interface Recu {
@@ -53,6 +53,23 @@ describe('passerelle SMS HTTP (étape 9)', () => {
     const lente = await passerelle(200, '{}', 500);
     await expect(new SmsHttp({ url: lente.url, cle: 'x'.repeat(16), expediteur: 'R', delaiMs: 100 }).envoyer({ destination: '+225', texte: 't' }))
       .rejects.toThrow();
+  });
+});
+
+describe('refus définitifs de la passerelle (étape 22)', () => {
+  it.each([
+    [400, true, 'NUMERO_INVALIDE'],
+    [422, true, 'NUMERO_INVALIDE'],
+    [404, true, 'REFUSE'],
+    [410, true, 'REFUSE'],
+    [401, false, 'ERREUR_TECHNIQUE'],
+    [429, false, 'ERREUR_TECHNIQUE'],
+    [503, false, 'ERREUR_TECHNIQUE'],
+  ] as const)('HTTP %i : définitif %s, motif %s', async (statut, definitive, motif) => {
+    const p = await passerelle(statut, '{}');
+    const e = await new SmsHttp({ url: p.url, cle: 'x'.repeat(16), expediteur: 'R' }).envoyer({ destination: '+2250700000001', texte: 't' }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(ErreurEnvoi);
+    expect(e).toMatchObject({ definitive, motif });
   });
 });
 

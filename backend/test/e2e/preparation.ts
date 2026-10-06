@@ -9,6 +9,7 @@ import { recreerBaseE2E, urlsE2E } from '../../scripts/base-de-test.js';
 import { semer } from '../../scripts/jeu-de-donnees.js';
 import { lireConfiguration } from '../../src/configuration/configuration.js';
 import { BaseDonnees } from '../../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
+import { demarrerClamavSimule } from '../outils/clamav-simule.js';
 import { FICHIER_COUVERTURE, redisE2E } from './environnement.js';
 
 export default async function preparer(projet: TestProject) {
@@ -24,10 +25,15 @@ export default async function preparer(projet: TestProject) {
   const jeu = await semer(bd, { cleTotp: config.cleTotp });
   await bd.fermer();
   projet.provide('jeu', JSON.stringify(jeu));
+  // Étape 22 : un ClamAV simulé pour toute la suite, arrêté à la fin
+  const clamav = await demarrerClamavSimule();
+  projet.provide('clamav', clamav.port);
+  return () => clamav.fermer();
 }
 
 declare module 'vitest' {
   export interface ProvidedContext {
     jeu: string;
+    clamav: number;
   }
 }

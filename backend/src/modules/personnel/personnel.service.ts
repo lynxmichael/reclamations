@@ -26,8 +26,10 @@ export const SELECTION_UTILISATEUR = {
 
 type UtilisateurLu = Prisma.UtilisateurGetPayload<{ select: typeof SELECTION_UTILISATEUR }>;
 
-export function vueUtilisateur(u: UtilisateurLu): S<'Utilisateur'> {
+/** `enCours` : réclamations non clôturées qui lui sont assignées (étape 21). */
+export function vueUtilisateur(u: UtilisateurLu, enCours = 0): S<'Utilisateur'> {
   return {
+    reclamationsEnCours: enCours,
     id: u.id, email: u.email, nom: u.nom, prenom: u.prenom, telephone: u.telephone, role: u.role, statut: u.statut,
     superviseur: u.superviseur ? { id: u.superviseur.id, nom: nomComplet(u.superviseur) } : null,
     totpActif: u.totpActiveLe !== null,
@@ -65,6 +67,17 @@ export class ServicePersonnel {
     return this.bd.enBanque(moi.tenantId, (tx) => travail(tx, moi));
   }
 
+  /** Étape 21 : réclamations non clôturées de chacun. */
+  private async enCours(tx: ClientTransaction, ids: readonly string[]): Promise<Map<string, number>> {
+    if (!ids.length) return new Map();
+    const lignes = await tx.reclamation.groupBy({ by: ['agentId'], where: { agentId: { in: [...ids] }, statut: { not: 'CLOTUREE' } }, _count: { _all: true } });
+    return new Map(lignes.map((l) => [l.agentId!, l._count._all]));
+  }
+
+  private async vue(tx: ClientTransaction, id: string): Promise<S<'Utilisateur'>> {
+    return vueUtilisateur(await this.lu(tx, id), (await this.enCours(tx, [id])).get(id) ?? 0);
+  }
+
   private async lu(tx: ClientTransaction, id: string): Promise<UtilisateurLu> {
     const u = await tx.utilisateur.findUnique({ where: { id }, select: SELECTION_UTILISATEUR });
     if (!u) throw introuvable('Membre du personnel introuvable');
@@ -99,12 +112,13 @@ export class ServicePersonnel {
         () => tx.utilisateur.count({ where }),
         () => tx.utilisateur.findMany({ where, select: SELECTION_UTILISATEUR, orderBy: [{ nom: 'asc' }, { prenom: 'asc' }], skip, take }),
       ]);
-      return pageDe(lignes.map(vueUtilisateur), page, parPage, total);
+      const enCours = await this.enCours(tx, lignes.map((u) => u.id));
+      return pageDe(lignes.map((u) => vueUtilisateur(u, enCours.get(u.id) ?? 0)), page, parPage, total);
     });
   }
 
   lire(appel: Appel, id: string) {
-    return this.dans(appel, async (tx) => vueUtilisateur(await this.lu(tx, id)));
+    return this.dans(appel, async (tx) => this.vue(tx, id));
   }
 
   inviter(appel: Appel, e: { email: string; nom: string; prenom: string; telephone?: string | null; role: RoleBanque; superviseurId?: string | null }) {
@@ -126,7 +140,7 @@ export class ServicePersonnel {
       });
       await this.envoyerInvitation(tx, moi.tenantId, cree.id);
       await journaliser(tx, { tenantId: moi.tenantId, acteur: moi, action: 'personnel.invitation', entite: 'utilisateur', entiteId: cree.id, donnees: { role: e.role }, trace: traceDe(appel) });
-      return vueUtilisateur(await this.lu(tx, cree.id));
+      return this.vue(tx, cree.id);
     });
   }
 
@@ -174,7 +188,7 @@ export class ServicePersonnel {
         tenantId: moi.tenantId, acteur: moi, action: 'personnel.modifie', entite: 'utilisateur', entiteId: id,
         donnees: { champs: Object.keys(m), ...(m.role && m.role !== avant.role ? { roleAvant: avant.role, roleApres: m.role } : {}) }, trace: traceDe(appel),
       });
-      return vueUtilisateur(await this.lu(tx, id));
+      return this.vue(tx, id);
     });
   }
 
@@ -190,8 +204,21 @@ export class ServicePersonnel {
         await tx.jetonUtilisateur.updateMany({ where: { utilisateurId: id, utiliseLe: null }, data: { utiliseLe: maintenant } });
         await basculer(tx, contexte.banque(moi.tenantId));
         await journaliser(tx, { tenantId: moi.tenantId, acteur: moi, action: 'personnel.desactive', entite: 'utilisateur', entiteId: id, donnees: { role: u.role }, trace: traceDe(appel) });
+        // Étape 21 : ses réclamations en cours restent à son nom ; les superviseurs les réassignent
+        const n = (await this.enCours(tx, [id])).get(id) ?? 0;
+        if (n > 0) {
+          const superviseurs = await tx.utilisateur.findMany({ where: { role: 'SUPERVISEUR', statut: 'ACTIF' }, select: { id: true } });
+          const qui = `${u.prenom} ${u.nom}`;
+          await tx.notification.createMany({
+            data: superviseurs.map((s) => ({
+              tenantId: moi.tenantId, canal: 'IN_APP' as const, modele: 'superviseur.reassignation', destinataireUtilisateurId: s.id,
+              sujet: `Réclamations de ${qui} à réassigner`,
+              contenu: `Le compte de ${qui} est désactivé : ${n} réclamation${n > 1 ? 's' : ''} en cours, dans la file « À réassigner ».`,
+            })),
+          });
+        }
       }
-      return vueUtilisateur(await this.lu(tx, id));
+      return this.vue(tx, id);
     });
   }
 
@@ -205,7 +232,7 @@ export class ServicePersonnel {
         await tx.utilisateur.update({ where: { id }, data: { statut: u.totpActiveLe || u.derniereConnexionLe ? 'ACTIF' : 'INVITE', desactiveLe: null } });
         await journaliser(tx, { tenantId: moi.tenantId, acteur: moi, action: 'personnel.reactive', entite: 'utilisateur', entiteId: id, trace: traceDe(appel) });
       }
-      return vueUtilisateur(await this.lu(tx, id));
+      return this.vue(tx, id);
     });
   }
 
@@ -231,7 +258,7 @@ export class ServicePersonnel {
       await tx.sessionUtilisateur.updateMany({ where: { utilisateurId: id, revoqueLe: null }, data: { revoqueLe: maintenant } });
       await basculer(tx, contexte.banque(moi.tenantId));
       await journaliser(tx, { tenantId: moi.tenantId, acteur: moi, action: 'personnel.totp_reinitialise', entite: 'utilisateur', entiteId: id, trace: traceDe(appel) });
-      return vueUtilisateur(await this.lu(tx, id));
+      return this.vue(tx, id);
     });
   }
 }

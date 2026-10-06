@@ -91,3 +91,47 @@ export function choisirAgent(
 export function estAbsent(absences: readonly { du: string; au: string }[], jour: string): boolean {
   return absences.some((a) => a.du <= jour && jour <= a.au);
 }
+
+// ---------------------------------------------------------------------------
+//  Réassignation en lot (étape 21)
+// ---------------------------------------------------------------------------
+
+export interface AReassigner {
+  readonly id: string;
+  readonly categorieId: string;
+  readonly agenceId: string | null;
+  /** Agent actuel (absent, désactivé) : jamais choisi de nouveau */
+  readonly agentId: string | null;
+}
+
+export interface ContexteRepartition {
+  /** Groupes de la catégorie et de l'agence : seulement si l'attribution automatique est ouverte */
+  readonly groupes: ReadonlyMap<string, Groupe> | null;
+  readonly groupeDeCategorie: ReadonlyMap<string, string>;
+  readonly groupeDAgence: ReadonlyMap<string, string>;
+  /** Agents actifs et présents de toute la banque, avec leur charge */
+  readonly disponibles: ReadonlyMap<string, AgentDisponible>;
+}
+
+/**
+ * Chaque réclamation à l'agent disponible le moins chargé : celui des groupes de sa catégorie et de son
+ * agence quand ils en ont un (et qu'un de leurs agents est là), sinon de toute la banque. La charge
+ * augmente à chaque choix : un lot se répartit entre plusieurs agents. null : personne de disponible.
+ */
+export function repartir(lot: readonly AReassigner[], ctx: ContexteRepartition): Map<string, AgentDisponible | null> {
+  const charge = new Map([...ctx.disponibles].map(([id, a]) => [id, { ...a }]));
+  const resultat = new Map<string, AgentDisponible | null>();
+  for (const r of lot) {
+    const sauf = (m: ReadonlyMap<string, AgentDisponible>) => new Map([...m].filter(([id]) => id !== r.agentId));
+    const libres = sauf(charge);
+    let choix: AgentDisponible | null = null;
+    if (ctx.groupes) {
+      const groupe = (id: string | undefined) => (id ? ctx.groupes!.get(id) ?? null : null);
+      choix = choisirAgent(groupe(ctx.groupeDeCategorie.get(r.categorieId)), groupe(r.agenceId ? ctx.groupeDAgence.get(r.agenceId) : undefined), libres)?.agent ?? null;
+    }
+    choix ??= plusDisponible([...libres.values()]);
+    resultat.set(r.id, choix);
+    if (choix) charge.set(choix.id, { ...charge.get(choix.id)!, aTraiter: charge.get(choix.id)!.aTraiter + 1 });
+  }
+  return resultat;
+}

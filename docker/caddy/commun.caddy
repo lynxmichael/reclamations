@@ -33,9 +33,9 @@
 			}
 		}
 	}
-	# Taille maximale d'une requête : 5 fichiers de 5 Mo et le formulaire
+	# Taille maximale d'une requête : 5 fichiers de 10 Mo (étape 22) et le formulaire
 	request_body {
-		max_size 30MB
+		max_size 60MB
 	}
 }
 

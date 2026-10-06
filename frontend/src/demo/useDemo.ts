@@ -407,6 +407,18 @@ export function useDemo(prospectInitial: Prospect) {
         avancer(DUREE.cloture);
         tenter(() => moteur.cloturerDeForce(utilisateur, id, motif, precision), 'Réclamation clôturée de force, motif inscrit au journal.');
       },
+      // Étape 21 : doublon joint à une autre réclamation du client ; lien de suivi renvoyé
+      rattacher: (principaleId) => {
+        avancer(DUREE.cloture);
+        const numero = moteur.ticket(principaleId).numero;
+        tenter(() => moteur.rattacher(utilisateur, id, principaleId), `Doublon rattaché à ${numero} : le client reçoit un seul SMS, avec le lien de celle-ci.`);
+      },
+      renvoyerLien: () => {
+        avancer(DUREE.lecture);
+        const r = tenter(() => moteur.renvoyerLienSuivi(utilisateur, id));
+        if (r) informer(`Lien de suivi renvoyé ${r.envois.map((e) => `${e.canal === 'EMAIL' ? 'par e-mail à' : 'par SMS au'} ${e.destinationMasquee}`).join(' et ')}.`);
+      },
+      ouvrir: (autre) => setBanque((b) => ({ ...b, page: 'reclamations', ficheId: autre, notifs: false })),
     };
   }
 

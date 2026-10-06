@@ -8,6 +8,8 @@
  *                        EN_COURS → RESOLUE → CLOTUREE (confirmation ou délai)
  *                                   RESOLUE → EN_COURS (contestation)
  *   tout statut non clôturé → CLOTUREE (clôture forcée par un superviseur, motif obligatoire)
+ *   tout statut non clôturé → CLOTUREE (doublon rattaché à la réclamation principale du même client,
+ *                                        par le superviseur ou l'agent assigné, étape 21)
  */
 import type { RoleUtilisateur, StatutReclamation, TypeEvenement } from '../enumerations.js';
 
@@ -63,6 +65,10 @@ export const TRANSITIONS = {
   CLOTURER_DE_FORCE: {
     de: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT', 'RESOLUE'], vers: 'CLOTUREE', par: ['SUPERVISEUR'], evenement: 'CLOTURE_FORCEE',
   },
+  // Étape 21 : le service vérifie en plus que la principale est du même client et consultable par l'acteur
+  RATTACHER: {
+    de: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT', 'RESOLUE'], vers: 'CLOTUREE', par: ['AGENT_ASSIGNE', 'SUPERVISEUR'], evenement: 'RATTACHEMENT',
+  },
 } as const satisfies Record<string, DefinitionTransition>;
 
 export type ActionStatut = keyof typeof TRANSITIONS;
@@ -89,6 +95,8 @@ export const OPERATIONS = {
   REPONDRE_AU_CLIENT: { statuts: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT'], par: ['AGENT_ASSIGNE', 'SUPERVISEUR'] },
   // En RESOLUE, le client confirme ou conteste ; après clôture, plus de message
   MESSAGE_DU_CLIENT: { statuts: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT'], par: ['CLIENT'] },
+  // Étape 21 : le lien de suivi renvoyé aux coordonnées du dossier, à tout statut (l'enquête suit la clôture)
+  RENVOYER_LIEN: { statuts: TOUS, par: ['AGENT_ASSIGNE', 'SUPERVISEUR'] },
 } as const satisfies Record<string, DefinitionOperation>;
 
 export type Operation = keyof typeof OPERATIONS;

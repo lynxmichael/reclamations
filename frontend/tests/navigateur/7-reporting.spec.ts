@@ -112,9 +112,9 @@ test('plateforme : activité des banques et facturation SMS du mois, exportée e
   const d = await telecharger(page, 'Exporter en CSV');
   expect(d.suggestedFilename()).toMatch(/^facturation-sms-\d{4}-\d{2}\.csv$/);
   const csv = await texte(d);
-  expect(csv.slice(1).split('\r\n')[0]).toBe('Banque;SMS envoyés;Segments facturés;Échecs');
+  expect(csv.slice(1).split('\r\n')[0]).toBe('Banque;SMS envoyés;Segments facturés;Remis;Non remis');
   expect(csv).toContain('Banque Alpha;');
-  expect(csv).toMatch(/\r\nTotal;\d+;\d+;\d+\r\n$/);
+  expect(csv).toMatch(/\r\nTotal;\d+;\d+;\d+;\d+\r\n$/);
 
   // Mois précédent : autre période, mêmes banques
   const options = await page.getByLabel('Mois').locator('option').allTextContents();

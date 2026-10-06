@@ -11,6 +11,7 @@ import { CodeOtp } from '../ecrans/portail/CodeOtp';
 import { Depot, fichierExemple } from '../ecrans/portail/Depot';
 import { MaReclamation } from '../ecrans/portail/MaReclamation';
 import { MesReclamations } from '../ecrans/portail/MesReclamations';
+import { AccueilPortail, Retrouver } from '../ecrans/portail/Retrouver';
 import { Suivi } from '../ecrans/portail/Suivi';
 import { Activation, CodeTotp, Connexion } from '../ecrans/connexion/Connexion';
 import { Absences } from '../ecrans/back-office/Absences';
@@ -24,11 +25,13 @@ import { BandeauDoubleAuthentification, Compte } from '../ecrans/back-office/Com
 import { Conversations } from '../ecrans/back-office/Conversations';
 import { Files } from '../ecrans/back-office/Files';
 import { Horaires } from '../ecrans/back-office/Horaires';
+import { NouvelleReclamation } from '../ecrans/back-office/NouvelleReclamation';
 import { Personnel } from '../ecrans/back-office/Personnel';
 import { PointsDepot } from '../ecrans/back-office/PointsDepot';
 import { ReponsesAssistant } from '../ecrans/back-office/ReponsesAssistant';
 import { TableauDeBord } from '../ecrans/back-office/TableauDeBord';
 import { Ticket, type Fenetre } from '../ecrans/back-office/Ticket';
+import { REGLES_PIECES } from '../ui/ChoixFichiers';
 import { Activite, Alertes } from '../ecrans/plateforme/Activite';
 import { Banques } from '../ecrans/plateforme/Banques';
 import { CadreConsole, type PageConsole } from '../ecrans/plateforme/Console';
@@ -41,11 +44,11 @@ import {
 } from './donnees/parametrage';
 import { ALERTES, FACTURATION_CANAUX, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './donnees/plateforme';
 import {
-  ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos,
+  ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ACCES, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos, suiviRattache,
 } from './donnees/portail';
 import {
-  AGENTS_ASSIGNABLES, CONVERSATION_42, CONVERSATION_WHATSAPP, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL,
-  NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
+  ACCUSE_SAISIE_54, AGENTS_ASSIGNABLES, CONVERSATION_42, CONVERSATION_WHATSAPP, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, ERREUR_SAISIE, FICHE_42, FICHE_52,
+  FICHE_53, FICHE_54, INDICATEURS, INDISPONIBLES, JOURNAL, NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
 } from './donnees/reclamations';
 
 export type Groupe = 'portail' | 'connexion' | 'back-office' | 'plateforme';
@@ -255,10 +258,46 @@ export const ECRANS: Ecran[] = [
       'Les étapes restantes apparaissent en pointillé : le client voit ce qui l\'attend.',
       'Le code part par SMS si le client a donné un téléphone, sinon par e-mail (DemandeOtp).',
       'Variante « Close » (étape 15) : la banque a activé l\'enquête de satisfaction ; la page invite le client à donner son avis, sans code.',
+      'Variante « Jointe à une autre » (étape 21) : ce doublon a été rattaché ; la page mène au suivi de la réclamation principale, sans enquête pour le doublon.',
     ],
-    variantes: [{ cle: 'etat', libelle: 'Réclamation', options: [{ valeur: 'en-cours', libelle: 'En cours' }, { valeur: 'close', libelle: 'Close, avis à donner' }] }],
+    variantes: [{
+      cle: 'etat',
+      libelle: 'Réclamation',
+      options: [{ valeur: 'en-cours', libelle: 'En cours' }, { valeur: 'close', libelle: 'Close, avis à donner' }, { valeur: 'rattachee', libelle: 'Jointe à une autre' }],
+    }],
     marque: true,
-    rendu: ({ v, banque }) => <Suivi suivi={v.etat === 'close' ? suiviClos(banque) : suivi(banque)} />,
+    rendu: ({ v, banque }) => <Suivi suivi={v.etat === 'close' ? suiviClos(banque) : v.etat === 'rattachee' ? suiviRattache(banque) : suivi(banque)} />,
+  },
+  {
+    id: 'retrouver',
+    groupe: 'portail',
+    titre: 'Retrouver mes réclamations',
+    format: 'mobile',
+    adresse: (b) => site(b, '/retrouver'),
+    operations: ['lireBanquePortail', 'lireDefiAntiRobot', 'demanderCodeAcces', 'verifierCodeAcces'],
+    roles: 'Le client qui a perdu son lien ou son numéro de suivi (étape 21).',
+    notes: [
+      'L\'accueil du portail (<slug>.<domaine>) et le formulaire de dépôt y mènent : « Lien perdu ? », « Déjà une réclamation ? Retrouvez-la ».',
+      'Le client donne le téléphone ou l\'e-mail du dépôt, au portail comme au guichet. La réponse est la même que ce numéro soit connu ou non : le portail ne révèle pas qui a une réclamation.',
+      'Défi anti-robot, 3 demandes par heure et par numéro ou adresse ; le code (6 chiffres, 10 minutes, 5 essais) ouvre l\'espace client avec toutes ses réclamations dans cette banque.',
+      'Rien n\'est jamais envoyé ailleurs qu\'aux coordonnées du dossier ; aucun agent ne peut changer l\'adresse d\'envoi.',
+    ],
+    variantes: [{ cle: 'etape', libelle: 'Étape', options: [{ valeur: 'accueil', libelle: 'Accueil du portail' }, { valeur: 'contact', libelle: 'Téléphone ou e-mail' }, { valeur: 'code', libelle: 'Code reçu' }] }],
+    marque: true,
+    rendu: ({ v, banque }) =>
+      v.etape === 'accueil' ? (
+        <AccueilPortail banque={banque} />
+      ) : v.etape === 'code' ? (
+        <CodeOtp
+          banque={banque}
+          numero="07 08 09 10 11"
+          otp={OTP_ACCES}
+          saisi="27"
+          aide="Rien reçu ? Ce numéro ou cette adresse n'a peut-être servi à aucune réclamation : essayez l'autre coordonnée donnée au dépôt."
+        />
+      ) : (
+        <Retrouver banque={banque} contact="07 08 09 10 11" surRetour={() => undefined} />
+      ),
   },
   {
     id: 'code',
@@ -421,17 +460,34 @@ export const ECRANS: Ecran[] = [
       'Le superviseur assigne depuis la file « Reçues » ; l\'agent n\'a pas cette file.',
       'Variante « Notifications » : le panneau des notifications in-app, avec les alertes SLA.',
       'Mode suggestion (étape 16) : pour une réclamation non assignée, le superviseur voit l\'agent proposé (agentSuggere) et valide d\'un clic.',
+      'Étape 21 : « Nouvelle réclamation » pour un client au guichet ou au téléphone ; badge « Doublon possible » quand le même client a une autre réclamation de la même catégorie en cours (ici Yao Kouassi, 2442 et 2453).',
+      'Étape 21 : l\'onglet « À réassigner » réunit les réclamations d\'un agent désactivé ou absent aujourd\'hui (ici Adjoua). Le superviseur coche et assigne à un agent, ou répartit entre les agents disponibles (assignerEnLot, 100 au plus).',
     ],
     variantes: [
       VU_PAR(['SUPERVISEUR', 'AGENT']),
+      { cle: 'file', libelle: 'File', options: [{ valeur: 'defaut', libelle: 'Par défaut' }, { valeur: 'a-reassigner', libelle: 'À réassigner, sélection' }] },
       { cle: 'notifs', libelle: 'Notifications', options: [{ valeur: 'fermees', libelle: 'Fermées' }, { valeur: 'ouvertes', libelle: 'Ouvertes' }] },
     ],
     rendu: ({ v }) => {
       const u = PROFILS[v.role as keyof typeof PROFILS];
+      const reassigner = v.file === 'a-reassigner' && u.role !== 'AGENT';
+      const page = u.role === 'AGENT' ? PAGE_AGENT : PAGE_SUPERVISEUR;
       return backOffice(
         u,
         'reclamations',
-        <Files page={u.role === 'AGENT' ? PAGE_AGENT : PAGE_SUPERVISEUR} moi={u} maintenant={MAINTENANT} seuil={PARAMETRES.seuilAlerteSlaPourcent} />,
+        <Files
+          key={`${v.role}-${v.file}`}
+          page={page}
+          moi={u}
+          maintenant={MAINTENANT}
+          seuil={PARAMETRES.seuilAlerteSlaPourcent}
+          fileInitiale={reassigner ? 'a-reassigner' : 'toutes'}
+          indisponibles={INDISPONIBLES}
+          selectionInitiale={reassigner ? page.donnees.filter((r) => r.statut !== 'CLOTUREE' && r.agent && INDISPONIBLES.includes(r.agent.id)).map((r) => r.id) : undefined}
+          references={{ categories: [], agences: [], agents: AGENTS_ASSIGNABLES.filter((a) => !INDISPONIBLES.includes(a.id)) }}
+          surNouvelle={() => undefined}
+          surAssignerEnLot={u.role === 'SUPERVISEUR' ? () => false : undefined}
+        />,
         v.notifs === 'ouvertes',
       );
     },
@@ -453,6 +509,7 @@ export const ECRANS: Ecran[] = [
       '« Attendre la réponse du client » transforme la réponse en question : le chrono SLA se met en pause (étape 4).',
       'Résoudre exige une réponse finale ; la clôture forcée exige un motif et une précision.',
       'Chat web (étape 17) : le panneau « Chat web » dit si le client est en ligne et s\'il attend une réponse ; « Ouvrir la conversation » mène à la boîte de réception.',
+      'Étape 22 : « Messages au client » liste les e-mails et SMS envoyés au client, coordonnée masquée et état (remis, envoyé, non remis…), jamais leur texte.',
     ],
     variantes: [
       VU_PAR(['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE']),
@@ -530,6 +587,131 @@ export const ECRANS: Ecran[] = [
           actions={{ suggerer: async () => SUGGESTION_42 }}
         />,
       ),
+  },
+  {
+    id: 'ticket-doublon',
+    groupe: 'back-office',
+    titre: 'Doublon possible et rattachement',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/reclamations/ALP-2026-002453'),
+    operations: ['lireReclamation', 'rattacherReclamation', 'renvoyerLienSuivi'],
+    roles: 'Superviseur, ou agent assigné aux deux réclamations (étape 21).',
+    notes: [
+      'Doublon possible : même client (reconnu à son téléphone ou à son e-mail), même catégorie, toutes deux en cours, déposées à moins de 30 jours d\'écart. Rien n\'est fusionné de soi-même : c\'est signalé.',
+      '« Du même client » liste ses 10 dernières réclamations ; un agent ne peut ouvrir que les siennes.',
+      'Rattacher clôture ce doublon (motif « Doublon ») et le joint à la réclamation choisie, du même client et en cours. Ses messages et pièces jointes restent consultables ; le client reçoit un seul message, avec le lien de la principale, et pas d\'enquête.',
+      '« Renvoyer le lien de suivi » : au téléphone ou à l\'e-mail du dossier seulement, 3 fois par heure.',
+    ],
+    variantes: [{ cle: 'fenetre', libelle: 'Fenêtre', options: [{ valeur: 'aucune', libelle: 'Aucune' }, { valeur: 'rattacher', libelle: 'Rattacher' }] }],
+    rendu: ({ v }) =>
+      backOffice(
+        SUPERVISEUR,
+        'reclamations',
+        <Ticket
+          key={v.fenetre}
+          r={FICHE_53}
+          agents={AGENTS_ASSIGNABLES}
+          fenetre={v.fenetre as Fenetre}
+          delaiClotureJours={PARAMETRES.delaiClotureAutoJours}
+          seuil={PARAMETRES.seuilAlerteSlaPourcent}
+        />,
+      ),
+  },
+  {
+    id: 'nouvelle-reclamation',
+    groupe: 'back-office',
+    titre: 'Saisie au guichet ou au téléphone',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/reclamations/nouvelle'),
+    operations: ['listerCategories', 'listerAgences', 'saisirReclamation', 'lireReclamation'],
+    roles: 'Agent et superviseur, pour un client sans smartphone ou qui préfère en parler (étape 21).',
+    notes: [
+      'Canal « Guichet » (agence obligatoire) ou « Téléphone » : deux canaux de plus, comptés à part dans le tableau de bord et l\'activité des agences.',
+      'Mêmes règles qu\'au portail : un téléphone ou un e-mail au moins, pièces jointes contrôlées. Le client est informé de la politique de données ; son accord oral est inscrit au journal, au nom de l\'agent.',
+      'L\'agent qui saisit se l\'assigne (sinon, les règles d\'attribution) ; « Urgente » au besoin.',
+      'Le récépissé s\'imprime seul (numéro, date, QR code du suivi) ; le client reçoit aussi son numéro par SMS ou e-mail. Le lien n\'est montré qu\'une fois au personnel.',
+      'Variante « Fiche » : la réclamation saisie, avec « Saisie par Aya Konan » dans le dépôt et la chronologie.',
+    ],
+    variantes: [{
+      cle: 'etat',
+      libelle: 'État',
+      options: [{ valeur: 'saisie', libelle: 'Saisie' }, { valeur: 'erreurs', libelle: 'Erreurs' }, { valeur: 'recepisse', libelle: 'Récépissé' }, { valeur: 'fiche', libelle: 'Fiche' }],
+    }],
+    rendu: ({ v }) => {
+      const saisie = {
+        canal: 'GUICHET' as const, agenceId: AGENCES[0]!.id, categorieId: CATEGORIES[3]!.id,
+        description: FICHE_54.description, nom: 'Ahou Kouamé', telephone: '01 01 02 03 04', email: '', consentementInforme: true, urgente: false, meLAssigner: true,
+        fichiers: [fichierExemple('releve-aout.pdf', 412_000)],
+      };
+      if (v.etat === 'fiche') {
+        return backOffice(
+          AGENT,
+          'reclamations',
+          <Ticket r={FICHE_54} agents={AGENTS_ASSIGNABLES} delaiClotureJours={PARAMETRES.delaiClotureAutoJours} seuil={PARAMETRES.seuilAlerteSlaPourcent} />,
+        );
+      }
+      return backOffice(
+        AGENT,
+        'reclamations',
+        <NouvelleReclamation
+          key={v.etat}
+          banque={ALPHA}
+          moi={AGENT}
+          categories={CATEGORIES.filter((c) => c.active).map((c) => ({ id: c.id, nom: c.nom }))}
+          agences={AGENCES.filter((a) => a.active).map((a) => ({ id: a.id, nom: a.nom }))}
+          regles={REGLES_PIECES}
+          lienPolitique={`https://${ALPHA.slug}.${DOMAINE}/politique-donnees`}
+          saisie={v.etat === 'erreurs' ? { ...saisie, agenceId: '', telephone: '01 02 03 04' } : saisie}
+          erreur={v.etat === 'erreurs' ? ERREUR_SAISIE : null}
+          accuse={v.etat === 'recepisse' ? { accuse: ACCUSE_SAISIE_54, saisie } : null}
+        />,
+      );
+    },
+  },
+  {
+    id: 'ticket-envois',
+    groupe: 'back-office',
+    titre: 'Fiche : message non remis, pièces jointes analysées',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/reclamations/ALP-2026-002454'),
+    operations: ['lireReclamation', 'renvoyerMessage', 'telechargerPieceJointe', 'listerReclamations'],
+    roles: 'Agent assigné et superviseur renvoient un message ; l\'Admin Entreprise consulte (étape 22).',
+    notes: [
+      'Le téléphone d\'Ahou Kouamé était éteint : la passerelle a renvoyé un accusé « non remis ». Aya est prévenue dans l\'application, la file montre « Message non remis », la fiche le bandeau et « Renvoyer ».',
+      'Renvoyer : le même message, à la même coordonnée (celle du dossier), 3 fois par heure. Seuls les messages dont le texte est gardé se renvoient (accusé, statut, réponse, résolution, clôture, lien de suivi), pas un code ni un message de conversation.',
+      'Un SMS en échec passager est réessayé 1, 5, 30 puis 120 minutes après (« Nouvel essai prévu ») ; un numéro invalide ou refusé ne se réessaie pas. Un e-mail « Envoyé » est accepté par le serveur d\'envoi : il n\'a pas d\'accusé de remise.',
+      'Pièces jointes : photos, PDF et documents Word (.docx sans macro), 10 Mo chacun, analysés par l\'antivirus. Antivirus indisponible : « Analyse en cours », non téléchargeable, analysé par le worker dès son retour. Virus trouvé ensuite : le fichier est effacé, l\'agent prévenu, le journal d\'audit le note.',
+    ],
+    variantes: [
+      VU_PAR(['AGENT', 'ADMIN_ENTREPRISE']),
+      {
+        cle: 'pieces',
+        libelle: 'Pièces jointes',
+        options: [
+          { valeur: 'saines', libelle: 'Analysées, saines' },
+          { valeur: 'analyse', libelle: 'Analyse en cours' },
+          { valeur: 'virus', libelle: 'Virus trouvé' },
+        ],
+      },
+    ],
+    rendu: ({ v }) => {
+      const [releve, courrier] = FICHE_54.piecesJointes;
+      const pieces = v.pieces === 'analyse'
+        ? [releve!, { ...courrier!, antivirus: 'EN_ATTENTE' as const }]
+        : v.pieces === 'virus' ? [releve!, { ...courrier!, nomFichier: 'facture-impayee.docx', antivirus: 'INFECTE' as const }] : [releve!, courrier!];
+      const admin = v.role === 'ADMIN_ENTREPRISE';
+      const r: S<'ReclamationDetail'> = {
+        ...FICHE_54,
+        piecesJointes: pieces,
+        envois: FICHE_54.envois.map((e) => ({ ...e, renvoyable: e.renvoyable && !admin })),
+        ...(admin ? { actionsPossibles: [], operationsPossibles: ['CONSULTER' as const] } : {}),
+      };
+      return backOffice(
+        admin ? PROFILS.ADMIN_ENTREPRISE : AGENT,
+        'reclamations',
+        <Ticket key={`${v.role}-${v.pieces}`} r={r} agents={AGENTS_ASSIGNABLES} delaiClotureJours={PARAMETRES.delaiClotureAutoJours} seuil={PARAMETRES.seuilAlerteSlaPourcent} />,
+      );
+    },
   },
   {
     id: 'conversations',
@@ -716,6 +898,7 @@ export const ECRANS: Ecran[] = [
       'Un compte verrouillé (5 échecs) l\'est pour 15 minutes ; l\'heure de fin est affichée.',
       'Double authentification (étape 19) : facultative par défaut, chacun l\'active depuis « Mon compte ». L\'Admin Entreprise peut l\'exiger de tout le personnel, après avoir activé la sienne (DOUBLE_AUTHENTIFICATION_A_ACTIVER) : les sessions de ceux qui ne l\'ont pas activée sont fermées, et chacun l\'active à sa prochaine connexion.',
       'Chaque personne montre l\'état de sa double authentification ; ici, Ibrahim Coulibaly ne l\'a pas activée.',
+      'Étape 21 : désactiver un agent qui a des réclamations en cours les met dans la file « À réassigner » ; ses superviseurs en sont prévenus.',
     ],
     variantes: [
       VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR']),
@@ -748,6 +931,7 @@ export const ECRANS: Ecran[] = [
     notes: [
       'Un agent absent ne reçoit aucune nouvelle réclamation ces jours-là, ni en suggestion ni en automatique.',
       'Pas de motif : la cause d\'une absence ne regarde pas l\'outil. Une absence se retire et se redéclare, elle ne se modifie pas.',
+      'Étape 21 : ses réclamations en cours restent à son nom ; pendant l\'absence, elles sont dans la file « À réassigner », et les alertes SLA et messages des clients vont à son superviseur.',
     ],
     rendu: () => backOffice(SUPERVISEUR, 'absences', <Absences absences={ABSENCES} agents={AGENTS_DES_GROUPES.map((a) => ({ id: a.id, nom: a.nom }))} aujourdhui="2026-09-25" />),
   },
@@ -832,7 +1016,7 @@ export const ECRANS: Ecran[] = [
     roles: 'Super Admin.',
     notes: [
       'Métadonnées seulement : volumes, taux, compteurs de SMS. Aucun texte ni client (arbitrage 4, droits par colonne de l\'étape 3).',
-      'Les segments facturés servent à refacturer les SMS à chaque banque.',
+      'Les segments facturés servent à refacturer les SMS à chaque banque. Étape 22 : les SMS remis (accusé de remise de la passerelle) et non remis ; un SMS parti est facturé même s\'il n\'est pas remis.',
       'Satisfaction (étape 15) : totaux par banque (enquêtes, réponses, satisfaits, NPS), jamais les commentaires des clients.',
       'Assistant IA (étape 18) : tours du portail, brouillons, réponses par l\'IA ou par les règles, jetons et coût, d\'après un journal qui ne garde aucun message (décisions I2 et I5).',
       'WhatsApp et SMS reçus (étape 20) : messages remis à Meta, ceux que Meta déclare facturables, échecs, messages reçus ; des totaux, sans numéro ni texte.',

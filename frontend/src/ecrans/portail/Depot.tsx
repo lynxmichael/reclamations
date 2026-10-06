@@ -211,6 +211,12 @@ export function Depot({
             {erreurDe.consentement && <span className="mt-1 block text-sm font-semibold text-urgent">{erreurDe.consentement}</span>}
           </span>
         </label>
+
+        {/* Étape 21 : un client qui revient déposer la même réclamation, faute d'avoir gardé son lien */}
+        <p className="text-center text-[15px] text-encre-2">
+          Déjà une réclamation ?{' '}
+          <a href="/retrouver" className="font-semibold text-marque-texte underline underline-offset-2">Retrouvez-la</a>
+        </p>
       </form>
     </CadrePortail>
   );

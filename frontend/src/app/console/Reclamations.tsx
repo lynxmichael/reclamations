@@ -3,21 +3,27 @@
  * actions (lireReclamation et les opérations du cycle de vie). Les critères de la file sont dans
  * l'adresse : un lien copié rouvre la même vue.
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ErreurApi, enregistrer, messageErreur } from '../../api/client';
 import type { S } from '../../api/types';
-import { Files, type CriteresFiles, type File as FileTraitement, type Periode, type TriFiles } from '../../ecrans/back-office/Files';
+import { Files, type ChoixEnLot, type CriteresFiles, type File as FileTraitement, type Periode, type TriFiles } from '../../ecrans/back-office/Files';
+import { NouvelleReclamation, SAISIE_VIDE, type SaisieGuichet } from '../../ecrans/back-office/NouvelleReclamation';
 import { Ticket, type ActionsFiche } from '../../ecrans/back-office/Ticket';
+import { REGLES_PIECES } from '../../ui/ChoixFichiers';
 import { TelechargerPiece } from '../../ui/contextes';
+import { CANAL } from '../../ui/libelles';
+import { nouvelleCle } from '../commun/requetes';
 import { useAnnoncer } from '../commun/Annonces';
 import { Chargement, ErreurChargement } from '../commun/Etats';
 import { INTERVALLE_MS } from './Cadre';
 import { ROUTES_BANQUE, nomDe, useConsole, useParametres } from './contexte';
+import { adressePortail } from './Parametrage';
 import { useExport } from './Reporting';
 
-const FILES: FileTraitement[] = ['recues', 'assignees', 'urgentes', 'en-retard', 'escaladees', 'toutes'];
+const FILES: FileTraitement[] = ['recues', 'assignees', 'urgentes', 'en-retard', 'escaladees', 'toutes', 'a-reassigner'];
+const CANAUX = Object.keys(CANAL) as S<'CanalDepot'>[];
 const TRIS: TriFiles[] = ['echeanceSlaLe', '-creeLe', 'creeLe', '-priorite', '-echeanceSlaLe'];
 
 function useTitre(titre: string) {
@@ -44,7 +50,7 @@ function lireCriteres(params: URLSearchParams, role: S<'RoleUtilisateur'>): Crit
     statut: val('statut', ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT', 'RESOLUE', 'CLOTUREE'] as const),
     categorieId: val('categorieId'),
     agenceId: val('agenceId'),
-    canal: val('canal', ['QR_CODE', 'LIEN_WEB'] as const),
+    canal: val('canal', CANAUX),
     agentId: val('agentId'),
     periode: val('periode', ['7j', '30j', 'mois'] as const),
     recherche: val('recherche'),
@@ -124,6 +130,23 @@ export function PageFiles() {
     },
   });
 
+  // Étape 21 : réassignation en lot (un agent, ou réparties entre les agents disponibles)
+  const enLot = useMutation({
+    mutationFn: ({ ids, choix }: { ids: string[]; choix: ChoixEnLot }) =>
+      appeler('assignerEnLot', { corps: 'agentId' in choix ? { reclamationIds: ids, agentId: choix.agentId } : { reclamationIds: ids, repartir: true } }),
+    onSuccess: (r) => {
+      void cache.invalidateQueries({ queryKey: ['reclamations'] });
+      void cache.invalidateQueries({ queryKey: ['compteurs'] });
+      const faites = r.assignees.length;
+      const laissees = r.laissees.map((l) => `${l.numero ?? 'réclamation inconnue'} (${l.raison.toLowerCase()})`).join(', ');
+      annoncer(
+        `${faites} réclamation${faites > 1 ? 's' : ''} assignée${faites > 1 ? 's' : ''}${laissees ? ` ; laissée${r.laissees.length > 1 ? 's' : ''} : ${laissees}` : ''}.`,
+        faites === 0 ? 'erreur' : 'ok',
+      );
+    },
+    onError: (e) => annoncer(messageErreur(e), 'erreur'),
+  });
+
   if (page.isPending) return <Chargement />;
   if (page.isError) return <ErreurChargement erreur={page.error} surReessayer={() => void page.refetch()} />;
   return (
@@ -157,6 +180,92 @@ export function PageFiles() {
       }}
       surOuvrir={(id) => navigate(`/reclamations/${id}`, { state: { depuis: `/reclamations?${params.toString()}` } })}
       surValiderSuggestion={(r, agent) => valider.mutate({ r, agent })}
+      surNouvelle={moi.role === 'ADMIN_ENTREPRISE' ? undefined : () => navigate(`${ROUTES_BANQUE.reclamations}/nouvelle`)}
+      surAssignerEnLot={moi.role === 'SUPERVISEUR'
+        ? (ids, choix) => enLot.mutateAsync({ ids, choix }).then((r) => r.assignees.length > 0).catch(() => false)
+        : undefined}
+    />
+  );
+}
+
+/** Étape 21 : saisie au guichet ou au téléphone, puis le récépissé à imprimer. */
+export function PageNouvelle() {
+  const { appeler, moi } = useConsole();
+  const parametres = useParametres();
+  const navigate = useNavigate();
+  const cache = useQueryClient();
+  const categories = useQuery({ queryKey: ['categories'], queryFn: () => appeler('listerCategories'), staleTime: 60_000 });
+  const agences = useQuery({ queryKey: ['agences'], queryFn: () => appeler('listerAgences'), staleTime: 60_000 });
+  const [saisie, setSaisie] = useState<SaisieGuichet>(SAISIE_VIDE);
+  const [version, setVersion] = useState(0);
+  const [erreur, setErreur] = useState<S<'Probleme'> | null>(null);
+  const [accuse, setAccuse] = useState<{ accuse: S<'AccuseSaisie'>; saisie: SaisieGuichet } | null>(null);
+  const cle = useRef(nouvelleCle());
+  useTitre('Nouvelle réclamation');
+
+  const envoi = useMutation({
+    mutationFn: (v: SaisieGuichet) =>
+      appeler('saisirReclamation', {
+        entetes: { 'Idempotency-Key': cle.current },
+        // Un champ vide n'est pas envoyé : l'API répond « Champ obligatoire » plutôt que « invalide »
+        corps: {
+          canal: v.canal,
+          ...(v.agenceId ? { agenceId: v.agenceId } : {}),
+          ...(v.categorieId ? { categorieId: v.categorieId } : ({} as { categorieId: string })),
+          description: v.description,
+          nom: v.nom.trim(),
+          ...(v.telephone.trim() ? { telephone: v.telephone } : {}),
+          ...(v.email.trim() ? { email: v.email } : {}),
+          consentementInforme: v.consentementInforme as true,
+          urgente: v.urgente,
+          meLAssigner: v.meLAssigner,
+          fichiers: v.fichiers,
+        },
+      }),
+    onSuccess: (a, v) => {
+      cle.current = nouvelleCle();
+      setErreur(null);
+      setAccuse({ accuse: a, saisie: v });
+      void cache.invalidateQueries({ queryKey: ['reclamations'] });
+      void cache.invalidateQueries({ queryKey: ['compteurs'] });
+      window.scrollTo({ top: 0 });
+    },
+    onError: (e, v) => {
+      if (e instanceof ErreurApi && e.statut >= 400 && e.statut < 500) cle.current = nouvelleCle();
+      setErreur(e instanceof ErreurApi ? e.probleme : { type: '/erreurs/inattendue', title: 'Enregistrement impossible', status: 0, code: 'ERREUR_INTERNE', detail: messageErreur(e) });
+      setSaisie({ ...v });
+      setVersion((n) => n + 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+  });
+
+  if (categories.isPending || agences.isPending) return <Chargement />;
+  if (categories.isError) return <ErreurChargement erreur={categories.error} surReessayer={() => void categories.refetch()} />;
+  if (agences.isError) return <ErreurChargement erreur={agences.error} surReessayer={() => void agences.refetch()} />;
+  const banque: S<'BanquePublique'> = {
+    nom: parametres.nom, slug: parametres.slug, logoUrl: parametres.logoUrl, couleurPrimaire: parametres.couleurPrimaire, couleurSecondaire: parametres.couleurSecondaire, whatsapp: parametres.whatsapp,
+  };
+  return (
+    <NouvelleReclamation
+      key={version}
+      banque={banque}
+      moi={moi}
+      categories={categories.data.filter((c) => c.active).map((c) => ({ id: c.id, nom: c.nom }))}
+      agences={agences.data.filter((a) => a.active).map((a) => ({ id: a.id, nom: a.nom }))}
+      regles={REGLES_PIECES}
+      lienPolitique={`${window.location.protocol}//${adressePortail(parametres.slug)}/politique-donnees`}
+      saisie={saisie}
+      erreur={erreur}
+      occupe={envoi.isPending}
+      accuse={accuse}
+      surEnvoyer={(v) => envoi.mutate(v)}
+      surRetour={() => navigate(ROUTES_BANQUE.reclamations)}
+      surAutre={() => {
+        setAccuse(null);
+        setSaisie(SAISIE_VIDE);
+        setVersion((n) => n + 1);
+      }}
+      surOuvrir={(id) => navigate(`${ROUTES_BANQUE.reclamations}/${id}`)}
     />
   );
 }
@@ -223,6 +332,22 @@ export function PageFiche() {
     escalader: () => void executer(() => appeler('escaladerReclamation', { chemin: { id }, corps: {} }), 'Réclamation escaladée au superviseur.'),
     cloturer: (motif, precision) => executer(() => appeler('cloturerDeForce', { chemin: { id }, corps: { motif, precision } }), 'Réclamation clôturée de force, motif inscrit au journal.'),
     ouvrirConversation: (conversation) => navigate(`${ROUTES_BANQUE.conversations}/${conversation}?filtre=toutes`),
+    // Étape 21 : doublons, lien de suivi perdu, autres réclamations du client
+    rattacher: (principaleId) => {
+      const numero = f.duMemeClient.find((d) => d.id === principaleId)?.numero ?? 'la réclamation principale';
+      return executer(() => appeler('rattacherReclamation', { chemin: { id }, corps: { principaleId } }), `Rattachée à ${numero} et clôturée : le client reçoit un seul message, avec le lien de celle-ci.`);
+    },
+    renvoyerLien: () =>
+      void appeler('renvoyerLienSuivi', { chemin: { id } })
+        .then((r) => annoncer(`Lien de suivi renvoyé ${r.envois.map((e) => `${e.canal === 'EMAIL' ? 'par e-mail à' : e.canal === 'SMS' ? 'par SMS au' : 'sur WhatsApp au'} ${e.destinationMasquee}`).join(' et ')}.`))
+        .catch((e: unknown) => annoncer(messageErreur(e), 'erreur')),
+    ouvrir: (autre) => navigate(`${ROUTES_BANQUE.reclamations}/${autre}`),
+    // Étape 22 : un message non remis, renvoyé tel quel à la même coordonnée
+    renvoyerMessage: (envoiId) => {
+      const e = f.envois.find((x) => x.id === envoiId);
+      const vers = e ? ` ${e.canal === 'EMAIL' ? 'par e-mail à' : 'par SMS au'} ${e.destinationMasquee}` : '';
+      void executer(() => appeler('renvoyerMessage', { chemin: { id, envoiId } }), `« ${e?.objet ?? 'Message'} » renvoyé${vers} : son état s'affiche dans « Messages au client ».`);
+    },
     // Assistant IA (étape 18) : un brouillon, que l'agent relit et envoie lui-même
     suggerer: parametres.assistantIa && f.operationsPossibles.includes('REPONDRE_AU_CLIENT')
       ? async () => {

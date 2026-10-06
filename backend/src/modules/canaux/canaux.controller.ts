@@ -1,4 +1,4 @@
-/** WhatsApp et SMS entrant (étape 20) : webhooks de Meta et de la passerelle SMS, voir canaux.service.ts. */
+/** WhatsApp et SMS entrant (étape 20) : webhooks de Meta et de la passerelle SMS (et ses accusés de remise, étape 22), voir canaux.service.ts. */
 import { Controller, Inject, Module, Req, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { CONFIGURATION, type Configuration } from '../../configuration/configuration.js';
@@ -28,6 +28,12 @@ export class CanauxControleur {
   @Operation('recevoirSmsEntrant')
   sms(@Req() req: RequeteSignee, @EntreesValidees() e: Entrees) {
     return this.service.webhookSms(req.corpsBrut, e.entetes['x-signature'], e.corps);
+  }
+
+  /** Étape 22 : accusés de remise des SMS envoyés */
+  @Operation('recevoirRemiseSms')
+  remise(@Req() req: RequeteSignee, @EntreesValidees() e: Entrees) {
+    return this.service.webhookRemiseSms(req.corpsBrut, e.entetes['x-signature'], e.corps);
   }
 }
 

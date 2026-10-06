@@ -1,13 +1,14 @@
 /**
  * Services partagés par tous les modules de l'API : configuration, base, Redis, stockage,
- * jetons, limites de débit, idempotence, anti-robot (étape 11), horloge, service du cycle de vie (étape 4)
- * et appels à l'IA (étape 18).
+ * jetons, limites de débit, idempotence, anti-robot (étape 11), horloge, service du cycle de vie (étape 4),
+ * appels à l'IA (étape 18) et antivirus des pièces jointes (étape 22).
  */
 import { Global, Inject, Injectable, Module, type DynamicModule, type OnApplicationShutdown } from '@nestjs/common';
 import { MoteurIa } from '../application/ia/moteur.js';
 import { CycleDeVie } from '../application/reclamations/cycle-de-vie.js';
 import { CONFIGURATION, urlPortail, type Configuration } from '../configuration/configuration.js';
 import { BaseDonnees } from '../infrastructure/base-de-donnees/base-de-donnees.service.js';
+import { ANTIVIRUS, antivirusDe, type Antivirus } from '../infrastructure/fichiers/antivirus.js';
 import { creerFournisseur } from '../infrastructure/ia/fournisseurs.js';
 import { ServiceRedis } from '../infrastructure/redis/redis.service.js';
 import { AntiRobot } from '../infrastructure/securite/anti-robot.js';
@@ -24,6 +25,8 @@ export interface OptionsNoyau {
   /** Horloge injectée (tests du SLA) ; l'heure réelle par défaut */
   readonly horloge?: Horloge;
   readonly stockage?: Stockage;
+  /** Antivirus injecté (tests) ; sinon celui de la configuration */
+  readonly antivirus?: Antivirus;
 }
 
 @Injectable()
@@ -50,6 +53,7 @@ export class NoyauModule {
       { provide: BaseDonnees, useFactory: () => new BaseDonnees(config.baseDeDonneesUrl) },
       { provide: ServiceRedis, useFactory: () => new ServiceRedis(config.redisUrl) },
       { provide: STOCKAGE, useValue: options.stockage ?? new StockageDisque(config.stockageDossier) },
+      { provide: ANTIVIRUS, useValue: options.antivirus ?? antivirusDe(config.antivirus) },
       { provide: Jetons, useFactory: () => new Jetons(config.secretJwt, horloge) },
       { provide: Limiteur, useFactory: (r: ServiceRedis) => new Limiteur(r), inject: [ServiceRedis] },
       { provide: Idempotence, useFactory: (r: ServiceRedis) => new Idempotence(r), inject: [ServiceRedis] },

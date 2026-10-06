@@ -8,7 +8,18 @@
  */
 import { Logger } from '@nestjs/common';
 import { createTransport, type Transporter } from 'nodemailer';
+import type { MotifEchec } from '../../domaine/envois.js';
 import { segmentsSms } from '../../domaine/sms.js';
+
+/**
+ * Étape 22 : un envoi refusé. `definitive` : la même demande échouerait encore (numéro invalide,
+ * adresse refusée) ; sinon la boîte d'envoi réessaie plus tard.
+ */
+export class ErreurEnvoi extends Error {
+  constructor(message: string, readonly definitive: boolean, readonly motif: MotifEchec) {
+    super(message);
+  }
+}
 
 export interface ResultatEnvoi {
   readonly idFournisseur: string | null;
@@ -48,10 +59,17 @@ export class EmailSmtp implements AdaptateurEmail {
   }
 
   async envoyer(m: MessageEmail): Promise<ResultatEnvoi> {
-    const info = await this.transport.sendMail({
-      from: this.expediteur, to: m.destination, subject: m.sujet, text: m.texte, ...(m.html ? { html: m.html } : {}),
-    });
-    return { idFournisseur: (info.messageId as string | undefined)?.slice(0, 128) ?? null };
+    try {
+      const info = await this.transport.sendMail({
+        from: this.expediteur, to: m.destination, subject: m.sujet, text: m.texte, ...(m.html ? { html: m.html } : {}),
+      });
+      return { idFournisseur: (info.messageId as string | undefined)?.slice(0, 128) ?? null };
+    } catch (e) {
+      // Étape 22 : un refus définitif du serveur (5xx : adresse inconnue, boîte supprimée) ne se réessaie pas
+      const code = (e as { responseCode?: number }).responseCode;
+      if (code !== undefined && code >= 500 && code < 600) throw new ErreurEnvoi(`SMTP ${code} : ${(e as Error).message}`, true, 'ADRESSE_INVALIDE');
+      throw e;
+    }
   }
 
   async fermer(): Promise<void> {
@@ -93,7 +111,11 @@ export interface OptionsSmsHttp {
  *   2xx { "id": "<identifiant chez la passerelle>", "segments": 2 }   (segments facultatif)
  *
  * Toute autre réponse, ou aucune réponse en 10 s, est une erreur : la boîte d'envoi réessaie
- * (5 tentatives), la clé d'idempotence évitant un double envoi si la passerelle l'honore.
+ * (5 tentatives, espacées : étape 22), la clé d'idempotence évitant un double envoi si la passerelle
+ * l'honore. 400 et 422 (numéro refusé), 404 et 410 sont définitifs : pas de nouvel essai.
+ *
+ * Accusés de remise (étape 22) : la passerelle les renvoie à l'API (opération recevoirRemiseSms,
+ * voir infrastructure/canaux/remise-sms.ts), avec « id » ou « reference ».
  */
 export class SmsHttp implements AdaptateurSms {
   constructor(private readonly o: OptionsSmsHttp) {}
@@ -111,7 +133,12 @@ export class SmsHttp implements AdaptateurSms {
       signal: AbortSignal.timeout(this.o.delaiMs ?? 10_000),
     });
     const texte = await reponse.text();
-    if (!reponse.ok) throw new Error(`Passerelle SMS : HTTP ${reponse.status} ${texte.replace(/\s+/g, ' ').slice(0, 200)}`);
+    if (!reponse.ok) {
+      const message = `Passerelle SMS : HTTP ${reponse.status} ${texte.replace(/\s+/g, ' ').slice(0, 200)}`;
+      if ([400, 422].includes(reponse.status)) throw new ErreurEnvoi(message, true, 'NUMERO_INVALIDE');
+      if ([404, 410].includes(reponse.status)) throw new ErreurEnvoi(message, true, 'REFUSE');
+      throw new ErreurEnvoi(message, false, 'ERREUR_TECHNIQUE');
+    }
     let corps: { id?: unknown; segments?: unknown } = {};
     try {
       corps = texte ? (JSON.parse(texte) as typeof corps) : {};

@@ -63,6 +63,10 @@ x-application: &application
     WHATSAPP_SECRET_APP: ${WHATSAPP_SECRET_APP:-}
     WHATSAPP_JETON_VERIFICATION: ${WHATSAPP_JETON_VERIFICATION:-}
     SMS_ENTRANT_SECRET: ${SMS_ENTRANT_SECRET:-}
+    # Antivirus des pièces jointes (étape 22) : le service clamav ci-dessous ; « aucun » est refusé
+    ANTIVIRUS: clamav
+    CLAMAV_HOTE: clamav
+    CLAMAV_PORT: "3310"
   logging: *journaux
   networks: [interne]
 
@@ -209,6 +213,29 @@ services:
     logging: *journaux
     networks: [interne]
 
+  # Antivirus des pièces jointes (étape 22) : ClamAV, joint par l'API et le worker sur le réseau interne
+  # (port 3310, non publié). Signatures mises à jour par freshclam (une fois par jour, comme le
+  # conseille ClamAV) et gardées dans un volume. Environ 1,3 Go de mémoire, le double pendant le
+  # rechargement quotidien des signatures. Indisponible : les fichiers reçus attendent, sans être
+  # téléchargeables, et le worker les analyse à son retour ; /api/v1/sante passe à « degrade ».
+  clamav:
+    image: clamav/clamav:1.5
+    restart: unless-stopped
+    environment:
+      CLAMAV_NO_MILTERD: "true"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    # Contrôle de l'image (clamd répond), vérifié toutes les 5 s pendant le chargement des signatures
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      start_period: 6m
+      start_interval: 5s
+      retries: 3
+    logging: *journaux
+    networks: [interne]
+
   # Sauvegarde quotidienne à SAUVEGARDE_HEURE (UTC) ; lecture seule sur les fichiers
   sauvegarde:
     <<: *sauvegarde
@@ -244,3 +271,4 @@ volumes:
   caddy_data:
   caddy_config:
   sauvegardes:
+  clamav_signatures:

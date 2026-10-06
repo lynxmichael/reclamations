@@ -6,6 +6,7 @@ import type { components } from '../../contrat/api.js';
 import { CONFIGURATION, type Configuration } from '../../configuration/configuration.js';
 import { BaseDonnees } from '../../infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
+import { ANTIVIRUS, type Antivirus } from '../../infrastructure/fichiers/antivirus.js';
 import { CLE_BATTEMENT_WORKER, ServiceRedis } from '../../infrastructure/redis/redis.service.js';
 
 type Sante = components['schemas']['Sante'];
@@ -24,12 +25,14 @@ export interface Mesures {
   /** null si la base ne répond pas */
   envoisEnRetard: boolean | null;
   disque: { libres: number; total: number } | null;
+  /** Étape 22 : null si l'analyse est désactivée (développement) */
+  antivirus: boolean | null;
 }
 
 /**
  * État publié par lireSante (étape 10). HTTP 503 seulement si l'API ne peut pas servir (base ou
  * Redis) : c'est ce que regarde le contrôle de santé Docker. Tout autre défaut (worker arrêté,
- * envois en retard, disque presque plein) passe le statut à « degrade » avec HTTP 200 : la
+ * envois en retard, disque presque plein, antivirus injoignable) passe le statut à « degrade » avec HTTP 200 : la
  * supervision externe surveille le mot « "statut":"ok" » et alerte, sans que Docker ne coupe le site.
  */
 export function etatSante(m: Mesures, version: string): { http: 200 | 503; corps: Sante } {
@@ -41,9 +44,11 @@ export function etatSante(m: Mesures, version: string): { http: 200 | 503; corps
     worker: m.battement === null ? 'inconnu' : m.battement ? 'ok' : 'absent',
     envois: m.envoisEnRetard === null ? 'inconnu' : m.envoisEnRetard ? 'en_retard' : 'ok',
     disque: m.disque === null ? 'inconnu' : disquePlein ? 'presque_plein' : 'ok',
+    antivirus: m.antivirus === null ? 'desactive' : m.antivirus ? 'ok' : 'indisponible',
     version,
   };
-  corps.statut = corps.base === 'ok' && corps.redis === 'ok' && corps.worker === 'ok' && corps.envois === 'ok' && corps.disque === 'ok' ? 'ok' : 'degrade';
+  corps.statut = corps.base === 'ok' && corps.redis === 'ok' && corps.worker === 'ok' && corps.envois === 'ok' && corps.disque === 'ok'
+    && corps.antivirus !== 'indisponible' ? 'ok' : 'degrade';
   return { http: m.base && m.redis ? 200 : 503, corps };
 }
 
@@ -65,23 +70,26 @@ export class SanteControleur {
     @Inject(BaseDonnees) private readonly bd: BaseDonnees,
     @Inject(ServiceRedis) private readonly redis: ServiceRedis,
     @Inject(CONFIGURATION) private readonly config: Configuration,
+    @Inject(ANTIVIRUS) private readonly antivirus: Antivirus,
   ) {}
 
   /** État de l'API, de ses dépendances, du worker, des envois et du disque (supervision, Docker). */
   @Operation('lireSante')
   async lire(@Res({ passthrough: true }) res: Response): Promise<Sante> {
-    const [envoisEnRetard, redis, disque] = await Promise.all([
+    const [envoisEnRetard, redis, disque, antivirus] = await Promise.all([
+      // Étape 22 : une nouvelle tentative attendue (jusqu'à 2 h) n'est pas un retard ; un envoi en retard sur son heure, si
       this.bd.enSysteme((tx) => tx.$queryRaw<{ retard: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM notification
            WHERE statut = 'EN_ATTENTE' AND canal IN ('EMAIL', 'SMS')
-             AND cree_le < now() - make_interval(mins => ${RETARD_ENVOIS_MIN})
+             AND COALESCE(prochaine_tentative_le, cree_le) < now() - make_interval(mins => ${RETARD_ENVOIS_MIN})
         ) AS retard`).then(([r]) => r!.retard, () => null),
       this.redis.disponible(),
       espaceDisque(this.config.stockageDossier),
+      this.antivirus.actif ? this.antivirus.disponible() : Promise.resolve(null),
     ]);
     const battement = redis ? await this.redis.client.exists(CLE_BATTEMENT_WORKER).then((n) => n === 1, () => null) : null;
-    const { http, corps } = etatSante({ base: envoisEnRetard !== null, redis, battement, envoisEnRetard, disque }, this.config.version);
+    const { http, corps } = etatSante({ base: envoisEnRetard !== null, redis, battement, envoisEnRetard, disque, antivirus }, this.config.version);
     res.status(http);
     return corps;
   }

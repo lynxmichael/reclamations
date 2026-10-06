@@ -124,9 +124,9 @@ code=$(requete "https://$console/api/v1/sante")
 sante=$(tr -d ' \n' <"$T/corps")
 champ() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" <<<"$sante"; }
 if [[ $code == 200 && $(champ statut) == ok ]]; then
-  ok "santé : tout va bien (base, Redis, worker, envois, disque)"
+  ok "santé : tout va bien (base, Redis, worker, envois, disque, antivirus)"
 elif [[ $code == 200 ]]; then
-  ko "santé : dégradée" "worker $(champ worker), envois $(champ envois), disque $(champ disque)"
+  ko "santé : dégradée" "worker $(champ worker), envois $(champ envois), disque $(champ disque), antivirus $(champ antivirus)"
 else
   ko "santé : l'API ne répond pas normalement" "$code $sante"
 fi
@@ -161,7 +161,7 @@ if ((local)); then
     ko "docker disponible"
   else
     dc ps --all --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' >"$T/services" 2>"$T/erreur" || ko "docker compose ps" "$(cat "$T/erreur")"
-    services=(caddy api worker postgres redis)
+    services=(caddy api worker postgres redis clamav)
     est_demo || services+=(sauvegarde)
     for s in "${services[@]}"; do
       IFS='|' read -r _ etat sante_c _ < <(grep "^$s|" "$T/services")
@@ -173,6 +173,20 @@ if ((local)); then
     # Ports ouverts à tout le réseau par les services de ce projet (pas ceux d'autres projets du poste)
     publies=$(dc ps --format '{{.Service}} {{.Ports}}' | awk '$1 != "caddy"' | grep -E '0\.0\.0\.0:|\[::\]:' || true)
     [[ -z $publies ]] && ok "seul Caddy publie des ports" || ko "seul Caddy publie des ports" "$publies"
+    # Étape 22 : l'API joint ClamAV et il reconnaît le fichier de test EICAR (sans danger). Le fichier
+    # est assemblé dans le conteneur : écrit d'un seul tenant ici, l'antivirus d'un poste mettrait ce
+    # script en quarantaine
+    eicar=$(dc exec -T api node --input-type=module -e "
+      const { ClamAv } = await import('./dist/src/infrastructure/fichiers/antivirus.js');
+      const v = new ClamAv(process.env.CLAMAV_HOTE ?? 'clamav', Number(process.env.CLAMAV_PORT ?? 3310), 20000);
+      const essai = ['X5O!P%@AP[4\\\\PZX54(P^)7CC)7}\$', 'EICAR-STANDARD-ANTIVIRUS-TEST', '-FILE!\$H+H*'].join('');
+      const r = await v.analyser(Buffer.from(essai)).catch((e) => ({ erreur: e.message }));
+      console.log(r.sain === false ? 'TROUVE ' + r.virus : r.sain ? 'MANQUE' : 'ERREUR ' + r.erreur);" 2>&1 | tail -n 1)
+    case $eicar in
+      TROUVE*) ok "antivirus : ClamAV joint par l'API, fichier de test EICAR reconnu (${eicar#TROUVE })" ;;
+      MANQUE) ko "antivirus : fichier de test EICAR non reconnu" "signatures absentes ? docker compose … logs clamav" ;;
+      *) ko "antivirus : ClamAV injoignable depuis l'API" "$eicar — au démarrage, ClamAV charge ses signatures une à deux minutes" ;;
+    esac
   fi
   if command -v ufw >/dev/null && [[ $EUID == 0 ]]; then
     ufw status | grep -q '^Status: active' && ok "pare-feu UFW actif" || ko "pare-feu UFW actif" "ufw allow OpenSSH && ufw allow 80,443/tcp && ufw enable"

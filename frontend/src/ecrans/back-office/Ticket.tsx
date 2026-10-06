@@ -6,19 +6,20 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  ArrowUpRight, Bot, ChevronLeft, CircleCheck, Eye, Flame, Globe, LockKeyhole, Mail, MessagesSquare, Phone, QrCode, SendHorizontal, Sparkles, TriangleAlert, UserRound, X,
+  ArrowUpRight, Bot, ChevronLeft, CircleCheck, Combine, Copy, Eye, Flame, Link2, LockKeyhole, Mail, MailWarning, MessagesSquare, Phone, RotateCw, SendHorizontal, Sparkles, TriangleAlert, UserRound, X,
 } from 'lucide-react';
+import { LIBELLES_MOTIF } from '@domaine/envois';
 import { LIBELLE_INTERDIT, verifierInterdits } from '@domaine/ia/interdits';
 import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { Avatar, BadgeStatut, BadgeUrgent, Bouton, Liste, Panneau, Texte, cx } from '../../ui/composants';
-import { dateCourte, dateHeure } from '../../ui/format';
+import { dateCourte, dateHeure, heure } from '../../ui/format';
 import { JaugeFiche } from '../../ui/JaugeSla';
-import { AideEnvoi, BadgeCanal, envoiDeLaReponse, IconeCanal } from '../../ui/Canaux';
-import { CANAL, CANAL_CONVERSATION, ETAT_AVIS, EVENEMENT, MOTIF_CLOTURE, NOTE_SATISFACTION } from '../../ui/libelles';
+import { AideEnvoi, BadgeCanal, envoiDeLaReponse, IconeCanal, IconeDepot } from '../../ui/Canaux';
+import { CANAL, CANAL_CONVERSATION, ETAT_AVIS, ETAT_ENVOI, EVENEMENT, MOTIF_CLOTURE, NOTE_SATISFACTION, STATUT } from '../../ui/libelles';
 import { PieceJointe } from '../portail/MaReclamation';
 
-export type Fenetre = 'aucune' | 'resoudre' | 'cloturer';
+export type Fenetre = 'aucune' | 'resoudre' | 'cloturer' | 'rattacher';
 
 /** Résultat d'une action : false (ou une promesse de false) si elle a échoué, et la saisie est gardée. */
 type Issue = void | boolean | Promise<boolean>;
@@ -38,8 +39,63 @@ export interface ActionsFiche {
   ouvrirConversation?: (conversationId: string) => void;
   /** Assistant IA (étape 18) : un brouillon de réponse, que l'agent relit et envoie lui-même (suggererReponse) */
   suggerer?: () => Promise<S<'SuggestionReponse'> | null>;
+  /** Étape 21 : joindre ce doublon à une autre réclamation du même client, qui devient la principale */
+  rattacher?: (principaleId: string) => Issue;
+  /** Étape 21 : renvoyer au client le lien de son suivi, à ses seules coordonnées */
+  renvoyerLien?: () => void;
+  /** Étape 21 : ouvrir une autre réclamation (du même client, principale, doublon rattaché) */
+  ouvrir?: (id: string) => void;
+  /** Étape 22 : renvoyer au client un message non remis, tel quel, à la même coordonnée */
+  renvoyerMessage?: (envoiId: string) => void;
   /** Une action est en cours : ses boutons attendent */
   occupe?: boolean;
+}
+
+/** Lien vers une autre réclamation : la fiche s'ouvre dans l'application, l'ancre suffit aux maquettes. */
+function LienReclamation({ id, numero, actions }: { id: string; numero: string; actions?: ActionsFiche }) {
+  return (
+    <a
+      href={`#${id}`}
+      onClick={(e) => {
+        if (actions?.ouvrir) {
+          e.preventDefault();
+          actions.ouvrir(id);
+        }
+      }}
+      className="chiffres font-bold tracking-wide text-marque-texte underline-offset-2 hover:underline"
+    >
+      {numero}
+    </a>
+  );
+}
+
+/** Étape 21 : les autres réclamations du client, les plus récentes d'abord ; un agent n'ouvre que les siennes. */
+function DuMemeClient({ autres, actions }: { autres: S<'ReclamationDetail'>['duMemeClient']; actions?: ActionsFiche }) {
+  return (
+    <Panneau titre="Du même client">
+      <ul className="-my-2 divide-y divide-trait">
+        {autres.map((d) => (
+          <li key={d.id} className="py-2.5 text-sm">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {d.accessible ? <LienReclamation id={d.id} numero={d.numero} actions={actions} /> : <span className="chiffres font-bold tracking-wide text-encre-2">{d.numero}</span>}
+              <BadgeStatut statut={d.statut} />
+              {d.doublonPossible && (
+                <span className="inline-flex items-center gap-0.5 rounded-md bg-attente-doux px-1.5 text-[13px] font-semibold text-attente">
+                  <Copy aria-hidden size={12} strokeWidth={2.4} />
+                  Doublon possible
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-encre-3">
+              {d.categorie.nom}, <span className="chiffres">{dateCourte(d.creeLe)}</span>
+              {d.agent ? `, ${d.agent.nom}` : ', non assignée'}
+              {!d.accessible && ' (assignée à un autre agent)'}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </Panneau>
+  );
 }
 
 function Message({ m, nomClient }: { m: S<'ReclamationDetail'>['messages'][number]; nomClient: string }) {
@@ -252,6 +308,98 @@ function ChatClient({ c, actions }: { c: NonNullable<S<'ReclamationDetail'>['con
   );
 }
 
+type Envoi = S<'ReclamationDetail'>['envois'][number];
+
+const TON_ENVOI: Record<S<'EtatEnvoi'>, string> = {
+  EN_ATTENTE: 'bg-fond text-encre-2',
+  NOUVEL_ESSAI: 'bg-attente-doux text-attente',
+  ENVOYE: 'bg-fond text-encre-2',
+  REMIS: 'bg-resolue-doux text-resolue',
+  LU: 'bg-resolue-doux text-resolue',
+  NON_REMIS: 'bg-urgent-doux text-urgent',
+};
+
+function canalEnvoi(c: Envoi['canal']): string {
+  return c === 'EMAIL' ? 'E-mail' : c === 'SMS' ? 'SMS' : 'WhatsApp';
+}
+
+/** Le détail d'un message au client : où il en est, et pourquoi il n'est pas arrivé. */
+function detailEnvoi(e: Envoi): string {
+  switch (e.etat) {
+    case 'NON_REMIS': return `${LIBELLES_MOTIF[e.motif ?? 'ERREUR_TECHNIQUE']}${e.tentatives > 1 ? `, ${e.tentatives} essais` : ''}`;
+    case 'NOUVEL_ESSAI': return e.prochaineTentativeLe ? `essai ${e.tentatives + 1} à ${heure(e.prochaineTentativeLe)}` : `essai ${e.tentatives + 1} prévu`;
+    case 'REMIS': case 'LU': return e.remiseLe ? `${e.etat === 'LU' ? 'lu' : 'remis'} ${dateCourte(e.remiseLe)}` : '';
+    case 'ENVOYE': return e.canal === 'EMAIL' ? 'accepté par le serveur d\'envoi' : 'en attente de l\'accusé de remise';
+    default: return '';
+  }
+}
+
+/**
+ * Étape 22 : les messages envoyés au client (accusé, statuts, réponses…), leur coordonnée masquée et
+ * leur état, jamais leur texte. Les plus récents d'abord ; les six premiers, puis tous sur demande.
+ */
+function MessagesAuClient({ envois, actions }: { envois: Envoi[]; actions?: ActionsFiche }) {
+  const [tous, setTous] = useState(false);
+  const visibles = tous ? envois : envois.slice(0, 6);
+  return (
+    <Panneau titre="Messages au client">
+      {envois.length === 0 ? (
+        <p className="text-sm text-encre-3">Aucun message envoyé au client pour l'instant.</p>
+      ) : (
+        <>
+          <ul className="-my-2 divide-y divide-trait" data-testid="envois">
+            {visibles.map((e) => (
+              <li key={e.id} className="py-2.5 text-sm" data-etat={e.etat}>
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 text-encre-3">{e.canal === 'EMAIL' ? <Mail aria-hidden size={15} /> : <IconeCanal canal={e.canal} taille={15} />}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="font-semibold text-encre">{e.objet}</span>
+                      <span className={cx('rounded-md px-1.5 text-[12px] font-semibold', TON_ENVOI[e.etat])}>{ETAT_ENVOI[e.etat]}</span>
+                    </div>
+                    <p className="text-encre-3">
+                      {canalEnvoi(e.canal)} <span className="chiffres whitespace-nowrap">{e.destinationMasquee}</span>, <span className="chiffres whitespace-nowrap">{dateCourte(e.envoyeLe ?? e.creeLe)}</span>
+                    </p>
+                    {detailEnvoi(e) && <p className={cx(e.etat === 'NON_REMIS' ? 'font-semibold text-urgent' : 'text-encre-3')}>{detailEnvoi(e)}</p>}
+                    {e.renvoyable && (
+                      <Bouton taille="petit" className="mt-2" icone={<RotateCw aria-hidden size={14} />} disabled={actions?.occupe} onClick={() => actions?.renvoyerMessage?.(e.id)} aria-label={`Renvoyer « ${e.objet} » par ${canalEnvoi(e.canal)}`}>
+                        Renvoyer
+                      </Bouton>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {envois.length > 6 && (
+            <button type="button" onClick={() => setTous(!tous)} className="mt-3 text-sm font-semibold text-marque-texte hover:underline">
+              {tous ? 'Voir les six derniers' : `Voir les ${envois.length} messages`}
+            </button>
+          )}
+          <p className="mt-3 border-t border-trait pt-3 text-[13px] leading-snug text-encre-3">
+            Les SMS non remis sont réessayés 1, 5, 30 puis 120 minutes après. Un e-mail « Envoyé » a été accepté par le serveur d'envoi : il n'a pas d'accusé de remise.
+          </p>
+        </>
+      )}
+    </Panneau>
+  );
+}
+
+/** Étape 22 : un message non remis que rien n'a remplacé, et que l'utilisateur peut renvoyer. */
+function AlerteNonRemis({ e, actions }: { e: Envoi; actions?: ActionsFiche }) {
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-urgent/30 bg-urgent-doux/60 px-4 py-3" data-testid="alerte-non-remis">
+      <MailWarning aria-hidden size={18} className="shrink-0 text-urgent" />
+      <p className="min-w-0 flex-1 text-[15px] leading-snug text-encre-2">
+        <span className="font-semibold text-encre">Message non remis au client.</span>{' '}
+        « {e.objet} » n'a pas pu être remis par {canalEnvoi(e.canal)} au <span className="chiffres">{e.destinationMasquee}</span> ({LIBELLES_MOTIF[e.motif ?? 'ERREUR_TECHNIQUE']}).
+        Renvoyez-le, ou joignez le client autrement (appel, agence).
+      </p>
+      <Bouton taille="petit" icone={<RotateCw aria-hidden size={14} />} disabled={actions?.occupe} onClick={() => actions?.renvoyerMessage?.(e.id)}>Renvoyer</Bouton>
+    </div>
+  );
+}
+
 function Info({ libelle, children }: { libelle: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 py-2.5">
@@ -365,9 +513,15 @@ export function Ticket({
   );
   const [motif, setMotif] = useState<S<'MotifClotureForcee'>>('DOUBLON');
   const [precision, setPrecision] = useState(actions ? '' : 'Même réclamation que ALP-2026-002436, déposée la veille par le client.');
+  // Étape 21 : réclamations du même client auxquelles ce doublon peut être joint
+  const candidates = r.duMemeClient.filter((d) => d.statut !== 'CLOTUREE' && d.accessible);
+  const doublons = r.statut === 'CLOTUREE' ? [] : r.duMemeClient.filter((d) => d.doublonPossible);
+  const [principale, setPrincipale] = useState(() => (candidates.find((d) => d.doublonPossible) ?? candidates[0])?.id ?? '');
   const a = (x: S<'ActionStatut'>) => r.actionsPossibles.includes(x);
   const o = (x: S<'OperationTicket'>) => r.operationsPossibles.includes(x);
   const lectureSeule = r.actionsPossibles.length === 0 && r.operationsPossibles.every((x) => x === 'CONSULTER');
+  // Étape 22 : le message non remis le plus récent, que l'utilisateur peut renvoyer
+  const nonRemis = r.envois.find((e) => e.etat === 'NON_REMIS' && e.renvoyable);
 
   return (
     <div className="flex flex-col gap-5">
@@ -417,6 +571,9 @@ export function Ticket({
             <Bouton icone={<Flame aria-hidden size={16} />} onClick={actions?.priorite}>{r.priorite === 'URGENTE' ? 'Repasser en normal' : 'Passer en urgent'}</Bouton>
           )}
           {o('ESCALADER') && <Bouton icone={<ArrowUpRight aria-hidden size={16} />} onClick={actions?.escalader}>Escalader</Bouton>}
+          {a('RATTACHER') && candidates.length > 0 && (
+            <Bouton icone={<Combine aria-hidden size={16} />} onClick={() => setOuverte('rattacher')}>Rattacher à…</Bouton>
+          )}
           {a('CLOTURER_DE_FORCE') && (
             <Bouton variante="danger" onClick={() => setOuverte('cloturer')}>Clôturer de force</Bouton>
           )}
@@ -434,6 +591,35 @@ export function Ticket({
           <Eye aria-hidden size={18} className="shrink-0 text-encre-3" />
           Vous consultez cette réclamation. Son traitement revient à l'agent assigné et aux superviseurs.
         </p>
+      )}
+
+      {r.rattacheeA && (
+        <p className="flex items-start gap-2.5 rounded-xl border border-trait bg-surface px-4 py-3 text-[15px] leading-snug text-encre-2">
+          <Combine aria-hidden size={18} className="mt-0.5 shrink-0 text-encre-3" />
+          <span>
+            Doublon rattaché à <LienReclamation id={r.rattacheeA.id} numero={r.rattacheeA.numero} actions={actions} /> : le client ne suit plus que celle-ci.
+            Les messages et les pièces jointes ci-dessous restent consultables.
+          </span>
+        </p>
+      )}
+      {nonRemis && <AlerteNonRemis e={nonRemis} actions={actions} />}
+      {doublons.length > 0 && (
+        <div role="note" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-attente/30 bg-attente-doux/60 px-4 py-3">
+          <Copy aria-hidden size={18} className="shrink-0 text-attente" />
+          <p className="min-w-0 flex-1 text-[15px] leading-snug text-encre-2">
+            <span className="font-semibold text-encre">Doublon possible.</span>{' '}
+            {r.client.nom} a aussi {doublons.map((d, i) => (
+              <span key={d.id}>
+                {i > 0 && ', '}
+                {d.accessible ? <LienReclamation id={d.id} numero={d.numero} actions={actions} /> : <span className="chiffres font-semibold">{d.numero}</span>}
+              </span>
+            ))}{' '}
+            en cours, de la même catégorie. Si c'est la même demande, rattachez l'une à l'autre : le client ne suivra plus qu'une réclamation.
+          </p>
+          {a('RATTACHER') && candidates.length > 0 && (
+            <Bouton taille="petit" icone={<Combine aria-hidden size={15} />} onClick={() => setOuverte('rattacher')}>Rattacher</Bouton>
+          )}
+        </div>
       )}
 
       <div className="grid grid-cols-[minmax(0,1fr)_340px] items-start gap-5">
@@ -486,7 +672,25 @@ export function Ticket({
                 </Info>
               )}
             </dl>
+            {o('RENVOYER_LIEN') && (r.client.telephone || r.client.email) && (
+              <div className="mt-3 border-t border-trait pt-3">
+                <Bouton taille="petit" className="w-full" icone={<Link2 aria-hidden size={15} />} disabled={actions?.occupe} onClick={actions?.renvoyerLien}>
+                  Renvoyer le lien de suivi
+                </Bouton>
+                <p className="mt-1.5 text-[13px] leading-snug text-encre-3">Au téléphone ou à l'e-mail ci-dessus seulement, jamais à une autre adresse. Trois fois par heure au plus.</p>
+              </div>
+            )}
           </Panneau>
+          <MessagesAuClient envois={r.envois} actions={actions} />
+          {r.duMemeClient.length > 0 && <DuMemeClient autres={r.duMemeClient} actions={actions} />}
+          {r.doublonsRattaches.length > 0 && (
+            <Panneau titre="Doublons rattachés">
+              <p className="text-sm text-encre-2">Clôturés et joints à cette réclamation ; leurs messages et pièces jointes restent consultables.</p>
+              <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                {r.doublonsRattaches.map((d) => <li key={d.id}><LienReclamation id={d.id} numero={d.numero} actions={actions} /></li>)}
+              </ul>
+            </Panneau>
+          )}
 
           <Panneau titre="Traitement">
             <dl className="-my-2.5 divide-y divide-trait">
@@ -512,9 +716,18 @@ export function Ticket({
                 )}
               </Info>
               <Info libelle="Dépôt">
-                <span className="inline-flex items-center gap-2">
-                  {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={16} className="text-encre-3" /> : r.canal === 'LIEN_WEB' ? <Globe aria-hidden size={16} className="text-encre-3" /> : <span className="text-encre-3"><IconeCanal canal={r.canal} taille={16} /></span>}
-                  {r.canal === 'WHATSAPP' || r.canal === 'SMS' ? `${CANAL[r.canal]}, au numéro de la banque` : `${CANAL[r.canal]}, ${r.pointDepot.libelle.toLowerCase()}`}
+                <span className="inline-flex items-start gap-2">
+                  <span className="mt-0.5 text-encre-3"><IconeDepot canal={r.canal} taille={16} /></span>
+                  <span>
+                    {r.canal === 'WHATSAPP' || r.canal === 'SMS'
+                      ? `${CANAL[r.canal]}, au numéro de la banque`
+                      : r.canal === 'GUICHET'
+                        ? 'Au guichet de l\'agence'
+                        : r.canal === 'TELEPHONE'
+                          ? 'Par téléphone'
+                          : `${CANAL[r.canal]}, ${r.pointDepot.libelle.toLowerCase()}`}
+                    {r.saisiePar && <span className="block text-sm text-encre-3">Saisie par {r.saisiePar.nom}, avec l'accord du client</span>}
+                  </span>
                 </span>
               </Info>
               <Info libelle="Agence">{r.agence?.nom ?? 'Aucune'}</Info>
@@ -536,7 +749,13 @@ export function Ticket({
                   <span aria-hidden className={cx('mt-1.5 h-2 w-2 shrink-0 rounded-full', e.visibleClient ? 'bg-marque' : 'bg-trait-fort')} />
                   <div>
                     <p className="font-semibold text-encre">
-                      {e.type === 'ASSIGNATION' && e.acteur.type === 'SYSTEME' ? 'Attribution automatique' : EVENEMENT[e.type]}
+                      {e.type === 'ASSIGNATION' && e.acteur.type === 'SYSTEME'
+                        ? 'Attribution automatique'
+                        : e.type === 'CREATION' && e.acteur.type === 'UTILISATEUR'
+                          ? 'Saisie pour le client'
+                          : e.type === 'RATTACHEMENT' && e.statutApres
+                            ? 'Rattachée à une autre réclamation'
+                            : EVENEMENT[e.type]}
                       {!e.visibleClient && <span className="ml-1.5 font-normal text-encre-3">(interne)</span>}
                     </p>
                     <p className="text-encre-3">
@@ -575,6 +794,45 @@ export function Ticket({
               }}
             >
               Résoudre et envoyer
+            </Bouton>
+          </div>
+        </Dialogue>
+      )}
+
+      {ouverte === 'rattacher' && a('RATTACHER') && candidates.length > 0 && (
+        <Dialogue titre="Rattacher ce doublon" surFermer={() => setOuverte('aucune')} ecran={ecran}>
+          <p className="mt-2 text-[15px] leading-relaxed text-encre-2">
+            {r.numero} sera clôturée (motif « Doublon ») et jointe à la réclamation choisie, qui continue son traitement. Ses messages et ses pièces jointes restent consultables.
+            Le client reçoit un seul message, avec le lien de la réclamation principale ; pas d'enquête de satisfaction pour le doublon.
+          </p>
+          <fieldset className="mt-5">
+            <legend className="text-[15px] font-semibold">Réclamation principale</legend>
+            <div className="mt-2 flex flex-col gap-2">
+              {candidates.map((d) => (
+                <label key={d.id} className={cx('flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-[15px]', principale === d.id ? 'border-marque bg-marque-doux/60' : 'border-trait-fort')}>
+                  <input type="radio" name="principale" checked={principale === d.id} onChange={() => setPrincipale(d.id)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+                  <span>
+                    <span className="chiffres font-bold tracking-wide">{d.numero}</span>
+                    <span className="ml-2 text-encre-2">{STATUT[d.statut]}</span>
+                    <span className="block text-sm text-encre-3">
+                      {d.categorie.nom}, déposée le <span className="chiffres">{dateCourte(d.creeLe)}</span>{d.agent ? `, ${d.agent.nom}` : ''}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="mt-5 flex justify-end gap-2">
+            <Bouton variante="discret" onClick={() => setOuverte('aucune')}>Annuler</Bouton>
+            <Bouton
+              variante="principal"
+              icone={<Combine aria-hidden size={16} />}
+              disabled={!principale || actions?.occupe}
+              onClick={async () => {
+                if ((await actions?.rattacher?.(principale)) !== false) setOuverte('aucune');
+              }}
+            >
+              Rattacher et clôturer
             </Bouton>
           </div>
         </Dialogue>

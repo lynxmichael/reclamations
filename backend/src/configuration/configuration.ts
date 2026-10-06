@@ -7,6 +7,7 @@
 import { hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { ConfigurationAntivirus } from '../infrastructure/fichiers/antivirus.js';
 import { MAXIMUM_PAR_DEFAUT } from '../infrastructure/securite/anti-robot.js';
 
 export interface Configuration {
@@ -48,6 +49,8 @@ export interface Configuration {
   readonly smsEntrantSecret: string | null;
   /** Clé AES-256-GCM des jetons WhatsApp des banques, dérivée de CLE_CHIFFREMENT_TOTP */
   readonly cleCanaux: Buffer;
+  /** Antivirus des pièces jointes (étape 22) : ClamAV, ou aucun hors production */
+  readonly antivirus: ConfigurationAntivirus;
 }
 
 export interface ConfigurationWhatsapp {
@@ -182,9 +185,23 @@ export function lireConfiguration(env: NodeJS.ProcessEnv = process.env): Configu
     whatsapp: lireWhatsapp(env, production, erreurs),
     smsEntrantSecret: secretFacultatif(env, 'SMS_ENTRANT_SECRET', production, erreurs),
     cleCanaux: cleTotp.length === 32 ? cleCanauxDe(cleTotp) : Buffer.alloc(0),
+    antivirus: lireAntivirus(env, production, erreurs),
   };
   if (erreurs.length) throw new ErreurConfiguration(erreurs);
   return config;
+}
+
+/**
+ * Antivirus (étape 22) : ANTIVIRUS=clamav (par défaut en production et dans Docker) ou aucun (développement
+ * hors Docker, tests) ; CLAMAV_HOTE (clamav), CLAMAV_PORT (3310). « aucun » est refusé en production.
+ */
+function lireAntivirus(env: NodeJS.ProcessEnv, production: boolean, erreurs: string[]): ConfigurationAntivirus {
+  const mode = env.ANTIVIRUS?.trim() || (production ? 'clamav' : 'aucun');
+  if (mode !== 'clamav' && mode !== 'aucun') erreurs.push('ANTIVIRUS doit valoir clamav ou aucun');
+  if (mode === 'aucun' && production) erreurs.push('ANTIVIRUS=aucun est interdit en production : les pièces jointes doivent être analysées');
+  const port = Number(env.CLAMAV_PORT?.trim() || 3310);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) erreurs.push('CLAMAV_PORT doit être un port (1 à 65535)');
+  return { mode: mode === 'clamav' ? 'clamav' : 'aucun', hote: env.CLAMAV_HOTE?.trim() || 'clamav', port };
 }
 
 /** Clé des jetons WhatsApp des banques (étape 20), dérivée de la clé TOTP : un secret de moins à gérer */

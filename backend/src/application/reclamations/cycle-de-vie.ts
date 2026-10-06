@@ -19,7 +19,9 @@ import { adminsEntreprise, agent, Envois, superviseurs, type TicketNotifie } fro
 import { chargerParametres, type ParametresBanque } from './parametres.js';
 import { ouvrirEnquete } from './satisfaction.js';
 import type { Choix } from '../../domaine/attribution.js';
-import { banqueOuverte, chargerContexte, choisir } from './attribution.js';
+import { banqueOuverte, chargerContexte, choisir, responsables } from './attribution.js';
+import { MESSAGES_RATTACHEMENT, refusRattachement } from '../../domaine/doublons.js';
+import { nonRemisEnSuspens, renvoyable, type StatutNotificationBrut } from '../../domaine/envois.js';
 import { SUITE_RESOLUTION } from '../../domaine/canaux.js';
 import { canalDeReponse, messageDuClientDansConversation, ouvrirConversation, reponseDansConversation } from './conversations.js';
 
@@ -43,6 +45,9 @@ export interface FichierStocke {
   readonly typeMime: string;
   readonly tailleOctets: number;
   readonly empreinteSha256: string;
+  /** Étape 22 : analysé et sain, ou en attente (antivirus injoignable : le worker le reprend) */
+  readonly antivirus: 'SAIN' | 'EN_ATTENTE';
+  readonly analyseeLe: Date | null;
 }
 
 export interface EntreeDepot {
@@ -60,6 +65,17 @@ export interface EntreeDepot {
   readonly assistant?: { readonly categorieProposeeId: string | null } | null;
 }
 
+/**
+ * Saisie par le personnel au guichet ou au téléphone (étape 21) : qui l'a saisie (le client a été
+ * informé de la politique de données), la priorité urgente, et l'agent qui se l'assigne.
+ */
+export interface SaisieParLePersonnel {
+  readonly par: Extract<Acteur, { type: 'UTILISATEUR' }>;
+  readonly urgente?: boolean;
+  /** L'agent qui saisit se l'assigne (sinon, l'attribution habituelle) */
+  readonly meLAssigner?: boolean;
+}
+
 type Ticket = Reclamation & { categorie: { nom: string } };
 
 const SYSTEME: Acteur = { type: 'SYSTEME' };
@@ -69,7 +85,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Événements visibles dans la chronologie du client. */
 const VISIBLES_CLIENT: ReadonlySet<TypeEvenement> = new Set<TypeEvenement>([
   'CREATION', 'PRISE_EN_CHARGE', 'QUESTION_AU_CLIENT', 'REPONSE_DU_CLIENT', 'RESOLUTION',
-  'CONFIRMATION', 'CONTESTATION', 'CLOTURE_AUTOMATIQUE', 'CLOTURE_FORCEE',
+  'CONFIRMATION', 'CONTESTATION', 'CLOTURE_AUTOMATIQUE', 'CLOTURE_FORCEE', 'RATTACHEMENT',
 ]);
 
 export class CycleDeVie {
@@ -84,6 +100,15 @@ export class CycleDeVie {
   // =========================================================================
 
   async deposer(entree: EntreeDepot, trace?: Trace) {
+    return this.creer(entree, null, trace);
+  }
+
+  /** Étape 21 : réclamation saisie par un agent ou un superviseur, au guichet ou au téléphone. */
+  async saisir(entree: EntreeDepot, saisie: SaisieParLePersonnel, trace?: Trace) {
+    return this.creer(entree, saisie, trace);
+  }
+
+  private async creer(entree: EntreeDepot, saisie: SaisieParLePersonnel | null, trace?: Trace) {
     const maintenant = this.maintenant();
     const description = entree.description.trim();
     if (!description) throw new ErreurMetier('DESCRIPTION_REQUISE', 'La description est obligatoire', 422);
@@ -120,7 +145,7 @@ export class CycleDeVie {
           agenceId: point.agenceId ?? entree.agenceId ?? null,
           canal: point.canal,
           description,
-          priorite: categorie.prioriteParDefaut,
+          priorite: saisie?.urgente ? 'URGENTE' : categorie.prioriteParDefaut,
           consentementLe: maintenant,
           consentementVersion: entree.consentementVersion,
           delaiCibleMinutes: categorie.delaiCibleMinutes,
@@ -130,7 +155,8 @@ export class CycleDeVie {
         include: { categorie: { select: { nom: true } } },
       });
 
-      const acteur: Acteur = { type: 'CLIENT', clientId: client.id };
+      // Étape 21 : la création est l'acte de qui a saisi la réclamation (chronologie, journal d'audit)
+      const acteur: Acteur = saisie ? saisie.par : { type: 'CLIENT', clientId: client.id };
       // Assistant (étape 18) : noté avec la catégorie proposée et le choix du client (qualité du tri)
       const assistant = entree.assistant && p.banque.assistantIa
         ? { categorieProposee: entree.assistant.categorieProposeeId, categorieGardee: entree.assistant.categorieProposeeId === categorie.id }
@@ -141,10 +167,17 @@ export class CycleDeVie {
       // Attribution automatique (étape 16) : pendant les heures ouvrées, à l'agent disponible le moins
       // chargé du groupe ; sinon la réclamation attend dans la file « Reçues » (reprise par le worker)
       let t: Ticket = reclamation;
-      const choix = p.banque.modeAttribution === 'AUTOMATIQUE' && banqueOuverte(maintenant, p.sla.calendrier)
-        ? choisir(await chargerContexte(tx, p, maintenant), categorie.id, reclamation.agenceId)
-        : null;
-      if (choix) t = await this.attribuer(tx, t, p, maintenant, choix);
+      if (saisie?.meLAssigner && saisie.par.role === 'AGENT') {
+        // Étape 21 : l'agent qui saisit la réclamation la traite
+        t = await tx.reclamation.update({ where: { id: t.id }, data: { agentId: saisie.par.id }, include: { categorie: { select: { nom: true } } } });
+        await tx.utilisateur.updateMany({ where: { id: saisie.par.id }, data: { derniereAttributionLe: maintenant } });
+        await this.evenement(tx, t, 'ASSIGNATION', saisie.par, maintenant, { donnees: { agentAvant: null, agentApres: saisie.par.id, origine: 'SAISIE' } });
+      } else {
+        const choix = p.banque.modeAttribution === 'AUTOMATIQUE' && banqueOuverte(maintenant, p.sla.calendrier)
+          ? choisir(await chargerContexte(tx, p, maintenant), categorie.id, reclamation.agenceId)
+          : null;
+        if (choix) t = await this.attribuer(tx, t, p, maintenant, choix);
+      }
 
       // Étape 20 : déposée sur WhatsApp ou par SMS, la réclamation y a sa conversation, ouverte par ce
       // message du client ; l'accusé de dépôt et les réponses des agents y partent
@@ -154,13 +187,14 @@ export class CycleDeVie {
       }
 
       const envois = this.envois(tx, t, p, maintenant);
-      await envois.client('client.depot');
+      const accuse = await envois.client('client.depot');
       if (t.priorite === 'URGENTE') {
         await envois.alerteUrgente([...(await agent(tx, t.agentId)), ...(await superviseurs(tx, t.agentId)), ...(await adminsEntreprise(tx))]);
       }
       await this.signalerPlafond(tx, envois, p, maintenant);
-      await this.auditer(tx, reclamation, acteur, 'reclamation.depot', {
+      await this.auditer(tx, reclamation, acteur, saisie ? 'reclamation.saisie' : 'reclamation.depot', {
         canal: point.canal, priorite: reclamation.priorite, ...(assistant ? { assistant: true } : {}),
+        ...(saisie ? { consentementVersion: entree.consentementVersion } : {}),
       }, trace);
 
       return {
@@ -171,6 +205,9 @@ export class CycleDeVie {
         lienSuivi: this.options.lienSuivi(p.banque.slug, jetonSuivi),
         priorite: reclamation.priorite,
         echeanceSlaLe: reclamation.echeanceSlaLe,
+        creeLe: reclamation.creeLe,
+        /** Canaux de l'accusé parti au client (SMS, e-mail, WhatsApp) */
+        accusePar: [...new Set(accuse.map((a) => a.canal))],
       };
     });
   }
@@ -311,7 +348,8 @@ export class CycleDeVie {
       }
       // Chat web (étape 17) : une rafale de messages n'alerte l'agent qu'une fois
       const { alerterAgent } = await messageDuClientDansConversation(tx, t, p, maintenant, canal);
-      if (alerterAgent) await this.envois(tx, t, p, maintenant).personnel('agent.message_client', await agent(tx, t.agentId));
+      // Étape 21 : agent absent ou désactivé, c'est son superviseur qui est prévenu
+      if (alerterAgent) await this.envois(tx, t, p, maintenant).personnel('agent.message_client', await responsables(tx, p, maintenant, t.agentId));
       await this.auditer(tx, t, acteur, 'reclamation.message_client', canal === 'WEB' ? {} : { canal }, trace);
       return { commentaireId: message.id, statut: t.statut };
     });
@@ -364,7 +402,7 @@ export class CycleDeVie {
       t = await this.transition(tx, t, 'CONTESTER', acteur, maintenant, {
         ...slaALaReprise(maintenant, t, p.sla), clotureAutoPrevueLe: null, slaRespecte: null, nbReouvertures: t.nbReouvertures + 1,
       });
-      await this.envois(tx, t, p, maintenant).personnel('agent.contestation', await agent(tx, t.agentId));
+      await this.envois(tx, t, p, maintenant).personnel('agent.contestation', await responsables(tx, p, maintenant, t.agentId));
       await this.auditer(tx, t, acteur, 'reclamation.contestation', { reouverture: t.nbReouvertures, ...(canal === 'WEB' ? {} : { canal }) }, trace);
       return { statut: t.statut, echeanceSlaLe: t.echeanceSlaLe, commentaireId: message.id };
     });
@@ -381,6 +419,81 @@ export class CycleDeVie {
       }, { motif });
       await this.envois(tx, t, p, maintenant).client('client.cloture');
       await this.auditer(tx, t, acteur, 'reclamation.cloture_forcee', { motif }, trace);
+    });
+  }
+
+  /**
+   * Étape 21 : un doublon joint à la réclamation principale du même client. Il est clôturé (motif
+   * « Doublon »), son SLA s'arrête, sans enquête ; il garde ses messages et pièces jointes. Le client
+   * reçoit un seul message, avec le lien de suivi de la principale.
+   */
+  async rattacher(tenantId: string, reclamationId: string, acteur: Acteur, principaleId: string, trace?: Trace) {
+    if (!UUID.test(principaleId)) throw introuvable();
+    return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
+      if (acteur.type !== 'UTILISATEUR') throw new ErreurMetier('ACTEUR_NON_AUTORISE', 'Réservé au personnel', 403);
+      // La principale ne doit pas changer pendant le rattachement
+      await tx.$queryRaw`SELECT id FROM reclamation WHERE id = ${principaleId}::uuid FOR UPDATE`;
+      const principale = await tx.reclamation.findUnique({ where: { id: principaleId } });
+      // Une principale que l'acteur ne peut pas consulter (un autre agent) : introuvable, comme ailleurs (C5)
+      if (!principale || !verifierOperation('CONSULTER', etat(principale), acteur).ok) throw introuvable();
+      const refus = refusRattachement(t, principale);
+      if (refus) throw new ErreurMetier('RATTACHEMENT_IMPOSSIBLE', MESSAGES_RATTACHEMENT[refus], 422);
+      t = await this.transition(tx, t, 'RATTACHER', acteur, maintenant, {
+        clotureLe: maintenant, modeCloture: 'FORCEE', motifClotureForcee: 'DOUBLON', commentaireCloture: `Rattachée à ${principale.numero}`,
+        clotureParId: acteur.id, rattacheeAId: principale.id,
+        clotureAutoPrevueLe: null, echeanceSlaLe: null, alertePreventiveLe: null, slaSuspenduLe: null,
+      }, { principale: principale.numero });
+      // Dans la chronologie de la principale : le doublon reçu (interne)
+      await this.evenement(tx, principale, 'RATTACHEMENT', acteur, maintenant, { visibleClient: false, donnees: { doublon: t.numero } });
+      await this.envois(tx, t, p, maintenant).client('client.rattachement', {
+        principale: { numero: principale.numero, lien: this.options.lienSuivi(p.banque.slug, principale.jetonSuivi) },
+      });
+      await this.auditer(tx, t, acteur, 'reclamation.rattachement', { principale: principale.numero }, trace);
+      return { principaleId: principale.id, principaleNumero: principale.numero };
+    });
+  }
+
+  /**
+   * Étape 21 : le lien de suivi renvoyé aux seules coordonnées du dossier (SMS ou fil WhatsApp, et
+   * e-mail). Rend les envois, pour dire au personnel où il est parti.
+   */
+  async renvoyerLienSuivi(tenantId: string, reclamationId: string, acteur: Acteur, trace?: Trace) {
+    return this.surTicket(tenantId, reclamationId, async (tx, t, p, maintenant) => {
+      exiger(verifierOperation('RENVOYER_LIEN', etat(t), acteur));
+      const envois = await this.envois(tx, t, p, maintenant).client('client.lien_suivi');
+      if (envois.length === 0) throw new ErreurMetier('CONTACT_REQUIS', 'Le client n\'a ni téléphone ni e-mail', 422);
+      await this.auditer(tx, t, acteur, 'reclamation.lien_suivi_renvoye', { canaux: envois.map((e) => e.canal) }, trace);
+      return envois;
+    });
+  }
+
+  /**
+   * Étape 22 : un message au client non remis, renvoyé tel quel à la même coordonnée (celle du dossier).
+   * Seulement un message dont le texte est gardé (accusé, réponse, résolution…), et que rien n'a
+   * remplacé depuis ; un nouvel envoi, avec ses propres tentatives.
+   */
+  async renvoyerMessage(tenantId: string, reclamationId: string, acteur: Acteur, envoiId: string, trace?: Trace) {
+    return this.surTicket(tenantId, reclamationId, async (tx, t, _p, maintenant) => {
+      exiger(verifierOperation('RENVOYER_LIEN', etat(t), acteur));
+      const n = await tx.notification.findFirst({ where: { id: envoiId, reclamationId: t.id, destinataireClientId: { not: null }, canal: { in: ['SMS', 'EMAIL'] } } });
+      if (!n) throw new ErreurMetier('INTROUVABLE', 'Message introuvable', 404);
+      const autres = await tx.notification.findMany({
+        where: { reclamationId: t.id, destinataireClientId: { not: null }, modele: n.modele, canal: { not: 'IN_APP' } },
+        select: { id: true, modele: true, statut: true, creeLe: true },
+      });
+      const enSuspens = nonRemisEnSuspens(autres.map((x) => ({ ...x, statut: x.statut as StatutNotificationBrut }))).some((x) => x.id === n.id);
+      if (!renvoyable(n.modele) || !enSuspens) {
+        throw new ErreurMetier('MESSAGE_NON_RENVOYABLE', n.statut !== 'ECHEC' || !enSuspens
+          ? 'Ce message n\'est pas en échec, ou il a déjà été remplacé'
+          : 'Un code ou un message de conversation ne se renvoie pas : le client en redemande un', 422);
+      }
+      await tx.notification.create({
+        data: {
+          tenantId: t.tenantId, canal: n.canal, modele: n.modele, destinataireClientId: n.destinataireClientId, destination: n.destination,
+          reclamationId: t.id, sujet: n.sujet, contenu: n.contenu, expediteur: n.expediteur, creeLe: maintenant,
+        },
+      });
+      await this.auditer(tx, t, acteur, 'reclamation.message_renvoye', { envoiId: n.id, canal: n.canal, modele: n.modele }, trace);
     });
   }
 
@@ -475,7 +588,7 @@ export class CycleDeVie {
     exiger(verdict);
     const vers = ({
       PRENDRE_EN_CHARGE: 'EN_COURS', QUESTIONNER_CLIENT: 'EN_ATTENTE_CLIENT', REPRENDRE_SUR_REPONSE: 'EN_COURS', RESOUDRE: 'RESOLUE',
-      CONFIRMER: 'CLOTUREE', CONTESTER: 'EN_COURS', CLOTURER_AUTOMATIQUEMENT: 'CLOTUREE', CLOTURER_DE_FORCE: 'CLOTUREE',
+      CONFIRMER: 'CLOTUREE', CONTESTER: 'EN_COURS', CLOTURER_AUTOMATIQUEMENT: 'CLOTUREE', CLOTURER_DE_FORCE: 'CLOTUREE', RATTACHER: 'CLOTUREE',
     } as const satisfies Record<ActionStatut, StatutReclamation>)[action];
     const apres = await tx.reclamation.update({
       where: { id: t.id },
@@ -485,7 +598,7 @@ export class CycleDeVie {
     const type = ({
       PRENDRE_EN_CHARGE: 'PRISE_EN_CHARGE', QUESTIONNER_CLIENT: 'QUESTION_AU_CLIENT', REPRENDRE_SUR_REPONSE: 'REPONSE_DU_CLIENT',
       RESOUDRE: 'RESOLUTION', CONFIRMER: 'CONFIRMATION', CONTESTER: 'CONTESTATION',
-      CLOTURER_AUTOMATIQUEMENT: 'CLOTURE_AUTOMATIQUE', CLOTURER_DE_FORCE: 'CLOTURE_FORCEE',
+      CLOTURER_AUTOMATIQUEMENT: 'CLOTURE_AUTOMATIQUE', CLOTURER_DE_FORCE: 'CLOTURE_FORCEE', RATTACHER: 'RATTACHEMENT',
     } as const satisfies Record<ActionStatut, TypeEvenement>)[action];
     await this.evenement(tx, t, type, acteur, maintenant, { statutAvant: t.statut, statutApres: vers, donnees });
     return apres;
@@ -526,7 +639,7 @@ export class CycleDeVie {
       data: fichiers.map((f) => ({
         tenantId: t.tenantId, reclamationId: t.id, commentaireId,
         nomFichier: f.nomFichier, typeMime: f.typeMime, tailleOctets: f.tailleOctets,
-        cleStockage: f.cleStockage, empreinteSha256: f.empreinteSha256,
+        cleStockage: f.cleStockage, empreinteSha256: f.empreinteSha256, antivirus: f.antivirus, analyseeLe: f.analyseeLe,
         deposeParType: acteur.type, deposeParUtilisateurId: acteur.type === 'UTILISATEUR' ? acteur.id : null,
         creeLe: maintenant,
       })),

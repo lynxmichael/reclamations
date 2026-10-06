@@ -27,6 +27,15 @@ export const LIMITES = {
   /** Assistant du portail (étape 18) : chaque tour peut coûter un appel à l'IA */
   assistantParIp: { nom: 'assistant-ip', max: 40, fenetreSecondes: 600 },
   suggestionsParUtilisateur: { nom: 'suggestion', max: 30, fenetreSecondes: 600 },
+  /** Étape 21 : saisies par le personnel (guichet, téléphone), par personne */
+  saisieParPersonne: { nom: 'saisie', max: 60, fenetreSecondes: 3600 },
+  /** Étape 21 : lien de suivi renvoyé, par réclamation (chaque SMS est facturé) */
+  lienSuiviParReclamation: { nom: 'lien-suivi', max: 3, fenetreSecondes: 3600 },
+  // Étape 22 : messages non remis renvoyés par le personnel
+  renvoiParReclamation: { nom: 'renvoi-message', max: 3, fenetreSecondes: 3600 },
+  /** Étape 21 : « Retrouver mes réclamations », codes demandés et essais, par numéro ou adresse */
+  accesParContact: { nom: 'acces-contact', max: 3, fenetreSecondes: 3600 },
+  essaisAccesParContact: { nom: 'acces-essai', max: 5, fenetreSecondes: 600 },
 } as const satisfies Record<string, Limite>;
 
 export class Limiteur {

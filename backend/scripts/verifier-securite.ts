@@ -535,6 +535,89 @@ async function main() {
     transactionEn(base, contexte.banque(A.tenantId), (tx) => tx.$queryRaw`SELECT * FROM facturation_canaux(now() - interval '1 day', now())`));
 
   // ----------------------------------------------------------------------------------
+  cr.section('Saisie au guichet, doublons, réaffectation (étape 21)');
+
+  await cr.doitReussir('En contexte A : le point « Guichet » d\'une agence, créé à la première saisie', () =>
+    enA.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'GUICHET', libelle: 'Guichet', agenceId: A.agence.id } }));
+  await cr.doitEtreRefuse('Deux points « Guichet » pour la même agence', '23505', () =>
+    enA.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'GUICHET', libelle: 'Guichet', agenceId: A.agence.id } }));
+  await refusCheck('Point « Guichet » sans agence', () => enA.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'GUICHET', libelle: 'Guichet' } }));
+  await cr.doitReussir('En contexte A : le point « Téléphone » de la banque', () =>
+    enA.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'TELEPHONE', libelle: 'Téléphone' } }));
+  await cr.doitEtreRefuse('Deux points « Téléphone » pour la même banque', '23505', () =>
+    enA.pointDepot.create({ data: { tenantId: A.tenantId, code: codePublic(), canal: 'TELEPHONE', libelle: 'Téléphone' } }));
+  await refusCheck('Point « Téléphone » rattaché à une agence', () =>
+    proprietaire.pointDepot.create({ data: { tenantId: B.tenantId, code: codePublic(), canal: 'TELEPHONE', libelle: 'Téléphone', agenceId: B.agence.id } }));
+  await cr.doitEtreRefuse('En contexte A, un point « Guichet » chez B', '42501', () =>
+    enA.pointDepot.create({ data: { tenantId: B.tenantId, code: codePublic(), canal: 'GUICHET', libelle: 'Guichet', agenceId: B.agence.id } }));
+
+  const doublonA = await proprietaire.reclamation.create({ data: donneesReclamation(A, 'ALP-2026-000900') });
+  const cloture = (principaleId: string, motif: 'DOUBLON' | 'AUTRE' = 'DOUBLON') => ({
+    statut: 'CLOTUREE' as const, clotureLe: new Date(), modeCloture: 'FORCEE' as const, motifClotureForcee: motif,
+    commentaireCloture: 'Rattachée à ALP-2026-000001', clotureParId: A.superviseur.id, rattacheeAId: principaleId,
+    echeanceSlaLe: null, alertePreventiveLe: null, slaSuspenduLe: null,
+  });
+  await refusCheck('Doublon rattaché sans être clôturé', () => enA.reclamation.update({ where: { id: doublonA.id }, data: { rattacheeAId: reclamationA.id } }));
+  await refusCheck('Doublon rattaché à lui-même', () => enA.reclamation.update({ where: { id: doublonA.id }, data: cloture(doublonA.id) }));
+  await refusCheck('Rattachement clôturé avec un autre motif que « Doublon »', () => enA.reclamation.update({ where: { id: doublonA.id }, data: cloture(reclamationA.id, 'AUTRE') }));
+  await cr.doitEtreRefuse('En contexte A, rattacher à une réclamation de la banque B', '23503', () =>
+    enA.reclamation.update({ where: { id: doublonA.id }, data: cloture(reclamationB.id) }));
+  await cr.doitEtreRefuse('Super Admin : rattacher un doublon', '42501', () =>
+    plateforme.reclamation.updateMany({ where: { id: doublonA.id }, data: { rattacheeAId: reclamationA.id } }));
+  await cr.doitReussir('En contexte A : rattacher un doublon clôturé « Doublon » à sa réclamation principale', () =>
+    enA.reclamation.update({ where: { id: doublonA.id }, data: cloture(reclamationA.id) }));
+  await cr.doitReussir('En contexte B, la réclamation rattachée de A reste invisible', async () => {
+    verifier((await enB.reclamation.count({ where: { rattacheeAId: { not: null } } })) === 0, 'visible');
+  });
+
+  // ----------------------------------------------------------------------------------
+  cr.section('Envois non remis et pièces jointes (étape 22)');
+
+  const smsA = await proprietaire.notification.create({
+    data: { tenantId: A.tenantId, canal: 'SMS', modele: 'client.depot', destinataireClientId: A.client.id, reclamationId: reclamationA.id, destination: '+2250707070707', contenu: 'Réclamation enregistrée', statut: 'ENVOYEE', envoyeeLe: new Date() },
+  });
+  await cr.doitEtreRefuse('En contexte banque, déclarer remis un message au client', '42501', () =>
+    enA.notification.update({ where: { id: smsA.id }, data: { statut: 'DELIVREE', remiseLe: new Date() } }));
+  await cr.doitEtreRefuse('Super Admin : changer l\'état d\'un envoi', '42501', () =>
+    plateforme.notification.update({ where: { id: smsA.id }, data: { motifEchec: 'INJOIGNABLE' } }));
+  await refusCheck('Motif d\'échec inconnu', () => systeme.notification.update({ where: { id: smsA.id }, data: { statut: 'ECHEC', motifEchec: 'PERDU' } }));
+  await cr.doitReussir('Contexte système : accusé de remise de la passerelle (non remis, motif)', () =>
+    systeme.notification.update({ where: { id: smsA.id }, data: { statut: 'ECHEC', motifEchec: 'INJOIGNABLE' } }));
+  await cr.doitReussir('Super Admin : facturation SMS (envoyés, remis, non remis), des totaux seulement', async () => {
+    const l = await transactionEn(base, contexte.plateforme(), (tx) => tx.$queryRaw<{ tenant_id: string; remis: bigint; echecs: bigint }[]>`
+      SELECT * FROM facturation_sms(now() - interval '1 day', now() + interval '1 day')`);
+    verifier(l.some((b) => b.tenant_id === A.tenantId && Number(b.echecs) === 1), JSON.stringify(l, (_, v) => (typeof v === 'bigint' ? Number(v) : v)));
+  });
+  await cr.doitEtreRefuse('En contexte banque, la facturation SMS de toutes les banques', '42501', () =>
+    transactionEn(base, contexte.banque(A.tenantId), (tx) => tx.$queryRaw`SELECT * FROM facturation_sms(now() - interval '1 day', now())`));
+
+  const piece = (n: number) => ({
+    tenantId: A.tenantId, reclamationId: reclamationA.id, nomFichier: `piece-${n}.pdf`, typeMime: 'application/pdf', tailleOctets: 100,
+    cleStockage: `${A.tenantId}/verification/${n}.pdf`, empreinteSha256: 'a'.repeat(64), deposeParType: 'CLIENT' as const,
+  });
+  const pieceA = await enA.pieceJointe.create({ data: piece(1) });
+  await cr.doitReussir('Une pièce jointe reçue attend l\'antivirus (par défaut)', async () => verifier(pieceA.antivirus === 'EN_ATTENTE', pieceA.antivirus));
+  await cr.doitEtreRefuse('En contexte banque, déclarer saine une pièce jointe', '42501', () =>
+    enA.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'SAIN', analyseeLe: new Date() } }));
+  await cr.doitEtreRefuse('Super Admin : déclarer saine une pièce jointe', '42501', () =>
+    plateforme.pieceJointe.updateMany({ where: { id: pieceA.id }, data: { antivirus: 'SAIN' } }));
+  await refusCheck('Infectée sans le nom du virus', () => systeme.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'INFECTE', analyseeLe: new Date() } }));
+  await refusCheck('Nom de virus sur une pièce saine', () => systeme.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'SAIN', virus: 'Eicar' } }));
+  await cr.doitEtreRefuse('Contexte système : renommer le fichier', '42501', () =>
+    systeme.pieceJointe.update({ where: { id: pieceA.id }, data: { nomFichier: 'autre.pdf' } }));
+  await cr.doitEtreRefuse('Changer le fichier en notant le résultat, même en propriétaire', /écriture seule/, () =>
+    proprietaire.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'SAIN', cleStockage: `${A.tenantId}/verification/autre.pdf` } }));
+  await cr.doitReussir('Contexte système : noter le résultat de l\'analyse (infectée, nom du virus)', () =>
+    systeme.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'INFECTE', analyseeLe: new Date(), virus: 'Win.Test.EICAR_HDB-1' } }));
+  await cr.doitEtreRefuse('Revenir sur le résultat de l\'analyse, même en propriétaire', /écriture seule/, () =>
+    proprietaire.pieceJointe.update({ where: { id: pieceA.id }, data: { antivirus: 'SAIN', virus: null } }));
+  await cr.doitEtreRefuse('Supprimer une pièce jointe, même en propriétaire', /écriture seule/, () =>
+    proprietaire.pieceJointe.delete({ where: { id: pieceA.id } }));
+  await cr.doitReussir('En contexte B, la pièce jointe de A reste invisible', async () => {
+    verifier((await enB.pieceJointe.count({ where: { id: pieceA.id } })) === 0, 'visible');
+  });
+
+  // ----------------------------------------------------------------------------------
   cr.section('Transactions dans un contexte');
 
   await cr.doitReussir('Dépôt atomique en contexte A : numéro, réclamation et événement', async () => {

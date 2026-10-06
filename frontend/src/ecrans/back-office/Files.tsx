@@ -3,16 +3,16 @@
  * onglets et chrono de chaque réclamation (SlaResume), sans recalcul côté interface.
  */
 import { useState, type ReactNode } from 'react';
-import { ArrowDownUp, ChevronDown, ChevronLeft, ChevronRight, Download, Flame, QrCode, Globe, ArrowUpRight, Sparkles, X } from 'lucide-react';
+import { ArrowDownUp, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Flame, ArrowUpRight, MailWarning, Plus, Shuffle, Sparkles, UserRoundX, X } from 'lucide-react';
 import type { S } from '../../api/types';
-import { Avatar, BadgeStatut, Bouton, Onglets, cx } from '../../ui/composants';
+import { Avatar, BadgeStatut, Bouton, Liste, Onglets, cx } from '../../ui/composants';
 import { ChoixFiltre } from '../../ui/Filtre';
 import { nombre, relatif } from '../../ui/format';
 import { JaugeLigne } from '../../ui/JaugeSla';
-import { IconeCanal } from '../../ui/Canaux';
+import { IconeDepot } from '../../ui/Canaux';
 import { CANAL, STATUT } from '../../ui/libelles';
 
-export type File = 'recues' | 'assignees' | 'urgentes' | 'en-retard' | 'escaladees' | 'toutes';
+export type File = 'recues' | 'assignees' | 'urgentes' | 'en-retard' | 'escaladees' | 'toutes' | 'a-reassigner';
 export type TriFiles = '-creeLe' | 'creeLe' | 'echeanceSlaLe' | '-echeanceSlaLe' | '-priorite';
 export type Periode = '7j' | '30j' | 'mois';
 
@@ -39,14 +39,39 @@ const TRIS: Record<TriFiles, string> = {
 };
 const PERIODES: Record<Periode, string> = { '7j': '7 derniers jours', '30j': '30 derniers jours', mois: 'Ce mois-ci' };
 
-const FILTRES: Record<File, (r: S<'ReclamationResume'>, moiId: string) => boolean> = {
+const FILTRES: Record<File, (r: S<'ReclamationResume'>, moiId: string, indisponibles: readonly string[]) => boolean> = {
   recues: (r) => r.agent === null && r.statut !== 'CLOTUREE',
   assignees: (r, moi) => r.agent?.id === moi && r.statut !== 'CLOTUREE',
   urgentes: (r) => r.priorite === 'URGENTE' && r.statut !== 'CLOTUREE',
   'en-retard': (r) => r.enRetard,
   escaladees: (r) => r.escaladee && r.statut !== 'CLOTUREE',
   toutes: () => true,
+  // Étape 21 : calculée par l'API ; la démo et les maquettes donnent les agents désactivés ou absents
+  'a-reassigner': (r, _moi, indisponibles) => r.statut !== 'CLOTUREE' && !!r.agent && indisponibles.includes(r.agent.id),
 };
+
+/** Étape 21 : plusieurs réclamations à un agent, ou réparties entre les agents disponibles. */
+export type ChoixEnLot = { agentId: string } | { repartir: true };
+
+/** Badge d'une réclamation dont le client en a une autre, de la même catégorie, en cours (étape 21). */
+export function BadgeDoublon({ className }: { className?: string }) {
+  return (
+    <span className={cx('inline-flex items-center gap-0.5 rounded-md bg-attente-doux px-1.5 text-[13px] font-semibold text-attente', className)} title="Le même client a une autre réclamation de la même catégorie en cours">
+      <Copy aria-hidden size={12} strokeWidth={2.4} />
+      Doublon possible
+    </span>
+  );
+}
+
+/** Étape 22 : un message au client n'a pas été remis, et rien ne l'a remplacé */
+export function BadgeNonRemis({ className }: { className?: string }) {
+  return (
+    <span className={cx('inline-flex items-center gap-0.5 rounded-md bg-urgent-doux px-1.5 text-[13px] font-semibold text-urgent', className)} title="Un message au client n'a pas été remis (SMS ou e-mail) : la fiche permet de le renvoyer">
+      <MailWarning aria-hidden size={12} strokeWidth={2.4} />
+      Message non remis
+    </span>
+  );
+}
 
 /** Tri « échéance la plus proche » (tri=echeanceSlaLe) : sans échéance en dernier. */
 function parEcheance(a: S<'ReclamationResume'>, b: S<'ReclamationResume'>) {
@@ -79,6 +104,10 @@ export function Files({
   maintenant,
   fileInitiale = 'toutes',
   seuil,
+  surNouvelle,
+  surAssignerEnLot,
+  selectionInitiale,
+  indisponibles = [],
   surOuvrir,
   surExporter,
   enAvant,
@@ -108,6 +137,14 @@ export function Files({
   exportEnCours?: boolean;
   /** Mode suggestion (étape 16) : le superviseur assigne à l'agent proposé, sans ouvrir la fiche */
   surValiderSuggestion?: (r: S<'ReclamationResume'>, agent: S<'ReferenceNommee'>) => void;
+  /** Étape 21 : saisir la réclamation d'un client au guichet ou au téléphone (agent, superviseur) */
+  surNouvelle?: () => void;
+  /** Étape 21 : réassignation en lot par le superviseur ; true si elle a réussi (la sélection se vide) */
+  surAssignerEnLot?: (ids: string[], choix: ChoixEnLot) => Promise<boolean> | boolean | void;
+  /** Maquettes : réclamations déjà cochées */
+  selectionInitiale?: string[];
+  /** Démo et maquettes : agents désactivés ou absents aujourd'hui, pour la file « À réassigner » */
+  indisponibles?: readonly string[];
 }) {
   const [fileLocale, setFileLocale] = useState<File>(fileInitiale);
   const serveur = !!(criteres && surCriteres);
@@ -116,15 +153,27 @@ export function Files({
   const setFile = (f: File) => (serveur ? changer({ file: f }) : setFileLocale(f));
   const agent = moi.role === 'AGENT';
   const c = page.compteurs;
+  const [selection, setSelection] = useState<Set<string>>(() => new Set(selectionInitiale ?? []));
+  const [agentLot, setAgentLot] = useState('');
+  const enLot = !agent && !!surAssignerEnLot;
+  const assignerEnLot = async (choix: ChoixEnLot) => {
+    const fait = await surAssignerEnLot?.([...selection], choix);
+    if (fait !== false) {
+      setSelection(new Set());
+      setAgentLot('');
+    }
+  };
   const onglets: { cle: File; libelle: string; compte?: number; ton?: 'urgent' | 'marque' }[] = [
     ...(agent ? [] : [{ cle: 'recues' as const, libelle: 'Reçues', compte: c.recues, ton: 'marque' as const }]),
     { cle: 'assignees', libelle: agent ? 'Mes réclamations' : 'Assignées à moi', compte: c.assignees },
     { cle: 'urgentes', libelle: 'Urgentes', compte: c.urgentes, ton: 'urgent' },
     { cle: 'en-retard', libelle: 'En retard', compte: c.enRetard, ton: 'urgent' },
     { cle: 'escaladees', libelle: 'Escaladées', compte: c.escaladees },
+    // Étape 21 : dossiers d'un agent désactivé ou absent aujourd'hui
+    ...(!agent && (c.aReassigner > 0 || file === 'a-reassigner') ? [{ cle: 'a-reassigner' as const, libelle: 'À réassigner', compte: c.aReassigner, ton: 'urgent' as const }] : []),
     { cle: 'toutes', libelle: 'Toutes' },
   ];
-  const lignes = serveur ? page.donnees : page.donnees.filter((r) => FILTRES[file](r, moi.id)).sort(parEcheance);
+  const lignes = serveur ? page.donnees : page.donnees.filter((r) => FILTRES[file](r, moi.id, indisponibles)).sort(parEcheance);
   const { page: numero, parPage, total } = page.pagination;
   const pages = Math.max(1, Math.ceil(total / parPage));
   const filtres = serveur && (criteres!.statut || criteres!.categorieId || criteres!.agenceId || criteres!.canal || criteres!.agentId || criteres!.periode);
@@ -138,11 +187,23 @@ export function Files({
             {agent ? 'Les réclamations qui vous sont assignées.' : serveur ? 'Toute la banque, les plus urgentes à portée de main.' : `Toute la banque : ${page.pagination.total} réclamations sur la période.`}
           </p>
         </div>
-        {/* Étape 11 : l'agent exporte aussi, ses réclamations seulement */}
-        {(!serveur || surExporter) && (
-          <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter} disabled={exportEnCours}>{exportEnCours ? 'Export…' : 'Exporter en CSV'}</Bouton>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Étape 11 : l'agent exporte aussi, ses réclamations seulement */}
+          {(!serveur || surExporter) && (
+            <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter} disabled={exportEnCours}>{exportEnCours ? 'Export…' : 'Exporter en CSV'}</Bouton>
+          )}
+          {/* Étape 21 : un client sans smartphone, au guichet ou au téléphone */}
+          {surNouvelle && moi.role !== 'ADMIN_ENTREPRISE' && (
+            <Bouton variante="principal" icone={<Plus aria-hidden size={17} />} onClick={surNouvelle}>Nouvelle réclamation</Bouton>
+          )}
+        </div>
       </div>
+      {file === 'a-reassigner' && (
+        <p className="flex items-start gap-2.5 rounded-xl border border-urgent/25 bg-urgent-doux/50 px-4 py-3 text-[15px] leading-snug text-encre-2">
+          <UserRoundX aria-hidden size={18} className="mt-0.5 shrink-0 text-urgent" />
+          <span>Réclamations d'un agent désactivé, ou absent aujourd'hui. Elles restent à son nom jusqu'à leur réassignation ; en attendant, les alertes et les messages des clients vont à son superviseur. Cochez-les pour les répartir.</span>
+        </p>
+      )}
 
       <div className="rounded-xl border border-trait bg-surface">
         <div className="px-4 pt-1">
@@ -191,10 +252,37 @@ export function Files({
           </div>
         )}
 
+        {enLot && selection.size > 0 && (
+          <div role="region" aria-label="Réclamations sélectionnées" className="flex flex-wrap items-center gap-2 border-b border-trait bg-marque-doux/60 px-4 py-2.5">
+            <span className="text-[15px] font-semibold">{selection.size} sélectionnée{selection.size > 1 ? 's' : ''}</span>
+            <div className="w-60">
+              <Liste value={agentLot} onChange={(e) => setAgentLot(e.target.value)} aria-label="Assigner à" className="!h-9">
+                <option value="">Assigner à…</option>
+                {(references?.agents ?? []).map((ag) => <option key={ag.id} value={ag.id}>{ag.nom}</option>)}
+              </Liste>
+            </div>
+            <Bouton taille="petit" variante="principal" disabled={!agentLot} onClick={() => void assignerEnLot({ agentId: agentLot })}>Assigner</Bouton>
+            <Bouton taille="petit" icone={<Shuffle aria-hidden size={15} />} onClick={() => void assignerEnLot({ repartir: true })}>
+              Répartir entre les agents disponibles
+            </Bouton>
+            <Bouton taille="petit" variante="discret" className="ml-auto" onClick={() => setSelection(new Set())}>Annuler la sélection</Bouton>
+          </div>
+        )}
         <table className={cx('w-full text-left text-[15px] transition-opacity', chargement && 'opacity-60')} aria-busy={chargement || undefined}>
           <thead>
             <tr className="border-b border-trait text-[13px] text-encre-3">
-              <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Réclamation</th>
+              {enLot && (
+                <th scope="col" className="w-10 py-2.5 pl-5">
+                  <input
+                    type="checkbox"
+                    aria-label="Tout sélectionner"
+                    className="h-4 w-4 accent-[var(--marque)]"
+                    checked={lignes.length > 0 && lignes.filter((r) => r.statut !== 'CLOTUREE').every((r) => selection.has(r.id))}
+                    onChange={(e) => setSelection(e.target.checked ? new Set(lignes.filter((r) => r.statut !== 'CLOTUREE').map((r) => r.id)) : new Set())}
+                  />
+                </th>
+              )}
+              <th scope="col" className={cx('py-2.5 pr-3 font-semibold', enLot ? 'pl-2' : 'pl-5')}>Réclamation</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Catégorie</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Statut</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Agent</th>
@@ -215,7 +303,25 @@ export function Files({
                   r.id === enAvant && 'bg-marque-doux/70 shadow-[inset_4px_0_0_var(--marque)]',
                 )}
               >
-                <td className="py-3 pr-3 pl-5 align-top">
+                {enLot && (
+                  <td className="py-3 pl-5 align-top" onClick={(e) => e.stopPropagation()}>
+                    {r.statut !== 'CLOTUREE' && (
+                      <input
+                        type="checkbox"
+                        aria-label={`Sélectionner ${r.numero}`}
+                        className="mt-1 h-4 w-4 accent-[var(--marque)]"
+                        checked={selection.has(r.id)}
+                        onChange={(e) => setSelection((x) => {
+                          const n = new Set(x);
+                          if (e.target.checked) n.add(r.id);
+                          else n.delete(r.id);
+                          return n;
+                        })}
+                      />
+                    )}
+                  </td>
+                )}
+                <td className={cx('py-3 pr-3 align-top', enLot ? 'pl-2' : 'pl-5')}>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <a
                       href={`#${r.id}`}
@@ -241,13 +347,15 @@ export function Files({
                         Escaladée
                       </span>
                     )}
+                    {r.doublonPossible && <BadgeDoublon />}
+                    {r.envoiNonRemis && <BadgeNonRemis />}
                   </div>
                   <div className="mt-0.5 text-sm text-encre-2">{r.client.nom}</div>
                 </td>
                 <td className="px-3 py-3 align-top">
                   <div>{r.categorie.nom}</div>
                   <div className="mt-0.5 flex items-center gap-1 text-sm text-encre-3">
-                    {r.canal === 'QR_CODE' ? <QrCode aria-hidden size={13} /> : r.canal === 'LIEN_WEB' ? <Globe aria-hidden size={13} /> : <IconeCanal canal={r.canal} taille={13} />}
+                    <IconeDepot canal={r.canal} taille={13} />
                     {r.agence ? r.agence.nom : CANAL[r.canal]}
                   </div>
                 </td>
@@ -295,7 +403,7 @@ export function Files({
             ))}
             {lignes.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-5 py-12 text-center text-encre-3">
+                <td colSpan={enLot ? 7 : 6} className="px-5 py-12 text-center text-encre-3">
                   {serveur && (filtres || criteres!.recherche)
                     ? 'Aucune réclamation ne correspond à ces critères.'
                     : 'Aucune réclamation dans cette file. Les nouvelles arrivent ici dès leur dépôt.'}

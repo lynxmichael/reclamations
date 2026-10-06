@@ -186,7 +186,7 @@ export function PagePersonnel() {
   const annoncer = useAnnoncer();
   useTitre('Personnel');
   const personnel = useQuery({ queryKey: ['personnel'], queryFn: () => appeler('listerUtilisateurs', { requete: { parPage: 100 } }) });
-  const { ecrire, occupe, erreurs } = useEcriture([['personnel'], ['agents'], ['parametres']]);
+  const { ecrire, occupe, erreurs } = useEcriture([['personnel'], ['agents'], ['parametres'], ['reclamations']]);
   const renvoi = useMutation({
     mutationFn: (u: S<'Utilisateur'>) => appeler('renvoyerInvitation', { chemin: { id: u.id } }),
     onSuccess: (_, u) => annoncer(`Invitation renvoyée à ${u.email}. L'ancien lien ne fonctionne plus.`),
@@ -213,7 +213,12 @@ export function PagePersonnel() {
         erreurs,
         inviter: (v) => ecrire(() => appeler('inviterUtilisateur', { corps: v }), `Invitation envoyée à ${v.email}.`),
         modifier: (id, v) => ecrire(() => appeler('modifierUtilisateur', { chemin: { id }, corps: v }), 'Compte enregistré.'),
-        desactiver: (u) => ecrire(() => appeler('desactiverUtilisateur', { chemin: { id: u.id } }), `Compte de ${nomDe(u)} désactivé : ses sessions sont fermées.`),
+        desactiver: (u) => ecrire(
+          () => appeler('desactiverUtilisateur', { chemin: { id: u.id } }),
+          u.reclamationsEnCours > 0
+            ? `Compte de ${nomDe(u)} désactivé : ses ${u.reclamationsEnCours} réclamation(s) en cours sont dans la file « À réassigner ».`
+            : `Compte de ${nomDe(u)} désactivé : ses sessions sont fermées.`,
+        ),
         reactiver: (u) => ecrire(() => appeler('reactiverUtilisateur', { chemin: { id: u.id } }), `Compte de ${nomDe(u)} réactivé.`),
         renvoyerInvitation: (u) => renvoi.mutate(u),
         reinitialiserTotp: (u) => ecrire(

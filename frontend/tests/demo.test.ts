@@ -559,3 +559,77 @@ describe('banque du prospect', () => {
     }
   });
 });
+
+describe('étape 21 : doublons, lien renvoyé, réclamations à réassigner', () => {
+  it('le client redépose la même réclamation : doublon signalé, rattaché par le superviseur, un seul SMS', () => {
+    const m = nouvelle();
+    const premiere = deposerDepuisLeTelephone(m);
+    const seconde = deposerDepuisLeTelephone(m);
+    const idDe = (numero: string) => m.toutesLesReclamations().find((t) => t.numero === numero)!.id;
+    const [p, d] = [idDe(premiere.numero), idDe(seconde.numero)];
+
+    const ligne = m.files(SUP).donnees.find((r) => r.id === d)!;
+    expect(ligne.doublonPossible).toBe(true);
+    const fiche = m.fiche(SUP, d);
+    expect(ecarts('ReclamationDetail', fiche)).toEqual([]);
+    expect(fiche.duMemeClient.find((x) => x.id === p)).toMatchObject({ doublonPossible: true, accessible: true });
+    expect(fiche.actionsPossibles).toContain('RATTACHER');
+
+    // L'agent n'a ni l'une ni l'autre : il ne peut pas rattacher
+    expect(refus(() => m.rattacher(AGENT, d, p)).status).toBe(404);
+
+    const avant = m.envois.length;
+    m.rattacher(SUP, d, p);
+    const doublon = m.fiche(SUP, d);
+    expect(doublon.statut).toBe('CLOTUREE');
+    expect(doublon.cloture).toMatchObject({ mode: 'FORCEE', motif: 'DOUBLON' });
+    expect(doublon.rattacheeA).toMatchObject({ id: p, numero: premiere.numero });
+    expect(m.fiche(SUP, p).doublonsRattaches.map((x) => x.id)).toEqual([d]);
+    expect(m.fiche(SUP, p).chronologie.at(-1)).toMatchObject({ type: 'RATTACHEMENT', visibleClient: false });
+    // Un message par coordonnée, avec le lien de la principale
+    const nouveaux = m.envois.slice(avant);
+    expect(nouveaux.map((e) => e.canal).sort()).toEqual(['EMAIL', 'SMS']);
+    expect(nouveaux[0]!.texte).toContain(`jointe à ${premiere.numero}`);
+    expect(nouveaux[0]!.lien).toEqual({ jeton: premiere.jetonSuivi });
+    // Le suivi du doublon mène à la principale
+    expect(m.suivi(seconde.jetonSuivi).rattacheeA).toEqual({ id: p, numero: premiere.numero, chemin: `/suivi/${premiere.jetonSuivi}` });
+    expect(ecarts('SuiviPublic', m.suivi(seconde.jetonSuivi))).toEqual([]);
+    // Plus rien à rattacher : la principale n'a plus d'autre réclamation en cours du client
+    expect(m.fiche(SUP, p).actionsPossibles).not.toContain('RATTACHER');
+    expect(refus(() => m.rattacher(SUP, d, p)).status).toBe(409);
+  });
+
+  it('lien de suivi renvoyé aux seules coordonnées du dossier, masquées pour le personnel', () => {
+    const m = nouvelle();
+    const a = deposerDepuisLeTelephone(m);
+    const id = m.toutesLesReclamations().find((t) => t.numero === a.numero)!.id;
+    const r = m.renvoyerLienSuivi(SUP, id);
+    expect(ecarts('LienSuiviRenvoye', r)).toEqual([]);
+    expect(r.envois.map((e) => e.canal)).toEqual(['SMS', 'EMAIL']);
+    expect(r.envois[0]!.destinationMasquee).toContain('••');
+    expect(m.envois.at(-1)!.lien).toEqual({ jeton: a.jetonSuivi });
+    expect(refus(() => m.renvoyerLienSuivi(ADMIN, id)).status).toBe(403);
+
+    // Étape 22 : les messages au client sur la fiche, coordonnée masquée, sans texte ; SMS remis
+    const envois = m.fiche(SUP, id).envois;
+    expect(ecarts('ReclamationDetail', m.fiche(SUP, id))).toEqual([]);
+    expect(envois.map((e) => e.objet)).toContain('Accusé de dépôt');
+    expect(envois[0]!.objet).toBe('Lien de suivi');
+    expect(envois.find((e) => e.canal === 'SMS')!).toMatchObject({ etat: 'REMIS', destinationMasquee: expect.stringContaining('••'), renvoyable: false });
+    expect(envois.find((e) => e.canal === 'EMAIL')!.etat).toBe('ENVOYE');
+    expect(JSON.stringify(envois)).not.toContain(CLIENT_DEMO.telephoneE164);
+    expect(m.files(SUP).donnees.every((x) => x.envoiNonRemis === false)).toBe(true);
+  });
+
+  it('agent absent : ses réclamations en cours comptées dans « À réassigner » et dans les absences', () => {
+    const m = nouvelle();
+    const adjoua = PERSONNEL.find((u) => u.prenom === 'Adjoua')!.id;
+    expect(m.indisponibles()).toContain(adjoua);
+    const enCours = m.toutesLesReclamations().filter((t) => t.agentId === adjoua && t.statut !== 'CLOTUREE').length;
+    expect(m.files(SUP).compteurs.aReassigner).toBe(m.toutesLesReclamations().filter((t) => t.statut !== 'CLOTUREE' && t.agentId && m.indisponibles().includes(t.agentId)).length);
+    expect(m.files(AGENT).compteurs.aReassigner).toBe(0);
+    const absence = m.absencesAVenir().find((a) => a.agent.id === adjoua)!;
+    expect(absence.reclamationsEnCours).toBe(enCours);
+    expect(ecarts('Absence', absence)).toEqual([]);
+  });
+});

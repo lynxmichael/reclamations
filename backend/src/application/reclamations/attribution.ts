@@ -7,9 +7,10 @@
  * attribué tant que la banque est fermée ; le worker distribue les réclamations en attente à
  * l'ouverture (taches-sla.ts), au plus disponible à ce moment-là.
  */
-import { choisirAgent, type AgentDisponible, type Choix, type Groupe } from '../../domaine/attribution.js';
+import { choisirAgent, type AgentDisponible, type Choix, type ContexteRepartition, type Groupe } from '../../domaine/attribution.js';
 import { dateLocale, prochainInstantOuvre, type CalendrierNormalise } from '../../domaine/temps-ouvre/calendrier.js';
 import { enSerie, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import { agent, superviseurs, type Destinataire } from './notifications.js';
 import type { ParametresBanque } from './parametres.js';
 
 export interface ContexteAttribution {
@@ -86,4 +87,48 @@ export function suggestion(
 ): Choix | null {
   if (!ctx || t.agentId || t.statut !== 'OUVERTE') return null;
   return choisir(ctx, t.categorieId, t.agenceId);
+}
+
+// ---------------------------------------------------------------------------
+//  Étape 21 : dossiers d'un agent absent ou désactivé
+// ---------------------------------------------------------------------------
+
+/**
+ * Agents dont les réclamations sont à réassigner : comptes désactivés, et absents le jour de
+ * traitement quand l'attribution automatique est ouverte (les absences n'existent qu'avec elle).
+ */
+export async function agentsIndisponibles(tx: ClientTransaction, p: ParametresBanque, maintenant: Date): Promise<string[]> {
+  const desactives = await tx.utilisateur.findMany({ where: { role: 'AGENT', statut: 'DESACTIVE' }, select: { id: true } });
+  const absents = p.banque.attributionOuverte ? await absentsLe(tx, jourDeTraitement(maintenant, p.sla.calendrier)) : new Set<string>();
+  return [...new Set([...desactives.map((u) => u.id), ...absents])];
+}
+
+/**
+ * Qui prévenir pour une réclamation (message du client, contestation, alerte du SLA) : l'agent
+ * assigné s'il est là ; absent ou désactivé, son superviseur (à défaut, tous les superviseurs).
+ */
+export async function responsables(tx: ClientTransaction, p: ParametresBanque, maintenant: Date, agentId: string | null): Promise<Destinataire[]> {
+  if (!agentId) return superviseurs(tx, null);
+  const lui = await agent(tx, agentId);
+  if (lui.length && !(p.banque.attributionOuverte && (await absentsLe(tx, jourDeTraitement(maintenant, p.sla.calendrier), [agentId])).has(agentId))) return lui;
+  return superviseurs(tx, agentId);
+}
+
+/** Agents actifs et présents de toute la banque, et les groupes si l'attribution est ouverte. */
+export async function chargerContexteRepartition(tx: ClientTransaction, p: ParametresBanque, maintenant: Date): Promise<ContexteRepartition> {
+  const jour = jourDeTraitement(maintenant, p.sla.calendrier);
+  const agents = await tx.utilisateur.findMany({
+    where: { role: 'AGENT', statut: 'ACTIF' }, select: { id: true, prenom: true, nom: true, derniereAttributionLe: true },
+  });
+  const ids = agents.map((a) => a.id);
+  const [absents, aTraiter] = await enSerie([
+    () => (p.banque.attributionOuverte ? absentsLe(tx, jour, ids) : Promise.resolve(new Set<string>())),
+    () => charges(tx, ids),
+  ]);
+  const disponibles = new Map(agents.filter((a) => !absents.has(a.id)).map((a) => [a.id, {
+    id: a.id, nom: `${a.prenom} ${a.nom}`, aTraiter: aTraiter.get(a.id) ?? 0, derniereAttributionLe: a.derniereAttributionLe,
+  }]));
+  if (!p.banque.attributionOuverte) return { groupes: null, groupeDeCategorie: new Map(), groupeDAgence: new Map(), disponibles };
+  const ctx = await chargerContexte(tx, p, maintenant);
+  return { groupes: ctx.groupes, groupeDeCategorie: ctx.groupeDeCategorie, groupeDAgence: ctx.groupeDAgence, disponibles };
 }

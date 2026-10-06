@@ -5,7 +5,7 @@
  * Étape 17 : quand la banque a le chat web (`chat`), les échanges deviennent une discussion.
  */
 import { useContext, useState } from 'react';
-import { ChevronLeft, Download, FileText, Image, SendHorizontal } from 'lucide-react';
+import { ChevronLeft, Download, FileText, Image, SendHorizontal, ShieldAlert, ShieldEllipsis } from 'lucide-react';
 import type { S } from '../../api/types';
 import { ChoixFichiers } from '../../ui/ChoixFichiers';
 import { BadgeStatut, Bouton, LogoBanque, Texte, cx } from '../../ui/composants';
@@ -17,10 +17,31 @@ import { Chat } from './Chat';
 import { Etapes } from './Etapes';
 import { Deconnexion } from './MesReclamations';
 
+/**
+ * Une pièce jointe. Étape 22 : téléchargeable une fois déclarée saine par l'antivirus ; sinon son état
+ * (analyse en cours, ou effacée parce qu'un virus y a été trouvé), sans lien.
+ */
 export function PieceJointe({ piece, surFond }: { piece: S<'PieceJointe'>; surFond?: boolean }) {
   const telecharger = useContext(TelechargerPiece);
   const Icone = piece.typeMime.startsWith('image/') ? Image : FileText;
-  const classes = cx('flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm hover:border-encre-3', surFond ? 'border-black/10 bg-white/70' : 'border-trait bg-fond');
+  const fond = surFond ? 'border-black/10 bg-white/70' : 'border-trait bg-fond';
+  if (piece.antivirus !== 'SAIN') {
+    const infecte = piece.antivirus === 'INFECTE';
+    const Etat = infecte ? ShieldAlert : ShieldEllipsis;
+    return (
+      <div className={cx('flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-sm', fond)} data-antivirus={piece.antivirus}>
+        <Etat aria-hidden size={18} className={cx('shrink-0', infecte ? 'text-urgent' : 'text-encre-3')} />
+        <span className="min-w-0 flex-1">
+          <span className={cx('block truncate font-semibold', infecte ? 'text-encre-3 line-through' : 'text-encre')}>{piece.nomFichier}</span>
+          <span className={cx('block text-[13px] leading-snug', infecte ? 'font-semibold text-urgent' : 'text-encre-3')}>
+            {infecte ? 'Effacé : l\'antivirus y a trouvé un virus' : 'Analyse antivirus en cours : disponible dans quelques minutes'}
+          </span>
+        </span>
+        <span className="chiffres shrink-0 text-encre-3">{octets(piece.tailleOctets)}</span>
+      </div>
+    );
+  }
+  const classes = cx('flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm hover:border-encre-3', fond);
   const contenu = (
     <>
       <Icone aria-hidden size={18} className="shrink-0 text-encre-3" />
@@ -52,6 +73,7 @@ export function MaReclamation({
   surContester,
   surEnvoyer,
   surAvis,
+  surOuvrir,
   occupe,
 }: {
   banque: S<'BanquePublique'>;
@@ -64,6 +86,8 @@ export function MaReclamation({
   surEnvoyer?: (texte: string, fichiers: File[]) => void | boolean | Promise<boolean>;
   /** Ouvre l'enquête de satisfaction (avis.chemin), étape 15 */
   surAvis?: (chemin: string) => void;
+  /** Étape 21 : ouvrir la réclamation principale, quand celle-ci lui a été jointe */
+  surOuvrir?: (id: string) => void;
   /** Une action est en cours d'envoi : les boutons attendent */
   occupe?: boolean;
 }) {
@@ -96,6 +120,25 @@ export function MaReclamation({
           <BadgeStatut statut={r.statut} pourClient grand />
           <span className="text-[15px] text-encre-2">{r.categorie}</span>
         </div>
+
+        {r.rattacheeA && (
+          <p className="mt-5 rounded-xl border border-marque/30 bg-marque-doux/60 px-4 py-3 text-[15px] leading-relaxed text-encre-2">
+            Jointe à votre réclamation{' '}
+            <a
+              href={`#${r.rattacheeA.id}`}
+              onClick={(e) => {
+                if (surOuvrir) {
+                  e.preventDefault();
+                  surOuvrir(r.rattacheeA!.id);
+                }
+              }}
+              className="chiffres font-semibold text-marque-texte underline underline-offset-2"
+            >
+              {r.rattacheeA.numero}
+            </a>
+            , que la banque traite déjà : elle vous y répond.
+          </p>
+        )}
 
         {r.avis && <InvitationAvis avis={r.avis} surAvis={() => surAvis?.(r.avis!.chemin)} />}
 

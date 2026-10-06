@@ -18,7 +18,7 @@ type Ligne = S<'ActiviteAgence'>;
 
 /** Clé d'une ligne : l'agence, ou « aucune » pour les dépôts par lien web sans agence. */
 export const cleAgence = (l: Ligne) => l.agence?.id ?? 'aucune';
-const nomAgence = (l: Ligne) => l.agence?.nom ?? 'Sans agence (lien web, WhatsApp ou SMS)';
+const nomAgence = (l: Ligne) => l.agence?.nom ?? 'Sans agence (lien web, téléphone, WhatsApp ou SMS)';
 
 /** Lignes du fichier CSV de la comparaison (en-tête compris), sans aucune donnée personnelle. */
 export function lignesCsvAgences(ind: S<'IndicateursAgences'>): Cellule[][] {

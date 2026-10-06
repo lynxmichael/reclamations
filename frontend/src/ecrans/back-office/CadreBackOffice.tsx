@@ -89,7 +89,8 @@ export function CadreBackOffice({
   /** Démo cliquable : navigation, notifications */
   surNaviguer?: (page: PageBackOffice) => void;
   surCloche?: () => void;
-  surOuvrirNotification?: (reclamationId: string, notificationId: string) => void;
+  /** reclamationId vide : une alerte sans réclamation (étape 21 : dossiers à réassigner) */
+  surOuvrirNotification?: (reclamationId: string | null, notificationId: string) => void;
   surToutLire?: () => void;
   /** Pages offertes (étape 8 : sans le tableau de bord, qui arrive à l'étape 9) */
   pages?: PageBackOffice[];
@@ -239,7 +240,7 @@ function PanneauNotifications({
 }: {
   notifications: S<'PageNotifications'>;
   maintenant: string;
-  surOuvrir?: (reclamationId: string, notificationId: string) => void;
+  surOuvrir?: (reclamationId: string | null, notificationId: string) => void;
   surToutLire?: () => void;
 }) {
   return (
@@ -256,8 +257,8 @@ function PanneauNotifications({
           <li key={n.id} className="border-b border-trait last:border-0">
             <button
               type="button"
-              disabled={!surOuvrir || !n.reclamationId}
-              onClick={() => n.reclamationId && surOuvrir?.(n.reclamationId, n.id)}
+              disabled={!surOuvrir || (!n.reclamationId && n.modele !== 'superviseur.reassignation')}
+              onClick={() => surOuvrir?.(n.reclamationId, n.id)}
               className={cx('flex w-full gap-3 px-4 py-3 text-left enabled:hover:bg-fond', !n.lueLe && 'bg-marque-doux/60')}
             >
               <span aria-hidden className={cx('mt-2 h-2 w-2 shrink-0 rounded-full', n.lueLe ? 'bg-transparent' : 'bg-urgent')} />

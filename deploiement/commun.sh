@@ -13,7 +13,7 @@ est_demo() { [[ $(valeur_env DEMONSTRATION) == 1 ]]; }
 # Répétition locale sur un poste (étape 13) : REPETITION=1 dans son fichier d'environnement
 est_repetition() { [[ $(valeur_env REPETITION) == 1 ]]; }
 
-# Attend que les services à contrôle de santé soient sains (API, worker, sauvegarde) : $1 × 3 s au plus
+# Attend que les services à contrôle de santé soient sains (API, worker, antivirus, sauvegarde) : $1 × 3 s au plus
 # (60 par défaut). Échec : leur état est affiché.
 attendre_sante() {
   local etats=''

@@ -31,6 +31,7 @@ export function Absences({
   aujourdhui,
   actions,
   lectureSeule,
+  surAReassigner,
 }: {
   absences: S<'Absence'>[];
   /** Agents de la banque, pour le choix (rôle Agent, compte non désactivé) */
@@ -40,6 +41,8 @@ export function Absences({
   actions?: ActionsAbsences;
   /** Sans formulaire de déclaration (maquettes : vue d'un rôle qui ne déclare pas) */
   lectureSeule?: boolean;
+  /** Étape 21 : la file « À réassigner », limitée aux réclamations de cet agent */
+  surAReassigner?: (agentId: string) => void;
 }) {
   const [agentId, setAgentId] = useState('');
   const [du, setDu] = useState(aujourdhui);
@@ -59,7 +62,7 @@ export function Absences({
       <div>
         <h1 className="text-[26px] font-bold tracking-tight">Absences</h1>
         <p className="mt-1 max-w-[80ch] text-[15px] text-encre-3">
-          Un agent absent ne reçoit aucune nouvelle réclamation ces jours-là. Celles qu'il traite déjà restent les siennes : réassignez-les depuis leur fiche si besoin.
+          Un agent absent ne reçoit aucune nouvelle réclamation ces jours-là. Celles qu'il traite déjà restent à son nom : pendant son absence, elles sont dans la file « À réassigner », et les alertes et messages des clients vont à son superviseur.
         </p>
       </div>
 
@@ -103,6 +106,7 @@ export function Absences({
                 <th scope="col" className="px-3 py-2.5 font-semibold">Au</th>
                 <th scope="col" className="px-3 py-2.5 font-semibold">Durée</th>
                 <th scope="col" className="px-3 py-2.5 font-semibold">État</th>
+                <th scope="col" className="px-3 py-2.5 font-semibold">Réclamations en cours</th>
                 <th scope="col" className="py-2.5 pr-5 pl-3"><span className="sr-only">Retirer</span></th>
               </tr>
             </thead>
@@ -121,6 +125,26 @@ export function Absences({
                       <span className={cx('rounded-md px-2 py-0.5 text-[13px] font-semibold', enCours ? 'bg-alerte-doux text-alerte' : 'bg-fond text-encre-2')}>
                         {enCours ? 'En cours' : 'À venir'}
                       </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {a.reclamationsEnCours === 0 ? (
+                        <span className="text-encre-3">Aucune</span>
+                      ) : enCours ? (
+                        <a
+                          href={`#a-reassigner-${a.agent.id}`}
+                          onClick={(x) => {
+                            if (surAReassigner) {
+                              x.preventDefault();
+                              surAReassigner(a.agent.id);
+                            }
+                          }}
+                          className="chiffres font-semibold text-marque-texte underline-offset-2 hover:underline"
+                        >
+                          {a.reclamationsEnCours} à réassigner
+                        </a>
+                      ) : (
+                        <span className="chiffres">{a.reclamationsEnCours}</span>
+                      )}
                     </td>
                     <td className="py-2.5 pr-5 pl-3 text-right">
                       {!lectureSeule && (

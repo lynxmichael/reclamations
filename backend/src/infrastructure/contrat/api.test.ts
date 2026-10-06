@@ -44,12 +44,12 @@ function routes() {
 }
 
 describe('routes de l\'API ↔ opérations du contrat', () => {
-  it('chaque opération du contrat est servie une fois (117, phase 2 et étape 20 comprises)', () => {
+  it('chaque opération du contrat est servie une fois (126, phase 2 et étapes 21 et 22 comprises)', () => {
     const servies = routes().map((r) => r.id);
     expect(new Set(servies).size).toBe(servies.length);
     const attendues = [...contratApi().operations.keys()].sort();
     expect([...servies].sort()).toEqual(attendues);
-    expect(attendues.length).toBe(117);
+    expect(attendues.length).toBe(126);
   });
 
   it('méthode et chemin HTTP de chaque route sont ceux du contrat', () => {

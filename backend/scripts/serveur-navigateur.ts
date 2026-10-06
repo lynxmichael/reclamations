@@ -17,6 +17,7 @@ import { creerApplication } from '../src/app.module.js';
 import { lireConfiguration, urlPortail } from '../src/configuration/configuration.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { recreerBase, urlsBase } from './base-de-test.js';
+import { demarrerClamavSimule } from '../test/outils/clamav-simule.js';
 import { semer } from './jeu-de-donnees.js';
 
 export const NOM_BASE_NAVIGATEUR = 'reclamations_navigateur';
@@ -32,9 +33,14 @@ async function principal() {
   await r.flushdb();
   await r.quit();
 
+  // Étape 22 : ClamAV simulé (il trouve le fichier de test EICAR), interrogé comme le vrai
+  const clamav = await demarrerClamavSimule();
   const config = lireConfiguration({
     ...process.env,
     NODE_ENV: 'test',
+    ANTIVIRUS: 'clamav',
+    CLAMAV_HOTE: '127.0.0.1',
+    CLAMAV_PORT: String(clamav.port),
     APP_DATABASE_URL: urls.application,
     REDIS_URL: redis.toString(),
     PORT: process.env.PORT_NAVIGATEUR ?? '3300',

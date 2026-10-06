@@ -120,6 +120,8 @@ function utilisateur(
     totpActif: true,
     derniereConnexionLe: null,
     verrouilleJusquA: null,
+    // Étape 21 : réclamations non clôturées à son nom (celles de la file des maquettes)
+    reclamationsEnCours: 0,
     ...autres,
   };
 }
@@ -128,10 +130,10 @@ export const PERSONNEL: S<'Utilisateur'>[] = [
   utilisateur(FATOU, 'ADMIN_ENTREPRISE', { derniereConnexionLe: t('25/09 08:05'), telephone: '+2250701020304' }),
   utilisateur(SERGE, 'SUPERVISEUR', { derniereConnexionLe: t('25/09 07:52') }),
   utilisateur(MARIAM, 'SUPERVISEUR', { derniereConnexionLe: t('25/09 08:11') }),
-  utilisateur(AYA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 07:58') }),
-  utilisateur(MAMADOU, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('24/09 17:20'), verrouilleJusquA: t('25/09 15:22') }),
-  utilisateur(ADJOUA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 08:20') }),
-  utilisateur(IBRAHIM, 'AGENT', { superviseur: ref(MARIAM), derniereConnexionLe: t('25/09 08:03'), totpActif: false }),
+  utilisateur(AYA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 07:58'), reclamationsEnCours: 5 }),
+  utilisateur(MAMADOU, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('24/09 17:20'), verrouilleJusquA: t('25/09 15:22'), reclamationsEnCours: 2 }),
+  utilisateur(ADJOUA, 'AGENT', { superviseur: ref(SERGE), derniereConnexionLe: t('25/09 08:20'), reclamationsEnCours: 2 }),
+  utilisateur(IBRAHIM, 'AGENT', { superviseur: ref(MARIAM), derniereConnexionLe: t('25/09 08:03'), totpActif: false, reclamationsEnCours: 2 }),
   utilisateur(ESTELLE, 'AGENT', { superviseur: ref(MARIAM), statut: 'INVITE', totpActif: false }),
   utilisateur(JEAN_MARC, 'AGENT', { superviseur: ref(MARIAM), statut: 'DESACTIVE', derniereConnexionLe: t('31/08 17:02') }),
 ];
@@ -192,6 +194,6 @@ export const AGENTS_DES_GROUPES = PERSONNEL.filter((u) => u.role === 'AGENT' && 
   .sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
 
 export const ABSENCES: S<'Absence'>[] = [
-  { id: id('absence', 1), agent: ref(ADJOUA), du: '2026-09-24', au: '2026-09-28', creeLe: t('23/09 16:40') },
-  { id: id('absence', 2), agent: ref(IBRAHIM), du: '2026-10-12', au: '2026-10-23', creeLe: t('21/09 09:15') },
+  { id: id('absence', 1), agent: ref(ADJOUA), du: '2026-09-24', au: '2026-09-28', creeLe: t('23/09 16:40'), reclamationsEnCours: 2 },
+  { id: id('absence', 2), agent: ref(IBRAHIM), du: '2026-10-12', au: '2026-10-23', creeLe: t('21/09 09:15'), reclamationsEnCours: 2 },
 ];

@@ -49,6 +49,10 @@ export function configurationE2E(env: Record<string, string> = {}): Configuratio
     URL_CONSOLE: '',
     // Défis anti-robot faciles : les tests en résolvent des centaines (le test dédié le vérifie)
     ANTI_ROBOT_MAXIMUM: '2000',
+    // Étape 22 : ClamAV simulé (preparation.ts), interrogé comme le vrai
+    ANTIVIRUS: 'clamav',
+    CLAMAV_HOTE: '127.0.0.1',
+    CLAMAV_PORT: String(inject('clamav')),
     ...env,
   });
 }
@@ -142,7 +146,7 @@ export const nouvelleIp = () => {
 };
 
 /** Opérations qui exigent un jeton anti-robot (étape 11) */
-export const AVEC_ANTI_ROBOT = new Set(['deposerReclamation', 'demanderCodeOtp']);
+export const AVEC_ANTI_ROBOT = new Set(['deposerReclamation', 'demanderCodeOtp', 'demanderCodeAcces']);
 
 export class ClientApi {
   constructor(private readonly url: string, private readonly ipParDefaut = nouvelleIp()) {}

@@ -15,18 +15,24 @@
  * SMS d'une conversation, du numéro de la banque. Une erreur définitive de Meta (fenêtre de 24 h
  * fermée, numéro sans WhatsApp, jeton expiré) n'est pas réessayée : le client est alors prévenu
  * autrement (`apresEchecWhatsapp`). Le texte d'un message de conversation est effacé une fois envoyé.
+ *
+ * Étape 22 : les tentatives sont espacées (1, 5, 30 puis 120 minutes : domaine/envois.ts) ; une erreur
+ * définitive de la passerelle ou du serveur d'e-mail (numéro invalide, adresse refusée) ne se réessaie
+ * pas. Un message au client finalement non remis est noté avec son motif et signalé au personnel
+ * (`surNonRemis`, branché par le worker).
  */
 import { Logger } from '@nestjs/common';
 import type { Notification } from '../../generated/prisma/client.js';
+import { prochaineTentative, TENTATIVES_MAX, type MotifEchec } from '../../domaine/envois.js';
 import { versGsm } from '../../domaine/sms.js';
 import type { BaseDonnees } from '../base-de-donnees/base-de-donnees.service.js';
 import type { ClientTransaction } from '../base-de-donnees/index.js';
 import { ErreurWhatsapp, type AdaptateurWhatsapp } from '../canaux/whatsapp.js';
 import { dechiffrer } from '../securite/totp.js';
-import type { AdaptateurEmail, AdaptateurSms, ResultatEnvoi } from './adaptateurs.js';
+import { ErreurEnvoi, type AdaptateurEmail, type AdaptateurSms, type ResultatEnvoi } from './adaptateurs.js';
 import { emailHtml } from './gabarit-email.js';
 
-export const TENTATIVES_MAX = 5;
+export { TENTATIVES_MAX };
 const LOT = 50;
 /** Modèles dont le contenu porte un secret à usage unique */
 export const MODELES_SENSIBLES = ['client.otp', 'personnel.invitation', 'personnel.reinitialisation'];
@@ -47,6 +53,9 @@ export interface CanauxEnvoi {
   readonly whatsapp: AdaptateurWhatsapp;
   readonly cle: Buffer;
 }
+
+/** Étape 22 : un message au client définitivement non remis (hors WhatsApp, qui a son repli) */
+export type SurNonRemis = (n: Pick<Notification, 'id' | 'tenantId' | 'canal' | 'modele' | 'reclamationId' | 'destination'> & { motifEchec: MotifEchec }) => Promise<void>;
 
 interface NumeroWhatsapp {
   readonly identifiant: string;
@@ -87,6 +96,7 @@ export class BoiteEnvoi {
     private readonly sms: AdaptateurSms,
     private readonly horloge: () => Date = () => new Date(),
     private readonly canaux: CanauxEnvoi | null = null,
+    private readonly surNonRemis: SurNonRemis | null = null,
   ) {}
 
   /** `relances` : notifications déjà tentées (sinon, les nouvelles seulement). */
@@ -94,9 +104,10 @@ export class BoiteEnvoi {
     const maintenant = this.horloge();
     const lot = await this.bd.enSysteme(async (tx) => {
       const ids = relances
+        // Étape 22 : à l'heure de leur tentative suivante (sans heure, une minute après leur création)
         ? await tx.$queryRaw<{ id: string }[]>`
             SELECT id FROM notification WHERE statut = 'EN_ATTENTE' AND tentatives BETWEEN 1 AND ${TENTATIVES_MAX - 1}
-              AND cree_le < ${new Date(maintenant.getTime() - 60_000)}
+              AND COALESCE(prochaine_tentative_le, cree_le + interval '1 minute') <= ${maintenant}
             ORDER BY cree_le LIMIT ${LOT} FOR UPDATE SKIP LOCKED`
         : await tx.$queryRaw<{ id: string }[]>`
             SELECT id FROM notification WHERE statut = 'EN_ATTENTE' AND tentatives = 0
@@ -131,26 +142,41 @@ export class BoiteEnvoi {
         } else {
           r = await this.sms.envoyer({ destination: n.destination, texte: n.contenu, reference: n.id, expediteur: n.expediteur });
         }
-        await this.bd.enSysteme((tx) => tx.notification.update({
-          where: { id: n.id },
-          data: {
-            statut: 'ENVOYEE', envoyeeLe: this.horloge(), idFournisseur: r.idFournisseur, derniereErreur: null,
-            ...(n.canal === 'SMS' ? { segmentsSms: r.segments ?? 1 } : {}),
-            ...masque(n.modele),
-          },
-        }));
-        bilan.envoyees++;
-      } catch (e) {
-        const message = (e as Error).message.slice(0, 500);
-        // WhatsApp : une erreur définitive de Meta ne se réessaie pas
-        const definitif = n.tentatives >= TENTATIVES_MAX || (e instanceof ErreurWhatsapp && e.definitive);
         await this.bd.enSysteme(async (tx) => {
           await tx.notification.update({
             where: { id: n.id },
-            data: { derniereErreur: message, ...(definitif ? { statut: 'ECHEC', ...masque(n.modele) } : {}) },
+            data: {
+              envoyeeLe: this.horloge(), idFournisseur: r.idFournisseur, derniereErreur: null, prochaineTentativeLe: null,
+              ...(n.canal === 'SMS' ? { segmentsSms: r.segments ?? 1 } : {}),
+              ...masque(n.modele),
+            },
+          });
+          // Un accusé de remise arrivé avant cette ligne (étape 22) a déjà fixé le statut : il est gardé
+          await tx.notification.updateMany({ where: { id: n.id, statut: 'EN_ATTENTE' }, data: { statut: 'ENVOYEE' } });
+        });
+        bilan.envoyees++;
+      } catch (e) {
+        const message = (e as Error).message.slice(0, 500);
+        // Une erreur définitive (Meta, passerelle, serveur d'e-mail) ne se réessaie pas
+        const definitive = (e instanceof ErreurWhatsapp || e instanceof ErreurEnvoi) && e.definitive;
+        const definitif = n.tentatives >= TENTATIVES_MAX || definitive;
+        const motif: MotifEchec = e instanceof ErreurWhatsapp ? 'WHATSAPP_INDISPONIBLE' : e instanceof ErreurEnvoi && definitive ? e.motif : 'ERREUR_TECHNIQUE';
+        const apres = this.horloge();
+        await this.bd.enSysteme(async (tx) => {
+          await tx.notification.update({
+            where: { id: n.id },
+            data: {
+              derniereErreur: message,
+              ...(definitif
+                ? { statut: 'ECHEC', motifEchec: motif, prochaineTentativeLe: null, ...masque(n.modele) }
+                : { prochaineTentativeLe: prochaineTentative(n.tentatives, apres) }),
+            },
           });
           if (definitif && n.canal === 'WHATSAPP') await apresEchecWhatsapp(tx, n);
         });
+        if (definitif && n.canal !== 'WHATSAPP' && n.canal !== 'IN_APP') {
+          await this.surNonRemis?.({ ...n, motifEchec: motif }).catch((x: unknown) => this.journal.warn(`Signalement d'un envoi non remis : ${(x as Error).message}`));
+        }
         bilan.echecs++;
         this.journal.warn(`${n.canal} ${n.modele} (tentative ${n.tentatives}) : ${message}`);
       }

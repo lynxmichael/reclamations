@@ -145,3 +145,26 @@ body {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------- Récépissé (étape 21) */
+
+/* À l'impression, seul le récépissé remis au client au guichet sort de l'imprimante */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .recepisse,
+  .recepisse * {
+    visibility: visible;
+  }
+  .recepisse {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .recepisse .sans-impression {
+    display: none;
+  }
+}

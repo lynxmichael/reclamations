@@ -9,12 +9,18 @@
  *   npm run canal -- whatsapp 0707070707 "Bonjour" --nom "Awa Konan" --banque <phone_number_id>
  *   docker compose exec api npm run canal -- whatsapp 0707070707 "OUI"
  *
+ * Étape 22 — accusé de remise du dernier SMS envoyé à un numéro (en attente ou envoyé), signé comme la
+ * passerelle le signerait : REMIS, NON_REMIS, EXPIRE (téléphone resté éteint) ou REJETE.
+ *
+ *   npm run canal -- remise 0707070707 NON_REMIS
+ *
  * Variables : API_URL (http://localhost:3000/api/v1), WHATSAPP_SECRET_APP, SMS_ENTRANT_SECRET.
  */
 import { randomUUID } from 'node:crypto';
 import { CANAUX_DEMO } from './jeu-de-donnees.js';
 import { lireConfiguration } from '../src/configuration/configuration.js';
 import { normaliserTelephone } from '../src/domaine/contact.js';
+import { STATUTS_REMISE } from '../src/domaine/envois.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { signer } from '../src/infrastructure/canaux/whatsapp.js';
 
@@ -23,10 +29,40 @@ function option(nom: string): string | undefined {
   return i > 0 ? process.argv[i + 1] : undefined;
 }
 
+/** Étape 22 : accusé de remise signé pour le dernier SMS envoyé à ce numéro. */
+async function remise(numero: string, statut: string) {
+  if (!(STATUTS_REMISE as readonly string[]).includes(statut)) {
+    console.error(`Statut inconnu : ${statut} (${STATUTS_REMISE.join(', ')})`);
+    process.exit(2);
+  }
+  const config = lireConfiguration();
+  if (config.production) throw new Error('Simulation réservée au développement');
+  if (!config.smsEntrantSecret) throw new Error('SMS_ENTRANT_SECRET manquant');
+  const destination = normaliserTelephone(numero)!;
+  const bd = new BaseDonnees(config.baseDeDonneesUrl);
+  try {
+    const n = await bd.enSysteme((tx) => tx.notification.findFirst({
+      where: { destination, canal: 'SMS', statut: { in: ['EN_ATTENTE', 'ENVOYEE'] } }, orderBy: { creeLe: 'desc' }, select: { id: true, modele: true },
+    }));
+    if (!n) throw new Error(`Aucun SMS en attente ou envoyé au ${destination}`);
+    const corps = { reference: n.id, statut, code: 'SIMULATION' };
+    const api = (process.env.API_URL ?? `http://localhost:${config.port}/api/v1`).replace(/\/+$/, '');
+    const r = await fetch(`${api}/webhooks/sms/remise`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Signature': signer(JSON.stringify(corps), config.smsEntrantSecret) }, body: JSON.stringify(corps),
+    });
+    console.log(`Accusé ${statut} pour le SMS ${n.modele} au ${destination} → HTTP ${r.status}`);
+    if (!r.ok) process.exit(1);
+  } finally {
+    await bd.fermer();
+  }
+}
+
 async function principal() {
   const [canal, numero, ...reste] = process.argv.slice(2).filter((a, i, t) => !a.startsWith('--') && !t[i - 1]?.startsWith('--'));
+  if (canal === 'remise' && numero && reste[0]) return remise(numero, reste[0]);
   if ((canal !== 'whatsapp' && canal !== 'sms') || !numero || !reste.length) {
     console.error('Usage : npm run canal -- whatsapp|sms <numéro du client> "<message>" [--nom "Prénom Nom"] [--banque <identifiant>]');
+    console.error('        npm run canal -- remise <numéro du client> REMIS|NON_REMIS|EXPIRE|REJETE');
     process.exit(2);
   }
   const config = lireConfiguration();

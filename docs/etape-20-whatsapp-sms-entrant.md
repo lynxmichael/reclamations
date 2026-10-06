@@ -1,7 +1,7 @@
 # Étape 20 — WhatsApp Business et SMS entrant
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 05/10/2026 · **Statut : en attente de validation** (décisions V1 à V15 ci-dessous).
+Version du 05/10/2026 · **Statut : validé le 05/10/2026** (décisions V1 à V15 retenues telles que proposées).
 
 Cette étape met en œuvre les décisions I1, I2 et I7 de l'étape 14 : **le client écrit à sa banque sur WhatsApp ou par SMS**, et la banque lui répond au même endroit.
 
@@ -88,7 +88,7 @@ Les étapes de la réclamation suivent le même chemin : les messages qui partai
 
 L'Admin Entreprise voit ses numéros dans **Agences et QR codes**, avec le QR code WhatsApp (wa.me) à imprimer et le numéro SMS à copier, pour l'agence et le site. La banque ne les crée ni ne les ferme : c'est Makor.
 
-Le reporting compte les canaux WhatsApp et SMS dès qu'ils ont des réclamations. Dans l'activité des agences, la dernière ligne devient « Sans agence (lien web, WhatsApp ou SMS) ».
+Le reporting compte les canaux WhatsApp et SMS dès qu'ils ont des réclamations. Dans l'activité des agences, la dernière ligne devient « Sans agence (lien web, téléphone, WhatsApp ou SMS) ».
 
 ## 4. Ce qui protège ces canaux
 
@@ -253,4 +253,4 @@ Koffi voit les totaux du mois :
 
 ## 14. Suite
 
-Étape 21 : baromètre de satisfaction et recommandations IA.
+Étape 21 : saisie d'une réclamation au guichet ou par téléphone, réclamations retrouvées par le client, doublons et réaffectation des dossiers d'un agent absent. Étape 22 : envois non remis et pièces jointes (Word, antivirus). Étape 23 : baromètre de satisfaction et recommandations IA.

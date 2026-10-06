@@ -39,6 +39,11 @@ const TRANSITIONS_ATTENDUES: Record<string, string[]> = {
   'RESOLUE:CONFIRMER': ['CLIENT'],
   'RESOLUE:CONTESTER': ['CLIENT'],
   'RESOLUE:CLOTURER_DE_FORCE': ['SUPERVISEUR'],
+  // Étape 21 : un doublon rattaché à la réclamation principale, par l'agent assigné ou le superviseur
+  'OUVERTE:RATTACHER': ['AGENT_ASSIGNE', 'SUPERVISEUR'],
+  'EN_COURS:RATTACHER': ['AGENT_ASSIGNE', 'SUPERVISEUR'],
+  'EN_ATTENTE_CLIENT:RATTACHER': ['AGENT_ASSIGNE', 'SUPERVISEUR'],
+  'RESOLUE:RATTACHER': ['AGENT_ASSIGNE', 'SUPERVISEUR'],
   // RESOLUE:CLOTURER_AUTOMATIQUEMENT seulement après le délai (testé à part)
 };
 
@@ -106,6 +111,7 @@ describe('opérations sans changement de statut', () => {
     NOTE_INTERNE: { statuts: STATUTS, par: ['AGENT_ASSIGNE', 'SUPERVISEUR'] },
     REPONDRE_AU_CLIENT: { statuts: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT'], par: ['AGENT_ASSIGNE', 'SUPERVISEUR'] },
     MESSAGE_DU_CLIENT: { statuts: ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT'], par: ['CLIENT'] },
+    RENVOYER_LIEN: { statuts: STATUTS, par: ['AGENT_ASSIGNE', 'SUPERVISEUR'] },
   };
   for (const operation of Object.keys(OPERATIONS) as Operation[]) {
     it(`${operation}`, () => {

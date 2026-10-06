@@ -8,10 +8,12 @@ import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './auth';
 import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './agences';
 import { ABSENCES, AGENCES, CATEGORIES, GROUPES, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi } from './parametrage';
 import { ALERTES, FACTURATION_CANAUX, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './plateforme';
-import { ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos } from './portail';
 import {
-  CONVERSATION_42, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, FICHE_42, FICHE_52, INDICATEURS, JOURNAL, NOTIFICATIONS_AGENT,
-  PAGE_AGENT, PAGE_SUPERVISEUR, VERIFICATION_CHAINE,
+  ERREUR_DEPOT, MA_RECLAMATION_EN_COURS, MA_RECLAMATION_RESOLUE, MES_RECLAMATIONS, OTP_ACCES, OTP_ENVOYE, accuse, avis, formulaire, maReclamationChat, suivi, suiviClos, suiviRattache,
+} from './portail';
+import {
+  ACCUSE_SAISIE_54, CONVERSATION_42, CONVERSATIONS_AGENT, CONVERSATIONS_SUPERVISEUR, CONVERSATIONS_SUPERVISEUR_TOUTES, ERREUR_SAISIE, FICHE_42, FICHE_52, FICHE_53, FICHE_54, INDICATEURS, JOURNAL,
+  NOTIFICATIONS_AGENT, PAGE_AGENT, PAGE_SUPERVISEUR, RESULTAT_EN_LOT, VERIFICATION_CHAINE,
 } from './reclamations';
 
 export interface Exemple {
@@ -33,6 +35,9 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'enquête donnée', schema: 'Avis', valeur: avis(ALPHA, 'DONNE') },
   { nom: 'enquête terminée', schema: 'Avis', valeur: avis(HORIZON, 'TERMINE') },
   { nom: 'code OTP envoyé', schema: 'OtpEnvoye', valeur: OTP_ENVOYE },
+  { nom: 'suivi d\'un doublon rattaché (étape 21)', schema: 'SuiviPublic', valeur: suiviRattache(ALPHA) },
+  { nom: 'banque du portail (étape 21)', schema: 'BanquePublique', valeur: ALPHA },
+  { nom: 'code pour retrouver ses réclamations (étape 21)', schema: 'OtpEnvoye', valeur: OTP_ACCES },
   { nom: 'mes réclamations', schema: 'ReclamationClientResume', liste: true, valeur: MES_RECLAMATIONS },
   { nom: 'ma réclamation en cours', schema: 'ReclamationClient', valeur: MA_RECLAMATION_EN_COURS },
   { nom: 'ma réclamation résolue', schema: 'ReclamationClient', valeur: MA_RECLAMATION_RESOLUE },
@@ -52,6 +57,11 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'fiche (superviseur)', schema: 'ReclamationDetail', valeur: FICHE_42.SUPERVISEUR },
   { nom: 'fiche (Admin Entreprise)', schema: 'ReclamationDetail', valeur: FICHE_42.ADMIN_ENTREPRISE },
   { nom: 'fiche à assigner, agent suggéré (superviseur)', schema: 'ReclamationDetail', valeur: FICHE_52 },
+  { nom: 'fiche d\'un doublon possible (étape 21, superviseur)', schema: 'ReclamationDetail', valeur: FICHE_53 },
+  { nom: 'fiche saisie au guichet (étape 21)', schema: 'ReclamationDetail', valeur: FICHE_54 },
+  { nom: 'récépissé de la saisie au guichet (étape 21)', schema: 'AccuseSaisie', valeur: ACCUSE_SAISIE_54 },
+  { nom: 'saisie à corriger (étape 21)', schema: 'Probleme', valeur: ERREUR_SAISIE },
+  { nom: 'réassignation en lot (étape 21)', schema: 'ResultatAssignationEnLot', valeur: RESULTAT_EN_LOT },
   { nom: 'boîte de réception (superviseur, à répondre)', schema: 'PageConversations', valeur: CONVERSATIONS_SUPERVISEUR },
   { nom: 'boîte de réception (superviseur, toutes)', schema: 'PageConversations', valeur: CONVERSATIONS_SUPERVISEUR_TOUTES },
   { nom: 'boîte de réception (agent)', schema: 'PageConversations', valeur: CONVERSATIONS_AGENT },

@@ -69,10 +69,10 @@ export const INDICATEURS_PLATEFORME: S<'IndicateursPlateforme'> = {
 export const FACTURATION_SMS: S<'FacturationSms'> = {
   mois: '2026-09',
   banques: [
-    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, sms: 1486, segments: 1502, echecs: 12 },
-    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, sms: 5210, segments: 5288, echecs: 41 },
-    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, sms: 1034, segments: 1034, echecs: 9 },
-    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, sms: 188, segments: 191, echecs: 0 },
+    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, sms: 1486, segments: 1502, remis: 1461, echecs: 12 },
+    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, sms: 5210, segments: 5288, remis: 5098, echecs: 41 },
+    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, sms: 1034, segments: 1034, remis: 1017, echecs: 9 },
+    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, sms: 188, segments: 191, remis: 188, echecs: 0 },
   ],
 };
 

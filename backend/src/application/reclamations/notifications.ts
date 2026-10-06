@@ -19,7 +19,9 @@ import { couperSms, versGsm } from '../../domaine/sms.js';
 import { canalDeReponse, FIL_WEB, type FilClient } from './conversations.js';
 import type { ParametresBanque } from './parametres.js';
 
-export type ModeleClient = 'client.depot' | 'client.statut' | 'client.reponse' | 'client.question' | 'client.resolution' | 'client.cloture';
+export type ModeleClient = 'client.depot' | 'client.statut' | 'client.reponse' | 'client.question' | 'client.resolution' | 'client.cloture'
+  // Étape 21 : lien de suivi renvoyé par la banque, doublon joint à la réclamation principale
+  | 'client.lien_suivi' | 'client.rattachement';
 /**
  * Messages de la conversation sur WhatsApp ou par SMS (étape 20) : réponse d'un agent, réponse
  * automatique. Leur texte est effacé de la notification une fois envoyé (il est dans la réclamation).
@@ -34,12 +36,12 @@ export type ModelePlateforme = 'plateforme.urgente' | 'plateforme.plafond';
  * Le SMS part toujours au dépôt et à la résolution ; aux autres changements de statut, selon l'option de
  * la banque, activée par défaut (décision du 01/10/2026 : un SMS à chaque changement de statut).
  */
-const SMS_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution'];
+const SMS_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution', 'client.lien_suivi', 'client.rattachement'];
 /**
  * Étape 20 : le client qui écrit sur WhatsApp ou par SMS y reçoit le dépôt, la résolution et la
  * clôture (avec le lien de l'enquête), quel que soit l'option des SMS ; les autres étapes selon elle.
  */
-const FIL_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution', 'client.cloture'];
+const FIL_TOUJOURS: readonly ModeleClient[] = ['client.depot', 'client.resolution', 'client.cloture', 'client.lien_suivi', 'client.rattachement'];
 /** Texte WhatsApp au-delà duquel le message est coupé (Meta : 4 096 caractères) */
 const LONGUEUR_WHATSAPP = 4000;
 
@@ -124,10 +126,14 @@ export class Envois {
    * `avis` : une enquête de satisfaction vient d'être ouverte, son lien part avec la clôture (étape 15).
    * Étape 20 : le SMS part dans le fil WhatsApp ou SMS où écrit le client (`canalDeReponse`), sauf
    * `sansFil` (le fil a échoué : SMS ordinaire) ; `emailSeul` : le fil a déjà reçu le message.
+   * Étape 21 : `principale`, la réclamation à laquelle un doublon est joint. Rend les envois écrits.
    */
-  async client(modele: ModeleClient, options: { avis?: boolean; sansFil?: boolean; emailSeul?: boolean } = {}): Promise<void> {
+  async client(
+    modele: ModeleClient,
+    options: { avis?: boolean; sansFil?: boolean; emailSeul?: boolean; principale?: { numero: string; lien: string } } = {},
+  ): Promise<{ canal: CanalNotification; destination: string }[]> {
     const client = await this.tx.clientFinal.findUniqueOrThrow({ where: { id: this.ticket.clientId } });
-    const texte = this.texteClient(modele, client.nom, options.avis ?? false);
+    const texte = this.texteClient(modele, client.nom, options.avis ?? false, options.principale);
     const lignes: { canal: CanalNotification; destination: string; sujet: string | null; contenu: string; expediteur?: string | null }[] = [];
     if (client.email) lignes.push({ canal: 'EMAIL', destination: client.email, sujet: texte.sujet, contenu: texte.corps });
     const sms = SMS_TOUJOURS.includes(modele) || this.p.banque.smsChaqueChangementStatut;
@@ -142,12 +148,13 @@ export class Envois {
         lignes.push({ canal: 'SMS', destination: client.telephone, sujet: null, contenu: texte.sms ?? texte.corps });
       }
     }
-    if (lignes.length === 0) return;
+    if (lignes.length === 0) return [];
     await this.tx.notification.createMany({
       data: lignes.map((l) => ({
         ...l, tenantId: this.ticket.tenantId, modele, destinataireClientId: client.id, reclamationId: this.ticket.id,
       })),
     });
+    return lignes.map((l) => ({ canal: l.canal, destination: l.destination }));
   }
 
   /**
@@ -171,7 +178,7 @@ export class Envois {
     return d.repriseLe ? texteReprise(d.repriseLe, this.maintenant, this.p.banque.fuseauHoraire) : null;
   }
 
-  private texteClient(modele: ModeleClient, nom: string, avis: boolean): Texte {
+  private texteClient(modele: ModeleClient, nom: string, avis: boolean, principale?: { numero: string; lien: string }): Texte {
     const { numero } = this.ticket;
     const banque = this.p.banque.nom;
     const lien = this.lienSuivi;
@@ -229,6 +236,24 @@ export class Envois {
             sms: `${banque} : votre réclamation ${numero} est clôturée.`,
             fil: texteCloture(numero),
           };
+      case 'client.lien_suivi':
+        return {
+          sujet: `Suivi de votre réclamation ${numero}`,
+          corps: `${bonjour}Voici le lien de suivi de votre réclamation ${numero} :\n${lien}\n`
+            + `Il montre ses étapes ; pour le détail, un code vous est envoyé à vos coordonnées.${signature}`,
+          sms: `${banque} : suivi de votre réclamation ${numero} : ${lien}`,
+          fil: `Suivi de votre reclamation ${numero} : ${lien}`,
+        };
+      case 'client.rattachement': {
+        const p = principale ?? { numero, lien };
+        return {
+          sujet: `Réclamation ${numero} jointe à ${p.numero}`,
+          corps: `${bonjour}Votre réclamation ${numero} porte sur le même sujet que votre réclamation ${p.numero}, déjà en cours : `
+            + `nous l'y avons jointe, pour la traiter en une seule fois.\nSuivez-la ici : ${p.lien}${signature}`,
+          sms: `${banque} : votre réclamation ${numero} est jointe à ${p.numero}, déjà en cours. Suivi : ${p.lien}`,
+          fil: `Votre reclamation ${numero} est jointe a ${p.numero}, deja en cours. Suivi : ${p.lien}`,
+        };
+      }
     }
   }
 

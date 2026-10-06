@@ -43,7 +43,7 @@ export function Activite({
   chargement?: boolean;
 }) {
   const avecEnquetes = indicateurs.banques.filter((b) => b.satisfaction);
-  const totalSms = sms.banques.reduce((s, b) => ({ sms: s.sms + b.sms, segments: s.segments + b.segments, echecs: s.echecs + b.echecs }), { sms: 0, segments: 0, echecs: 0 });
+  const totalSms = sms.banques.reduce((s, b) => ({ sms: s.sms + b.sms, segments: s.segments + b.segments, remis: s.remis + b.remis, echecs: s.echecs + b.echecs }), { sms: 0, segments: 0, remis: 0, echecs: 0 });
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
@@ -146,7 +146,8 @@ export function Activite({
               <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Banque</th>
               <th scope="col" className="px-3 py-2.5 text-right font-semibold">SMS envoyés</th>
               <th scope="col" className="px-3 py-2.5 text-right font-semibold">Segments facturés</th>
-              <th scope="col" className="py-2.5 pr-5 pl-3 text-right font-semibold">Échecs</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Remis</th>
+              <th scope="col" className="py-2.5 pr-5 pl-3 text-right font-semibold">Non remis</th>
             </tr>
           </thead>
           <tbody>
@@ -155,6 +156,7 @@ export function Activite({
                 <td className="py-3 pr-3 pl-5 font-semibold">{b.banque.nom}</td>
                 <td className="chiffres px-3 py-3 text-right">{nombre(b.sms)}</td>
                 <td className="chiffres px-3 py-3 text-right font-semibold">{nombre(b.segments)}</td>
+                <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.remis)}</td>
                 <td className="chiffres py-3 pr-5 pl-3 text-right text-encre-2">{nombre(b.echecs)}</td>
               </tr>
             ))}
@@ -162,11 +164,15 @@ export function Activite({
               <td className="py-3 pr-3 pl-5">Total</td>
               <td className="chiffres px-3 py-3 text-right">{nombre(totalSms.sms)}</td>
               <td className="chiffres px-3 py-3 text-right">{nombre(totalSms.segments)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(totalSms.remis)}</td>
               <td className="chiffres py-3 pr-5 pl-3 text-right">{nombre(totalSms.echecs)}</td>
             </tr>
           </tbody>
         </table>
-        <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">Un long SMS, ou un SMS avec certains accents (ê, â, ô…), est découpé en plusieurs segments, chacun facturé.</p>
+        <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
+          Un long SMS, ou un SMS avec certains accents (ê, â, ô…), est découpé en plusieurs segments, chacun facturé, même si l'opérateur ne le remet pas.
+          « Remis » : arrivés au téléphone d'après l'accusé de remise de la passerelle ; « Non remis » : refusés, abandonnés après 5 essais, ou non remis selon l'accusé.
+        </p>
       </Panneau>
 
       {canaux && <FacturationCanaux f={canaux} surExporter={surExporterCanaux} />}

@@ -162,20 +162,30 @@ describe('boîte d\'envoi', () => {
     expect(depot.html).toContain('ne vous demandera jamais votre mot de passe');
   });
 
-  it('en cas de panne : nouvelles tentatives, puis ECHEC après 5', async () => {
+  it('en cas de panne : nouvelles tentatives espacées de 1, 5, 30 puis 120 minutes, puis ECHEC après 5 (étape 22)', async () => {
     const t = await ticket('Crédit');
     const email = new EmailFactice();
     email.enPanne = true;
-    let horloge = new Date();
+    const debut = new Date();
+    let horloge = debut;
     const boite = new BoiteEnvoi(bd, email, new SmsJournal(), () => horloge);
     await boite.vider(false);
     const id = (await bd.enSysteme((tx) => tx.notification.findFirstOrThrow({ where: { reclamationId: t.id, canal: 'EMAIL' } }))).id;
-    for (let i = 0; i < 5; i++) {
-      horloge = new Date(horloge.getTime() + 10 * 60_000);
+    const lire = () => bd.enSysteme((tx) => tx.notification.findUniqueOrThrow({ where: { id } }));
+    const a = (minutes: number) => new Date(debut.getTime() + minutes * 60_000);
+    expect(await lire()).toMatchObject({ statut: 'EN_ATTENTE', tentatives: 1, prochaineTentativeLe: a(1) });
+    // Avant l'heure : rien ; à l'heure : une tentative de plus, et la suivante plus loin
+    for (const [avant, apres, tentatives, prochaine] of [[0.5, 1, 2, 6], [5.5, 6, 3, 36], [35, 36, 4, 156]] as const) {
+      horloge = a(avant);
       await boite.vider(true);
+      expect((await lire()).tentatives).toBe(tentatives - 1);
+      horloge = a(apres);
+      await boite.vider(true);
+      expect(await lire()).toMatchObject({ statut: 'EN_ATTENTE', tentatives, prochaineTentativeLe: a(prochaine) });
     }
-    const n = await bd.enSysteme((tx) => tx.notification.findUniqueOrThrow({ where: { id } }));
-    expect(n).toMatchObject({ statut: 'ECHEC', tentatives: 5, derniereErreur: 'SMTP indisponible' });
+    horloge = a(156);
+    await boite.vider(true);
+    expect(await lire()).toMatchObject({ statut: 'ECHEC', tentatives: 5, derniereErreur: 'SMTP indisponible', motifEchec: 'ERREUR_TECHNIQUE', prochaineTentativeLe: null });
   });
 
   it('segments SMS : GSM 7 bits (160/153), UCS-2 pour les caractères hors GSM (70/67)', () => {
@@ -196,14 +206,14 @@ describe('purge et planification', () => {
     expect(await bd.enSysteme((tx) => tx.codeOtp.count())).toBe(0);
   });
 
-  it('BullMQ : les quatre travaux sont planifiés une seule fois, et s\'exécutent', async () => {
+  it('BullMQ : les cinq travaux sont planifiés une seule fois, et s\'exécutent', async () => {
     const planif = new Planificateur(redisE2E(), { taches, boite: new BoiteEnvoi(bd, new EmailFactice(), new SmsJournal()), bd });
     const planif2 = new Planificateur(redisE2E(), { taches, boite: new BoiteEnvoi(bd, new EmailFactice(), new SmsJournal()), bd });
     await planif.demarrer();
     await planif2.demarrer();
     const file = new Queue(FILE, { connection: { url: redisE2E() } });
     const planifies = await file.getJobSchedulers();
-    expect(planifies.map((p) => p.key).sort()).toEqual(['envois', 'purge', 'relances', 'taches-sla']);
+    expect(planifies.map((p) => p.key).sort()).toEqual(['antivirus', 'envois', 'purge', 'relances', 'taches-sla']);
     // Un travail « envois » ou « taches-sla » s'exécute dans les secondes qui suivent
     for (let i = 0; i < 40 && (await file.getCompletedCount()) === 0; i++) await new Promise((ok) => setTimeout(ok, 250));
     expect(await file.getCompletedCount()).toBeGreaterThan(0);

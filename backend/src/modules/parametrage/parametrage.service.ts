@@ -241,7 +241,10 @@ export class ServiceParametrage {
 
   private async pointsVue(tx: ClientTransaction, tenantId: string, where: { id?: string } = {}): Promise<S<'PointDepot'>[]> {
     const banque = await tx.banque.findUniqueOrThrow({ where: { id: tenantId }, select: { slug: true, canaux: { select: { pointDepotId: true, numero: true } } } });
-    const points = await tx.pointDepot.findMany({ where, orderBy: [{ creeLe: 'asc' }], include: { agence: { select: { id: true, nom: true } } } });
+    // Étape 21 : les points « Guichet » et « Téléphone » des saisies par le personnel ne s'affichent ni ne s'impriment
+    const points = await tx.pointDepot.findMany({
+      where: { ...where, canal: { notIn: ['GUICHET', 'TELEPHONE'] } }, orderBy: [{ creeLe: 'asc' }], include: { agence: { select: { id: true, nom: true } } },
+    });
     return points.map((p) => ({
       id: p.id, code: p.code, canal: p.canal, libelle: p.libelle, agence: p.agence ? { id: p.agence.id, nom: p.agence.nom } : null,
       actif: p.actif,
@@ -274,7 +277,7 @@ export class ServiceParametrage {
   modifierPoint(appel: Appel, id: string, m: Partial<{ libelle: string; agenceId: string | null; actif: boolean }>) {
     return this.dans(appel, async (tx, moi) => {
       const avant = await tx.pointDepot.findUnique({ where: { id } });
-      if (!avant) throw introuvable('Point de dépôt introuvable');
+      if (!avant || avant.canal === 'GUICHET' || avant.canal === 'TELEPHONE') throw introuvable('Point de dépôt introuvable');
       const agenceId = m.agenceId !== undefined ? m.agenceId : avant.agenceId;
       // Étape 20 : le numéro WhatsApp ou SMS de la banque n'appartient à aucune agence, et Makor l'ouvre ou le ferme
       if (avant.canal === 'WHATSAPP' || avant.canal === 'SMS') {

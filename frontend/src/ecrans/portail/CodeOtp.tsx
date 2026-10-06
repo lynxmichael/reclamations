@@ -2,7 +2,7 @@
  * Saisie du code à usage unique (OtpEnvoye, puis verifierCodeOtp → SessionClient de 30 min).
  * Règles C7 : 6 chiffres, valable 10 min, 5 essais, 3 envois par heure.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Bouton, cx } from '../../ui/composants';
@@ -17,6 +17,7 @@ export function CodeOtp({
   surValider,
   surRenvoyer,
   surRetour,
+  aide,
 }: {
   banque: S<'BanquePublique'>;
   numero: string;
@@ -27,6 +28,8 @@ export function CodeOtp({
   surValider?: (code: string) => void;
   surRenvoyer?: () => void;
   surRetour?: () => void;
+  /** Étape 21 (retrouver ses réclamations) : ce qu'il faut faire si rien n'arrive */
+  aide?: ReactNode;
 }) {
   const [code, setCode] = useState(saisi);
   const cases = useRef<(HTMLInputElement | null)[]>([]);
@@ -98,7 +101,7 @@ export function CodeOtp({
         </form>
 
         <div className="mt-8 border-t border-trait pt-5 text-[15px] leading-relaxed text-encre-2">
-          <p>Pas reçu ? Vérifiez le numéro indiqué ci-dessus, puis demandez un nouveau code.</p>
+          <p>{aide ?? 'Pas reçu ? Vérifiez le numéro indiqué ci-dessus, puis demandez un nouveau code.'}</p>
           <button type="button" onClick={surRenvoyer} disabled={!surRenvoyer} className={cx('mt-2 font-semibold', surRenvoyer ? 'text-marque-texte hover:underline' : 'text-encre-3')}>
             {surRenvoyer ? 'Renvoyer un code' : 'Renvoyer un code dans 0:48'}
           </button>

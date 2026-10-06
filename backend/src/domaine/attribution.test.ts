@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { choisirAgent, ensemblesCandidats, estAbsent, plusDisponible, type AgentDisponible, type Groupe } from './attribution.js';
+import { choisirAgent, ensemblesCandidats, estAbsent, plusDisponible, repartir, type AgentDisponible, type Groupe } from './attribution.js';
 
 const agent = (id: string, aTraiter: number, derniere: string | null = null, nom = id): AgentDisponible =>
   ({ id, nom, aTraiter, derniereAttributionLe: derniere ? new Date(derniere) : null });
@@ -39,5 +39,27 @@ describe('attribution automatique : règles', () => {
   it('absences : jours inclus', () => {
     const absences = [{ du: '2026-10-05', au: '2026-10-09' }];
     expect(['2026-10-04', '2026-10-05', '2026-10-09', '2026-10-10'].map((j) => estAbsent(absences, j))).toEqual([false, true, true, false]);
+  });
+});
+
+describe('réassignation en lot (étape 21)', () => {
+  const ag = (id: string, aTraiter: number): AgentDisponible => ({ id, nom: id, aTraiter, derniereAttributionLe: null });
+  const disponibles = new Map([['aya', ag('aya', 2)], ['ibrahim', ag('ibrahim', 0)], ['mamadou', ag('mamadou', 0)]]);
+  const lot = (n: number, agentId: string | null = 'mamadou', categorieId = 'carte') =>
+    Array.from({ length: n }, (_, i) => ({ id: `r${i}`, categorieId, agenceId: null, agentId }));
+
+  it('sans groupes : toute la banque, la charge augmente à chaque choix, jamais l\'agent actuel', () => {
+    const r = repartir(lot(4), { groupes: null, groupeDeCategorie: new Map(), groupeDAgence: new Map(), disponibles });
+    expect([...r.values()].map((a) => a?.id)).toEqual(['ibrahim', 'ibrahim', 'aya', 'ibrahim']);
+  });
+  it('avec l\'attribution : le groupe de la catégorie d\'abord, sinon toute la banque', () => {
+    const monetique: Groupe = { id: 'g', nom: 'Monétique', membres: ['aya', 'mamadou'] };
+    const ctx = { groupes: new Map([['g', monetique]]), groupeDeCategorie: new Map([['carte', 'g']]), groupeDAgence: new Map(), disponibles };
+    expect([...repartir(lot(2), ctx).values()].map((a) => a?.id)).toEqual(['aya', 'aya']);
+    expect([...repartir(lot(1, 'mamadou', 'credit'), ctx).values()].map((a) => a?.id)).toEqual(['ibrahim']);
+  });
+  it('personne de disponible : null, la réclamation est laissée', () => {
+    const seul = new Map([['mamadou', ag('mamadou', 0)]]);
+    expect([...repartir(lot(1), { groupes: null, groupeDeCategorie: new Map(), groupeDAgence: new Map(), disponibles: seul }).values()]).toEqual([null]);
   });
 });

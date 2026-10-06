@@ -1,17 +1,21 @@
 /**
- * Fichiers reçus (décision C8) : 5 au plus par dépôt ou message, 5 Mo chacun, JPEG, PNG, WebP ou
- * PDF ; logo : PNG, SVG ou WebP, 1 Mo. Le type est reconnu au contenu (signature du fichier),
- * jamais d'après le nom ou le type annoncé par le navigateur.
+ * Fichiers reçus (décision C8) : 5 au plus par dépôt ou message, JPEG, PNG, WebP ou PDF ; logo : PNG,
+ * SVG ou WebP, 1 Mo. Le type est reconnu au contenu (signature du fichier), jamais d'après le nom ou
+ * le type annoncé par le navigateur.
+ *
+ * Étape 22 : 10 Mo par fichier, et les documents Word (.docx) sans macro (word.ts) ; chaque fichier
+ * passe ensuite par l'antivirus (antivirus.ts, modules/commun.ts).
  */
 import type { Request, Response } from 'express';
 import multer from 'multer';
 import { Probleme } from '../contrat/probleme.js';
 import type { FichierRecu } from '../contrat/appel.js';
+import { estOle, estZip, TYPE_DOCX, verifierDocx } from './word.js';
 
 export const MAX_FICHIERS = 5;
-export const MAX_OCTETS = 5 * 1024 * 1024;
+export const MAX_OCTETS = 10 * 1024 * 1024;
 export const MAX_OCTETS_LOGO = 1024 * 1024;
-export const TYPES_PIECES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+export const TYPES_PIECES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', TYPE_DOCX] as const;
 export const TYPES_LOGO = ['image/png', 'image/svg+xml', 'image/webp'] as const;
 
 export type TypeFichier = (typeof TYPES_PIECES)[number] | 'image/svg+xml';
@@ -23,6 +27,7 @@ export function typeReel(contenu: Buffer): TypeFichier | null {
   if (contenu.length >= 8 && debut(8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (contenu.length >= 12 && contenu.toString('ascii', 0, 4) === 'RIFF' && contenu.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
   if (contenu.length >= 5 && contenu.toString('ascii', 0, 5) === '%PDF-') return 'application/pdf';
+  if (estZip(contenu)) return verifierDocx(contenu).ok ? TYPE_DOCX : null;
   const texte = contenu.subarray(0, 1024).toString('utf8').replace(/^\uFEFF/, '').trimStart();
   if (/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE svg[^>]*>\s*)?<svg[\s>]/i.test(texte)) return 'image/svg+xml';
   return null;
@@ -48,7 +53,15 @@ export function verifierFichiers(fichiers: readonly FichierRecu[], types: readon
   return fichiers.map((f) => {
     const type = typeReel(f.contenu);
     if (!type || !types.includes(type)) {
-      throw new Probleme(415, 'TYPE_DE_FICHIER_NON_SUPPORTE', `« ${f.nomOriginal} » : ${types === TYPES_LOGO ? 'PNG, SVG ou WebP' : 'JPEG, PNG, WebP ou PDF'} attendu`);
+      // Étape 22 : un document Word refusé dit pourquoi, et comment l'envoyer
+      if (types.includes(TYPE_DOCX) && estOle(f.contenu)) {
+        throw new Probleme(415, 'TYPE_DE_FICHIER_NON_SUPPORTE', `« ${f.nomOriginal} » : ancien format Word (.doc) ou fichier Office non accepté. Enregistrez-le en .docx ou en PDF.`);
+      }
+      const word = types.includes(TYPE_DOCX) && estZip(f.contenu) ? verifierDocx(f.contenu) : null;
+      if (word && !word.ok) {
+        throw new Probleme(415, 'TYPE_DE_FICHIER_NON_SUPPORTE', `« ${f.nomOriginal} » refusé : ${word.raison}. Enregistrez-le en .docx sans macro, ou en PDF.`);
+      }
+      throw new Probleme(415, 'TYPE_DE_FICHIER_NON_SUPPORTE', `« ${f.nomOriginal} » : ${types === TYPES_LOGO ? 'PNG, SVG ou WebP' : 'JPEG, PNG, WebP, PDF ou Word (.docx)'} attendu`);
     }
     return { ...f, typeMime: type };
   });

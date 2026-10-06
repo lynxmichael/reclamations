@@ -42,6 +42,9 @@ import { BaseDonnees } from '../../infrastructure/base-de-donnees/base-de-donnee
 import { enSerie } from '../../infrastructure/base-de-donnees/index.js';
 import { lireSmsEntrant } from '../../infrastructure/canaux/sms-entrant.js';
 import { lireWebhookWhatsapp, signatureValide, type AdaptateurWhatsapp, type StatutWhatsapp } from '../../infrastructure/canaux/whatsapp.js';
+import { lireRemiseSms } from '../../infrastructure/canaux/remise-sms.js';
+import { MOTIF_DE_REMISE } from '../../domaine/envois.js';
+import { signalerNonRemis } from '../../application/reclamations/envois.js';
 import type { FichierRecu } from '../../infrastructure/contrat/appel.js';
 import { interdit, Probleme } from '../../infrastructure/contrat/probleme.js';
 import { apresEchecWhatsapp } from '../../infrastructure/envois/boite-envoi.js';
@@ -49,6 +52,8 @@ import { MAX_FICHIERS, MAX_OCTETS, nomPropre, TYPES_PIECES, typeReel } from '../
 import { ServiceRedis } from '../../infrastructure/redis/redis.service.js';
 import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
 import { dechiffrer } from '../../infrastructure/securite/totp.js';
+import { ANTIVIRUS, ErreurAntivirus, type Antivirus } from '../../infrastructure/fichiers/antivirus.js';
+import { TYPE_DOCX } from '../../infrastructure/fichiers/word.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { baseDeReponses } from '../assistant/assistant.service.js';
@@ -87,7 +92,7 @@ interface Route {
 const VERROU_MS = 60_000;
 const ATTENTE_VERROU_MS = 15_000;
 const STATUTS_CLIENT = ['OUVERTE', 'EN_COURS', 'EN_ATTENTE_CLIENT', 'RESOLUE'] as const;
-const EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+const EXTENSIONS: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf', [TYPE_DOCX]: 'docx' };
 
 @Injectable()
 export class ServiceCanaux {
@@ -100,6 +105,7 @@ export class ServiceCanaux {
     @Inject(Limiteur) private readonly limiteur: Limiteur,
     @Inject(ServiceRedis) private readonly redis: ServiceRedis,
     @Inject(STOCKAGE) private readonly stockage: Stockage,
+    @Inject(ANTIVIRUS) private readonly antivirus: Antivirus,
     @Inject(ADAPTATEUR_WHATSAPP) private readonly whatsapp: AdaptateurWhatsapp,
     @Inject(CONFIGURATION) private readonly config: Configuration,
     @Inject(HORLOGE) private readonly horloge: Horloge,
@@ -143,6 +149,39 @@ export class ServiceCanaux {
       canal: 'SMS', idExterne: sms.idExterne, identifiant: sms.vers, de: sms.de, nomProfil: null, recuLe: sms.recuLe,
       nature: sms.texte.trim() ? 'lisible' : 'ignore', texte: sms.texte, medias: [],
     });
+    return { recu: true };
+  }
+
+  /**
+   * Étape 22 : accusé de remise d'un SMS envoyé. REMIS : le SMS est remis ; NON_REMIS, EXPIRE, REJETE :
+   * il ne l'est pas, avec son motif, et l'agent est prévenu. Seul un SMS en attente ou envoyé change :
+   * un accusé tardif ou en double ne revient pas sur un état final.
+   */
+  async webhookRemiseSms(corpsBrut: Buffer | undefined, signature: string | undefined, corps: Record<string, unknown>): Promise<{ recu: true }> {
+    if (!signatureValide(corpsBrut, signature, this.config.smsEntrantSecret)) {
+      throw new Probleme(401, 'SIGNATURE_INVALIDE', 'Signature absente ou fausse');
+    }
+    const maintenant = this.horloge();
+    const r = lireRemiseSms(corps as unknown as Parameters<typeof lireRemiseSms>[0], maintenant);
+    const statut = r.statut;
+    if (statut === 'EN_COURS' || (!r.reference && !r.id)) return { recu: true };
+    const nonRemis = await this.bd.enSysteme(async (tx) => {
+      const n = await tx.notification.findFirst({
+        where: { canal: 'SMS', OR: [...(r.reference ? [{ id: r.reference }] : []), ...(r.id ? [{ idFournisseur: r.id }] : [])] },
+      });
+      if (!n || (n.statut !== 'EN_ATTENTE' && n.statut !== 'ENVOYEE')) return null;
+      if (statut === 'REMIS') {
+        await tx.notification.update({ where: { id: n.id }, data: { statut: 'DELIVREE', remiseLe: r.recuLe } });
+        return null;
+      }
+      const motif = MOTIF_DE_REMISE[statut];
+      await tx.notification.update({
+        where: { id: n.id },
+        data: { statut: 'ECHEC', motifEchec: motif, prochaineTentativeLe: null, derniereErreur: `Accusé de remise : ${r.statut}${r.code ? ` (${r.code})` : ''}` },
+      });
+      return { ...n, motifEchec: motif };
+    });
+    if (nonRemis) await signalerNonRemis(this.bd, nonRemis, maintenant);
     return { recu: true };
   }
 
@@ -344,8 +383,8 @@ export class ServiceCanaux {
 
   /**
    * Pièces jointes d'un message WhatsApp : téléchargées chez Meta avec le jeton de la banque, puis
-   * contrôlées comme au dépôt (type reconnu au contenu, 5 Mo, 5 au plus). Un fichier refusé n'empêche
-   * pas le reste du message.
+   * contrôlées comme au dépôt (type reconnu au contenu, 10 Mo, 5 au plus, antivirus : étape 22). Un
+   * fichier refusé n'empêche pas le reste du message.
    */
   private async medias(route: Route, canal: CanalMessagerie, medias: readonly MediaRecu[], maintenant: Date) {
     const rien = { fichiers: [] as FichierStocke[], refuses: 0, annuler: async () => undefined };
@@ -362,6 +401,15 @@ export class ServiceCanaux {
           refuses++;
           continue;
         }
+        // Étape 22 : un fichier infecté est écarté ; antivirus injoignable, il sera analysé par le worker
+        const analyse = await this.antivirus.analyser(t.contenu).catch((x: unknown) => {
+          if (x instanceof ErreurAntivirus) return null;
+          throw x;
+        });
+        if (analyse && !analyse.sain) {
+          refuses++;
+          continue;
+        }
         recus.push({ champ: 'fichiers', nomOriginal: nomPropre(media.nom ?? `whatsapp-${i + 1}.${EXTENSIONS[type]}`), taille: t.contenu.length, contenu: t.contenu });
       } catch (e) {
         refuses++;
@@ -369,7 +417,7 @@ export class ServiceCanaux {
       }
     }
     if (!recus.length) return { ...rien, refuses };
-    const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, route.tenantId, recus, maintenant);
+    const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, this.antivirus, route.tenantId, recus, maintenant);
     return { fichiers, refuses, annuler };
   }
 
@@ -383,9 +431,11 @@ export class ServiceCanaux {
       if (s.facturable !== null) data.facturable = s.facturable;
       if (s.categorie) data.categorieTarif = s.categorie;
       if ((s.statut === 'delivered' || s.statut === 'read') && n.statut === 'ENVOYEE') data.statut = 'DELIVREE';
+      // Étape 22 : l'heure de la remise, montrée sur la fiche
+      if ((s.statut === 'delivered' || s.statut === 'read') && !n.remiseLe) data.remiseLe = s.date;
       if (s.statut === 'read' && !n.lueLe) data.lueLe = s.date;
       const echec = s.statut === 'failed' && n.statut !== 'ECHEC';
-      if (echec) Object.assign(data, { statut: 'ECHEC', derniereErreur: (s.erreur ?? 'Message non remis par WhatsApp').slice(0, 500) });
+      if (echec) Object.assign(data, { statut: 'ECHEC', motifEchec: 'WHATSAPP_INDISPONIBLE', derniereErreur: (s.erreur ?? 'Message non remis par WhatsApp').slice(0, 500) });
       if (Object.keys(data).length) await tx.notification.update({ where: { id: n.id }, data });
       // Le client a lu la réponse de l'agent sur WhatsApp : « Lu » dans la boîte de réception
       if (s.statut === 'read' && n.modele === 'conversation.reponse' && n.tenantId && n.reclamationId) {

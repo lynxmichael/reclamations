@@ -215,6 +215,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/banques/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Nom et couleurs de la banque du portail (étape 21)
+         * @description Pour l'accueil du portail et « Retrouver mes réclamations », sans QR code ni lien de suivi.
+         */
+        get: operations["lireBanquePortail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/banques/{slug}/acces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retrouver ses réclamations — recevoir un code (étape 21)
+         * @description Le client a perdu son lien de suivi : il donne son téléphone ou son e-mail. S'il a des réclamations
+         *     dans cette banque, un code à 6 chiffres part à ce numéro ou à cette adresse (10 minutes). La réponse
+         *     est la même dans tous les cas : elle ne dit pas si le numéro est connu. Exige un défi anti-robot ;
+         *     3 demandes par heure et par numéro ou adresse.
+         */
+        post: operations["demanderCodeAcces"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/banques/{slug}/acces/verification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retrouver ses réclamations — vérifier le code (étape 21)
+         * @description Bon code : la session de l'espace client (30 minutes), avec toutes ses réclamations dans cette
+         *     banque. Un numéro inconnu se comporte comme un code faux. 5 essais par code, et par numéro ou
+         *     adresse en 10 minutes.
+         */
+        post: operations["verifierCodeAcces"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/logos/{fichier}": {
         parameters: {
             query?: never;
@@ -383,7 +448,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Télécharger une pièce jointe visible du client */
+        /**
+         * Télécharger une pièce jointe visible du client
+         * @description Étape 22 : seulement si l'antivirus l'a déclarée saine ; sinon 409 `FICHIER_EN_ANALYSE` ou `FICHIER_SUPPRIME`.
+         */
         get: operations["telechargerPieceJointeClient"];
         put?: never;
         post?: never;
@@ -643,7 +711,45 @@ export interface paths {
          */
         get: operations["listerReclamations"];
         put?: never;
-        post?: never;
+        /**
+         * Saisir la réclamation d'un client, au guichet ou au téléphone (étape 21)
+         * @description Pour le client sans smartphone, ou qui appelle : un agent ou un superviseur saisit la réclamation
+         *     à sa place. `GUICHET` exige l'agence ; `TELEPHONE` l'accepte en option (l'agence dont parle le
+         *     client). Mêmes règles qu'au portail : catégorie active, description, nom, un téléphone ou un
+         *     e-mail au moins, 5 pièces jointes. `consentementInforme` : le client a été informé de la politique
+         *     de données de la banque ; la version en vigueur est enregistrée, et la chronologie et le journal
+         *     d'audit disent qui l'a saisie. L'accusé de dépôt part au client comme au portail (SMS, e-mail),
+         *     avec le lien de suivi, que la réponse donne aussi pour le récépissé imprimé. Un agent se l'assigne
+         *     par défaut (`meLAssigner`) ; sinon, l'attribution habituelle (étape 16). Idempotent avec
+         *     l'en-tête `Idempotency-Key`. 60 saisies par heure et par personne.
+         */
+        post: operations["saisirReclamation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/reclamations/assignation-en-lot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assigner ou répartir plusieurs réclamations (étape 21)
+         * @description Par exemple les dossiers d'un agent absent ou d'un compte désactivé (file `a-reassigner`).
+         *     `agentId` : toutes à cet agent actif. `repartir` : chacune à l'agent actif et présent le moins
+         *     chargé — des groupes de sa catégorie et de son agence si l'attribution automatique est ouverte et
+         *     qu'ils en ont un, sinon de toute la banque. Chacune comme `assignerReclamation` : machine d'états,
+         *     chronologie, journal d'audit, notification au nouvel agent. Une réclamation impossible à assigner
+         *     (clôturée, introuvable, déjà à cet agent, aucun agent disponible) est laissée telle quelle et
+         *     listée avec sa raison.
+         */
+        post: operations["assignerEnLot"];
         delete?: never;
         options?: never;
         head?: never;
@@ -869,6 +975,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/banque/reclamations/{id}/rattachement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rattacher un doublon à la réclamation principale du même client (étape 21)
+         * @description La réclamation `id` est un doublon de `principaleId` : même client, toutes deux non clôturées.
+         *     Elle est clôturée (motif « Doublon », précision « Rattachée à … »), son SLA s'arrête, sans
+         *     enquête de satisfaction ; elle garde ses messages et pièces jointes, consultables depuis la
+         *     principale. Le client reçoit un seul message, avec le lien de suivi de la principale. Réservé au
+         *     superviseur, ou à l'agent assigné aux deux. Une autre cliente, la même réclamation, une principale
+         *     clôturée ou elle-même rattachée : 422 `RATTACHEMENT_IMPOSSIBLE`.
+         */
+        post: operations["rattacherReclamation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/reclamations/{id}/lien-suivi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renvoyer au client son lien de suivi (étape 21)
+         * @description Le client a perdu le SMS ou l'e-mail de l'accusé. Le lien part aux seules coordonnées du dossier :
+         *     par SMS (ou sur WhatsApp, là où il écrit) et par e-mail. Réservé à l'agent assigné et au
+         *     superviseur, à tout statut ; 3 fois par heure et par réclamation ; inscrit au journal d'audit.
+         */
+        post: operations["renvoyerLienSuivi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/reclamations/{id}/envois/{envoiId}/renvoi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renvoyer au client un message non remis (étape 22)
+         * @description Le même message, à la même coordonnée (celle du dossier). Seulement s'il est non remis et que son
+         *     texte est gardé (accusé, réponse, résolution, clôture, lien de suivi…), pas un code ni un message
+         *     de conversation : sinon 422 `MESSAGE_NON_RENVOYABLE`. Réservé à l'agent assigné et au superviseur ;
+         *     3 renvois par heure et par réclamation ; inscrit au journal d'audit.
+         */
+        post: operations["renvoyerMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/banque/reclamations/{id}/pieces-jointes/{pieceId}": {
         parameters: {
             query?: never;
@@ -876,7 +1052,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Télécharger une pièce jointe */
+        /**
+         * Télécharger une pièce jointe
+         * @description Toujours en pièce jointe (`Content-Disposition: attachment`), jamais affichée par le navigateur.
+         *     Étape 22 : seulement si l'antivirus l'a déclarée saine ; sinon 409 `FICHIER_EN_ANALYSE` ou `FICHIER_SUPPRIME`.
+         */
         get: operations["telechargerPieceJointe"];
         put?: never;
         post?: never;
@@ -1729,8 +1909,10 @@ export interface paths {
         };
         /**
          * SMS et segments envoyés par banque sur un mois (refacturation)
-         * @description Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois ;
-         *     `echecs` : SMS créés pendant le mois et abandonnés après 5 tentatives. Toutes les banques
+         * @description Mois civil en temps universel. `sms` et `segments` : SMS remis à la passerelle pendant le mois
+         *     (facturés, même si l'opérateur ne les remet pas) ; `remis` (étape 22) : ceux que l'accusé de remise
+         *     dit arrivés au téléphone ; `echecs` : SMS créés pendant le mois et non remis (refusés par la
+         *     passerelle, abandonnés après 5 tentatives, ou non remis selon l'accusé). Toutes les banques
          *     existant à la fin du mois figurent, même sans SMS.
          */
         get: operations["lireFacturationSms"];
@@ -1838,6 +2020,31 @@ export interface paths {
          *     `id` n'est traité qu'une fois. Un numéro raccordé à aucune banque : ignoré, 200.
          */
         post: operations["recevoirSmsEntrant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/sms/remise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accusé de remise d'un SMS envoyé, transmis par la passerelle de Makor (étape 22)
+         * @description Interface proposée à la passerelle (à confirmer avec son équipe), signée comme les SMS reçus
+         *     (`X-Signature`, HMAC-SHA256 du corps avec SMS_ENTRANT_SECRET ; absente ou fausse : 401). Le SMS est
+         *     retrouvé par `reference` (l'identifiant envoyé avec le SMS) ou par `id` (celui rendu par la
+         *     passerelle). REMIS : remis au téléphone ; NON_REMIS, EXPIRE (téléphone éteint trop longtemps) et
+         *     REJETE (refusé par l'opérateur) : non remis, l'agent est prévenu. EN_COURS est ignoré. Un SMS
+         *     inconnu, ou déjà remis ou non remis, est ignoré : 200.
+         */
+        post: operations["recevoirRemiseSms"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1963,10 +2170,10 @@ export interface components {
         /** @enum {string} */
         Priorite: "NORMALE" | "URGENTE";
         /**
-         * @description QR code en agence, lien web, ou numéro WhatsApp et SMS de la banque (étape 20)
+         * @description QR code en agence, lien web, numéro WhatsApp et SMS de la banque (étape 20), saisie par le personnel au guichet ou au téléphone (étape 21)
          * @enum {string}
          */
-        CanalDepot: "QR_CODE" | "LIEN_WEB" | "WHATSAPP" | "SMS";
+        CanalDepot: "QR_CODE" | "LIEN_WEB" | "WHATSAPP" | "SMS" | "GUICHET" | "TELEPHONE";
         /** @enum {string} */
         RoleUtilisateur: "SUPER_ADMIN" | "ADMIN_ENTREPRISE" | "SUPERVISEUR" | "AGENT";
         /**
@@ -1977,7 +2184,7 @@ export interface components {
         /** @enum {string} */
         StatutUtilisateur: "INVITE" | "ACTIF" | "DESACTIVE";
         /** @enum {string} */
-        TypeEvenement: "CREATION" | "PRISE_EN_CHARGE" | "QUESTION_AU_CLIENT" | "REPONSE_DU_CLIENT" | "RESOLUTION" | "CONFIRMATION" | "CONTESTATION" | "CLOTURE_AUTOMATIQUE" | "CLOTURE_FORCEE" | "ASSIGNATION" | "CHANGEMENT_PRIORITE" | "ESCALADE" | "ESCALADE_ADMIN" | "ALERTE_SLA_PREVENTIVE" | "DEPASSEMENT_SLA" | "MESSAGE" | "PIECE_JOINTE";
+        TypeEvenement: "CREATION" | "PRISE_EN_CHARGE" | "QUESTION_AU_CLIENT" | "REPONSE_DU_CLIENT" | "RESOLUTION" | "CONFIRMATION" | "CONTESTATION" | "CLOTURE_AUTOMATIQUE" | "CLOTURE_FORCEE" | "ASSIGNATION" | "CHANGEMENT_PRIORITE" | "ESCALADE" | "ESCALADE_ADMIN" | "ALERTE_SLA_PREVENTIVE" | "DEPASSEMENT_SLA" | "MESSAGE" | "PIECE_JOINTE" | "RATTACHEMENT";
         /** @enum {string} */
         ModeCloture: "CONFIRMATION_CLIENT" | "AUTOMATIQUE" | "FORCEE";
         /** @enum {string} */
@@ -1992,12 +2199,12 @@ export interface components {
          * @description Actions de la machine d'états (étape 4)
          * @enum {string}
          */
-        ActionStatut: "PRENDRE_EN_CHARGE" | "QUESTIONNER_CLIENT" | "REPRENDRE_SUR_REPONSE" | "RESOUDRE" | "CONFIRMER" | "CONTESTER" | "CLOTURER_AUTOMATIQUEMENT" | "CLOTURER_DE_FORCE";
+        ActionStatut: "PRENDRE_EN_CHARGE" | "QUESTIONNER_CLIENT" | "REPRENDRE_SUR_REPONSE" | "RESOUDRE" | "CONFIRMER" | "CONTESTER" | "CLOTURER_AUTOMATIQUEMENT" | "CLOTURER_DE_FORCE" | "RATTACHER";
         /**
          * @description Opérations sans changement de statut (étape 4)
          * @enum {string}
          */
-        OperationTicket: "CONSULTER" | "ASSIGNER" | "CHANGER_PRIORITE" | "ESCALADER" | "NOTE_INTERNE" | "REPONDRE_AU_CLIENT" | "MESSAGE_DU_CLIENT";
+        OperationTicket: "CONSULTER" | "ASSIGNER" | "CHANGER_PRIORITE" | "ESCALADER" | "NOTE_INTERNE" | "REPONDRE_AU_CLIENT" | "MESSAGE_DU_CLIENT" | "RENVOYER_LIEN";
         /**
          * @description État du chrono SLA, calculé par l'API à la lecture (étape 6) :
          *     DANS_LES_DELAIS, ALERTE (seuil d'alerte de la banque franchi), DEPASSE (échéance passée),
@@ -2009,7 +2216,7 @@ export interface components {
          * @description Code stable d'une erreur, à utiliser par les interfaces (le titre peut changer)
          * @enum {string}
          */
-        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "CHAT_WEB_REQUIS" | "RECLAMATION_CLOTUREE" | "DOUBLE_AUTHENTIFICATION_OBLIGATOIRE" | "DOUBLE_AUTHENTIFICATION_A_ACTIVER" | "DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE" | "DOUBLE_AUTHENTIFICATION_INACTIVE" | "DOUBLE_AUTHENTIFICATION_NON_PREPAREE" | "SIGNATURE_INVALIDE" | "NUMERO_DEJA_UTILISE" | "CANAL_NON_RACCORDE" | "ERREUR_INTERNE";
+        CodeErreur: "VALIDATION" | "NON_AUTHENTIFIE" | "JETON_INVALIDE" | "INTERDIT" | "INTROUVABLE" | "TROP_DE_REQUETES" | "CONFLIT_IDEMPOTENCE" | "IDENTIFIANTS_INVALIDES" | "COMPTE_VERROUILLE" | "CODE_TOTP_INVALIDE" | "MOT_DE_PASSE_TROP_FAIBLE" | "CODE_OTP_INVALIDE" | "CODE_OTP_EXPIRE" | "TROP_DE_TENTATIVES" | "TRANSITION_INTERDITE" | "ACTEUR_NON_AUTORISE" | "AUCUN_AGENT_ASSIGNE" | "DELAI_DE_CONTESTATION_DEPASSE" | "CLOTURE_AUTOMATIQUE_PREMATUREE" | "BANQUE_SUSPENDUE" | "POINT_DE_DEPOT_INACTIF" | "CATEGORIE_INVALIDE" | "CONTACT_REQUIS" | "CONTACT_INVALIDE" | "DESCRIPTION_REQUISE" | "CONSENTEMENT_REQUIS" | "ANTI_ROBOT_REFUSE" | "MESSAGE_VIDE" | "PRECISION_REQUISE" | "AGENT_INVALIDE" | "FICHIER_TROP_VOLUMINEUX" | "TYPE_DE_FICHIER_NON_SUPPORTE" | "TROP_DE_FICHIERS" | "PLAFOND_AGENTS_ATTEINT" | "EMAIL_DEJA_UTILISE" | "NOM_DEJA_UTILISE" | "CODE_DEJA_UTILISE" | "PREFIXE_DEJA_UTILISE" | "SLUG_DEJA_UTILISE" | "QR_CODE_SANS_AGENCE" | "SUPERVISEUR_INVALIDE" | "INVITATION_DEJA_ACCEPTEE" | "JOUR_FERIE_EXISTANT" | "EXPORT_TROP_VOLUMINEUX" | "AVIS_DEJA_DONNE" | "ENQUETE_TERMINEE" | "FONCTION_NON_OUVERTE" | "GROUPE_INVALIDE" | "ABSENCE_INVALIDE" | "CHAT_WEB_REQUIS" | "RECLAMATION_CLOTUREE" | "DOUBLE_AUTHENTIFICATION_OBLIGATOIRE" | "DOUBLE_AUTHENTIFICATION_A_ACTIVER" | "DOUBLE_AUTHENTIFICATION_DEJA_ACTIVE" | "DOUBLE_AUTHENTIFICATION_INACTIVE" | "DOUBLE_AUTHENTIFICATION_NON_PREPAREE" | "SIGNATURE_INVALIDE" | "NUMERO_DEJA_UTILISE" | "CANAL_NON_RACCORDE" | "RATTACHEMENT_IMPOSSIBLE" | "FICHIER_INFECTE" | "FICHIER_EN_ANALYSE" | "FICHIER_SUPPRIME" | "MESSAGE_NON_RENVOYABLE" | "ERREUR_INTERNE";
         /** @description Erreur au format RFC 9457 */
         Probleme: {
             /**
@@ -2070,6 +2277,11 @@ export interface components {
              */
             disque: "ok" | "presque_plein" | "inconnu";
             /**
+             * @description Étape 22 : ClamAV répond (ok) ; desactive en développement seulement (ANTIVIRUS=aucun)
+             * @enum {string}
+             */
+            antivirus: "ok" | "indisponible" | "desactive";
+            /**
              * @description étiquette de l'image déployée (VERSION de .env.production)
              * @example 1.0.0
              */
@@ -2093,8 +2305,19 @@ export interface components {
             typeMime: string;
             tailleOctets: number;
             creeLe: components["schemas"]["Horodatage"];
+            antivirus: components["schemas"]["EtatAntivirus"];
         };
-        /** @description 5 fichiers au plus, 5 Mo chacun, JPEG, PNG, WebP ou PDF */
+        /**
+         * @description Étape 22 : analyse antivirus (ClamAV). SAIN : téléchargeable. EN_ATTENTE : l'antivirus ne répondait
+         *     pas au dépôt, le fichier sera analysé sous peu (téléchargement refusé, 409 FICHIER_EN_ANALYSE).
+         *     INFECTE : un virus a été trouvé après coup, le fichier est effacé (409 FICHIER_SUPPRIME).
+         * @enum {string}
+         */
+        EtatAntivirus: "EN_ATTENTE" | "SAIN" | "INFECTE";
+        /**
+         * @description 5 fichiers au plus, 10 Mo chacun : JPEG, PNG, WebP, PDF ou Word (.docx sans macro), reconnus au
+         *     contenu. Chaque fichier est analysé par l'antivirus : infecté, il est refusé (422 FICHIER_INFECTE).
+         */
         Fichiers: string[];
         BanquePublique: {
             /** @description Numéro WhatsApp de la banque, quand le canal est ouvert (étape 20) : le portail propose d'y écrire */
@@ -2133,14 +2356,15 @@ export interface components {
             fichiers: {
                 /** @constant */
                 maxFichiers: 5;
-                /** @example 5242880 */
+                /** @example 10485760 */
                 maxOctets: number;
                 /**
                  * @example [
                  *       "image/jpeg",
                  *       "image/png",
                  *       "image/webp",
-                 *       "application/pdf"
+                 *       "application/pdf",
+                 *       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                  *     ]
                  */
                 types: string[];
@@ -2225,6 +2449,8 @@ export interface components {
         };
         /** @description Chronologie seule — ni description, ni messages, ni coordonnées */
         SuiviPublic: {
+            /** @description Étape 21 : doublon joint à la réclamation principale du même client, à suivre à cette adresse du portail */
+            rattacheeA: components["schemas"]["RattacheeA"] | null;
             /** @description Enquête de satisfaction de la réclamation clôturée (étape 15) ; vide s'il n'y en a pas */
             avis: components["schemas"]["AvisResume"] | null;
             /** @example ALP-2026-000042 */
@@ -2320,6 +2546,8 @@ export interface components {
             piecesJointes: components["schemas"]["PieceJointe"][];
         };
         ReclamationClient: {
+            /** @description Étape 21 : doublon joint à la réclamation principale */
+            rattacheeA: components["schemas"]["RattacheeA"] | null;
             /** @description Chat web (étape 17) ; vide si Makor ne l'a pas ouvert à la banque (fil de messages simple) */
             chat: components["schemas"]["EtatChat"] | null;
             /** @description Enquête de satisfaction (étape 15) et adresse de sa page ; vide s'il n'y en a pas */
@@ -2467,6 +2695,10 @@ export interface components {
             utilisateur: components["schemas"]["Moi"];
         };
         ReclamationResume: {
+            /** @description Étape 22 : un message au client n'a pas été remis, et rien ne l'a remplacé depuis */
+            envoiNonRemis: boolean;
+            /** @description Étape 21 : le même client a une autre réclamation non clôturée de la même catégorie, déposée à moins de 30 jours d'écart */
+            doublonPossible: boolean;
             /** Format: uuid */
             id: string;
             /** @example ALP-2026-000042 */
@@ -2502,6 +2734,8 @@ export interface components {
             pagination: components["schemas"]["Pagination"];
             /** @description Réclamations non clôturées de chaque file, pour l'utilisateur connecté et sans les autres filtres : les pastilles des onglets */
             compteurs: {
+                /** @description Étape 21 : d'un agent désactivé ou absent aujourd'hui (0 pour un agent) */
+                aReassigner: number;
                 /** @description Non assignées (0 pour un agent) */
                 recues: number;
                 /** @description Assignées à l'utilisateur connecté */
@@ -2565,6 +2799,16 @@ export interface components {
             date: components["schemas"]["Horodatage"];
         };
         ReclamationDetail: {
+            /** @description Étape 22 : les messages envoyés au client pour cette réclamation, les plus récents d'abord (jamais leur texte) */
+            envois: components["schemas"]["EnvoiClient"][];
+            /** @description Étape 21 : saisie au guichet ou au téléphone par cette personne de la banque */
+            saisiePar: components["schemas"]["ReferenceNommee"] | null;
+            /** @description Étape 21 : les autres réclamations du même client, les plus récentes d'abord */
+            duMemeClient: components["schemas"]["ReclamationDuClient"][];
+            /** @description Étape 21 : doublon joint à cette réclamation principale */
+            rattacheeA: components["schemas"]["RattacheeA"] | null;
+            /** @description Étape 21 : doublons joints à cette réclamation */
+            doublonsRattaches: components["schemas"]["RattacheeA"][];
             /** @description Déposée avec l'assistant automatique du portail (étape 18) */
             depotAssistant: boolean;
             /** @description Chat web (étape 17) ; vide si le client ne l'a pas ouvert ou si Makor ne l'a pas ouvert à la banque */
@@ -2610,6 +2854,166 @@ export interface components {
             actionsPossibles: components["schemas"]["ActionStatut"][];
             /** @description Opérations permises à l'utilisateur connecté */
             operationsPossibles: components["schemas"]["OperationTicket"][];
+        };
+        /** @description Une autre réclamation du même client, sur la fiche */
+        ReclamationDuClient: {
+            /** Format: uuid */
+            id: string;
+            numero: string;
+            categorie: components["schemas"]["ReferenceNommee"];
+            statut: components["schemas"]["StatutReclamation"];
+            creeLe: components["schemas"]["Horodatage"];
+            agent: components["schemas"]["ReferenceNommee"] | null;
+            /** @description Même catégorie, toutes deux non clôturées, déposées à moins de 30 jours d'écart */
+            doublonPossible: boolean;
+            /** @description L'utilisateur connecté peut l'ouvrir (un agent, seulement les siennes) */
+            accessible: boolean;
+        };
+        RattacheeA: {
+            /** Format: uuid */
+            id: string;
+            numero: string;
+            /**
+             * @description Pour le client : sa page de suivi sur le portail ; vide pour le personnel
+             * @example /suivi/Qm9uam91ckJhbnF1ZUFscGhh
+             */
+            chemin: string | null;
+        };
+        /** @description Un e-mail ou un téléphone au moins, comme au portail (arbitrage 1) */
+        SaisieReclamation: {
+            /** @enum {string} */
+            canal: "GUICHET" | "TELEPHONE";
+            /**
+             * Format: uuid
+             * @description Obligatoire au guichet ; au téléphone, l'agence dont parle le client
+             */
+            agenceId?: string;
+            /** Format: uuid */
+            categorieId: string;
+            description: string;
+            nom: string;
+            /** Format: email */
+            email?: string;
+            /** @description Format libre, normalisé en E.164 (+225 par défaut) */
+            telephone?: string;
+            /**
+             * @description Le client a été informé de la politique de données de la banque
+             * @constant
+             */
+            consentementInforme: true;
+            /**
+             * @description Priorité urgente dès la saisie (sinon celle de la catégorie)
+             * @default false
+             */
+            urgente: boolean;
+            /**
+             * @description Un agent se l'assigne ; ignoré pour un superviseur
+             * @default true
+             */
+            meLAssigner: boolean;
+            fichiers?: components["schemas"]["Fichiers"];
+        } | unknown | unknown;
+        AccuseSaisie: {
+            /** Format: uuid */
+            id: string;
+            /** @example ALP-2026-000042 */
+            numero: string;
+            /**
+             * Format: uri
+             * @description Pour le QR code du récépissé ; il n'est plus montré au personnel ensuite
+             */
+            lienSuivi: string;
+            creeLe: components["schemas"]["Horodatage"];
+            /** @description Canaux de l'accusé envoyé au client */
+            envoiPar: components["schemas"]["CanalOtp"][];
+            agent: components["schemas"]["ReferenceNommee"] | null;
+        };
+        Rattachement: {
+            /**
+             * Format: uuid
+             * @description Réclamation principale du même client, non clôturée
+             */
+            principaleId: string;
+        };
+        /** @description Un message au client (étape 22) ; sa coordonnée masquée, jamais son texte */
+        EnvoiClient: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            canal: "EMAIL" | "SMS" | "WHATSAPP";
+            /** @example Résolution */
+            objet: string;
+            /** @example +225 07 •• •• •• 11 */
+            destinationMasquee: string;
+            etat: components["schemas"]["EtatEnvoi"];
+            /** @description Non remis, pourquoi */
+            motif: components["schemas"]["MotifEchec"] | null;
+            tentatives: number;
+            prochaineTentativeLe: components["schemas"]["HorodatageFacultatif"];
+            creeLe: components["schemas"]["Horodatage"];
+            envoyeLe: components["schemas"]["HorodatageFacultatif"];
+            remiseLe: components["schemas"]["HorodatageFacultatif"];
+            /** @description Non remis et renvoyable par l'utilisateur connecté (renvoyerMessage) */
+            renvoyable: boolean;
+        };
+        /**
+         * @description EN_ATTENTE : pas encore parti ; NOUVEL_ESSAI : échec temporaire, nouvelle tentative à prochaineTentativeLe ;
+         *     ENVOYE : accepté par la passerelle ou le serveur d'e-mail ; REMIS : accusé de remise (SMS, WhatsApp) ;
+         *     LU : lu sur WhatsApp ; NON_REMIS : définitivement non remis (motif)
+         * @enum {string}
+         */
+        EtatEnvoi: "EN_ATTENTE" | "NOUVEL_ESSAI" | "ENVOYE" | "REMIS" | "LU" | "NON_REMIS";
+        /** @enum {string} */
+        MotifEchec: "NUMERO_INVALIDE" | "INJOIGNABLE" | "EXPIRE" | "REFUSE" | "ADRESSE_INVALIDE" | "WHATSAPP_INDISPONIBLE" | "ERREUR_TECHNIQUE";
+        LienSuiviRenvoye: {
+            envois: {
+                /** @enum {string} */
+                canal: "SMS" | "EMAIL" | "WHATSAPP";
+                /** @example +225 07 •• •• •• 11 */
+                destinationMasquee: string;
+            }[];
+        };
+        /** @description Soit `agentId`, soit `repartir` */
+        AssignationEnLot: {
+            reclamationIds: string[];
+            /**
+             * Format: uuid
+             * @description Toutes à cet agent actif
+             */
+            agentId?: string;
+            /**
+             * @description Chacune à l'agent disponible le moins chargé
+             * @constant
+             */
+            repartir?: true;
+        } & (unknown | unknown);
+        ResultatAssignationEnLot: {
+            assignees: {
+                /** Format: uuid */
+                id: string;
+                numero: string;
+                agent: components["schemas"]["ReferenceNommee"];
+            }[];
+            laissees: {
+                /** Format: uuid */
+                id: string;
+                /** @description Vide si la réclamation est introuvable */
+                numero: string | null;
+                /** @example Aucun agent disponible */
+                raison: string;
+            }[];
+        };
+        DemandeAcces: {
+            /**
+             * @description Téléphone (format libre, +225 par défaut) ou e-mail donné au dépôt
+             * @example 07 08 09 10 11
+             */
+            contact: string;
+            jetonAntiRobot: components["schemas"]["JetonAntiRobot"];
+        };
+        VerificationAcces: {
+            contact: string;
+            code: string;
         };
         AvisReclamation: {
             etat: components["schemas"]["EtatAvis"];
@@ -3124,6 +3528,8 @@ export interface components {
             membres?: string[];
         };
         Absence: {
+            /** @description Étape 21 : réclamations non clôturées assignées à l'agent, à réassigner pendant son absence */
+            reclamationsEnCours: number;
             /** Format: uuid */
             id: string;
             agent: components["schemas"]["ReferenceNommee"];
@@ -3156,6 +3562,8 @@ export interface components {
             groupe: components["schemas"]["ReferenceNommee"];
         };
         Utilisateur: {
+            /** @description Étape 21 : réclamations non clôturées qui lui sont assignées */
+            reclamationsEnCours: number;
             /** Format: uuid */
             id: string;
             /** Format: email */
@@ -3357,6 +3765,9 @@ export interface components {
                 sms: number;
                 /** @description Segments facturés par la passerelle */
                 segments: number;
+                /** @description Étape 22 : remis selon l'accusé de remise de la passerelle */
+                remis: number;
+                /** @description Non remis : refusés par la passerelle, après 5 essais, ou selon l'accusé de remise */
                 echecs: number;
             }[];
         };
@@ -3402,6 +3813,22 @@ export interface components {
             object: string;
             entry: Record<string, never>[];
         };
+        /** @description Accusé de remise d'un SMS (étape 22) ; `id` ou `reference` au moins */
+        RemiseSms: {
+            /** @description Identifiant du SMS chez la passerelle */
+            id?: string;
+            /**
+             * Format: uuid
+             * @description Identifiant envoyé avec le SMS (Idempotency-Key)
+             */
+            reference?: string;
+            /** @enum {string} */
+            statut: "REMIS" | "NON_REMIS" | "EXPIRE" | "REJETE" | "EN_COURS";
+            /** @description Code de l'opérateur, gardé pour le diagnostic */
+            code?: string;
+            /** Format: date-time */
+            recuLe?: string;
+        } | unknown | unknown;
         SmsEntrant: {
             /** @description Identifiant du SMS chez la passerelle */
             id: string;
@@ -3619,7 +4046,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Probleme"];
             };
         };
-        /** @description Fichier au-delà de 5 Mo (1 Mo pour un logo) */
+        /** @description Fichier au-delà de 10 Mo (1 Mo pour un logo) */
         FichierTropVolumineux: {
             headers: {
                 [name: string]: unknown;
@@ -3725,6 +4152,10 @@ export interface components {
     parameters: {
         Id: string;
         PieceId: string;
+        /** @description Un message au client (fiche, champ envois) */
+        EnvoiId: string;
+        /** @description Adresse du portail de la banque (`<slug>.<domaine>`) */
+        Slug: string;
         /** @description Code public du point de dépôt, porté par le QR code ou le lien */
         CodePoint: string;
         /** @description Jeton du lien de suivi reçu au dépôt */
@@ -3739,8 +4170,11 @@ export interface components {
         Au: string;
         /** @description Numéro de ticket, nom, e-mail ou téléphone */
         Recherche: string;
-        /** @description File de traitement (§6.2) */
-        File: "toutes" | "recues" | "assignees" | "urgentes" | "en-retard" | "escaladees";
+        /**
+         * @description File de traitement (§6.2). `a-reassigner` (étape 21) : réclamations non clôturées d'un agent
+         *     désactivé, ou absent aujourd'hui (attribution ouverte) ; vide pour un agent.
+         */
+        File: "toutes" | "recues" | "assignees" | "urgentes" | "en-retard" | "escaladees" | "a-reassigner";
         FiltreStatut: components["schemas"]["StatutReclamation"][];
         FiltrePriorite: components["schemas"]["Priorite"];
         FiltreCategorie: string;
@@ -4052,6 +4486,96 @@ export interface operations {
             429: components["responses"]["TropDeRequetes"];
         };
     };
+    lireBanquePortail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Adresse du portail de la banque (`<slug>.<domaine>`) */
+                slug: components["parameters"]["Slug"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description La banque */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BanquePublique"];
+                };
+            };
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    demanderCodeAcces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Adresse du portail de la banque (`<slug>.<domaine>`) */
+                slug: components["parameters"]["Slug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemandeAcces"];
+            };
+        };
+        responses: {
+            /** @description Code envoyé s'il y a des réclamations à ce numéro ou à cette adresse */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OtpEnvoye"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    verifierCodeAcces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Adresse du portail de la banque (`<slug>.<domaine>`) */
+                slug: components["parameters"]["Slug"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerificationAcces"];
+            };
+        };
+        responses: {
+            /** @description Session ouverte */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionClient"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     lireLogo: {
         parameters: {
             query?: never;
@@ -4281,6 +4805,7 @@ export interface operations {
             200: components["responses"]["Fichier"];
             401: components["responses"]["NonAuthentifie"];
             404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
         };
     };
     connexion: {
@@ -4571,7 +5096,10 @@ export interface operations {
     listerReclamations: {
         parameters: {
             query?: {
-                /** @description File de traitement (§6.2) */
+                /**
+                 * @description File de traitement (§6.2). `a-reassigner` (étape 21) : réclamations non clôturées d'un agent
+                 *     désactivé, ou absent aujourd'hui (attribution ouverte) ; vide pour un agent.
+                 */
                 file?: components["parameters"]["File"];
                 statut?: components["parameters"]["FiltreStatut"];
                 priorite?: components["parameters"]["FiltrePriorite"];
@@ -4609,10 +5137,76 @@ export interface operations {
             403: components["responses"]["Interdit"];
         };
     };
+    saisirReclamation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Clé choisie par le navigateur (UUID conseillé) ; conservée 24 h */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["SaisieReclamation"];
+            };
+        };
+        responses: {
+            /** @description Réclamation enregistrée */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccuseSaisie"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            409: components["responses"]["Conflit"];
+            413: components["responses"]["FichierTropVolumineux"];
+            415: components["responses"]["TypeNonSupporte"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    assignerEnLot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignationEnLot"];
+            };
+        };
+        responses: {
+            /** @description Réclamations assignées et laissées */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResultatAssignationEnLot"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
     exporterReclamations: {
         parameters: {
             query?: {
-                /** @description File de traitement (§6.2) */
+                /**
+                 * @description File de traitement (§6.2). `a-reassigner` (étape 21) : réclamations non clôturées d'un agent
+                 *     désactivé, ou absent aujourd'hui (attribution ouverte) ; vide pour un agent.
+                 */
                 file?: components["parameters"]["File"];
                 statut?: components["parameters"]["FiltreStatut"];
                 priorite?: components["parameters"]["FiltrePriorite"];
@@ -4892,6 +5486,80 @@ export interface operations {
             422: components["responses"]["RegleMetier"];
         };
     };
+    rattacherReclamation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Rattachement"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Reclamation"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+        };
+    };
+    renvoyerLienSuivi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lien renvoyé */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LienSuiviRenvoye"];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
+    renvoyerMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+                /** @description Un message au client (fiche, champ envois) */
+                envoiId: components["parameters"]["EnvoiId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Reclamation"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
+            422: components["responses"]["RegleMetier"];
+            429: components["responses"]["TropDeRequetes"];
+        };
+    };
     telechargerPieceJointe: {
         parameters: {
             query?: never;
@@ -4908,6 +5576,7 @@ export interface operations {
             401: components["responses"]["NonAuthentifie"];
             403: components["responses"]["Interdit"];
             404: components["responses"]["Introuvable"];
+            409: components["responses"]["Conflit"];
         };
     };
     lireIndicateurs: {
@@ -6495,6 +7164,27 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SmsEntrant"];
+            };
+        };
+        responses: {
+            200: components["responses"]["Recu"];
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+        };
+    };
+    recevoirRemiseSms: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description sha256=<HMAC-SHA256 hexadécimal> ; absente ou fausse : 401 SIGNATURE_INVALIDE */
+                "X-Signature"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemiseSms"];
             };
         };
         responses: {

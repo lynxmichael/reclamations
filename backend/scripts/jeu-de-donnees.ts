@@ -14,6 +14,7 @@ import { DateTime } from 'luxon';
 import { base32Encode } from './base32.js';
 import { CycleDeVie } from '../src/application/reclamations/cycle-de-vie.js';
 import { lectureClient } from '../src/application/reclamations/conversations.js';
+import { signalerNonRemis } from '../src/application/reclamations/envois.js';
 import type { Acteur } from '../src/domaine/reclamation/machine.js';
 import { FAQ_EXEMPLE } from '../src/domaine/ia/exemples.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
@@ -106,6 +107,21 @@ export interface OptionsSemis {
    * réclamations d'exemple, un dépôt par WhatsApp et un client qui écrit par SMS. Non par défaut dans les tests
    */
   readonly canaux?: boolean;
+  /**
+   * Étape 21 : avec les réclamations d'exemple, une saisie au guichet du Plateau et une par téléphone,
+   * un doublon possible (Yao Kouassi redépose pour sa carte). Non par défaut dans les tests
+   */
+  readonly guichet?: boolean;
+  /**
+   * Étape 21 : Mamadou absent aujourd'hui et demain, ses dossiers « à réassigner » (avec l'attribution).
+   * Pour la démonstration seulement : les tests navigateur déclarent eux-mêmes leurs absences
+   */
+  readonly absenceDuJour?: boolean;
+  /**
+   * Étape 22 : avec les saisies au guichet, l'accusé de dépôt de Bakary Fofana non remis (téléphone
+   * injoignable, d'après la passerelle) et l'alerte des superviseurs. Non par défaut dans les tests
+   */
+  readonly envois?: boolean;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
   /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
@@ -199,6 +215,8 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
   if (o.chat) await chatAlpha(bd, alpha, o, exemples);
   if (o.chat && o.assistant) await assistantAlpha(bd, alpha, o, maintenant);
   if (o.chat && o.canaux) await canauxAlpha(bd, alpha, o, exemples);
+  if (o.guichet && exemples) await guichetAlpha(bd, alpha, o, exemples, maintenant);
+  if (o.guichet && o.envois && exemples) await envoisAlpha(bd, alpha, maintenant);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
 }
 
@@ -301,6 +319,65 @@ async function canauxAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, 
     'Je peux vous envoyer le relevé si besoin.', undefined, undefined, 'WHATSAPP');
   await exemples.cycle.messageDuClient(alpha.id, exemples.virement, { type: 'CLIENT', clientId: (await client(exemples.virement)).clientId },
     'Bonjour, toujours rien sur mon compte ce matin.', undefined, undefined, 'SMS');
+}
+
+/**
+ * Étape 21 à la Banque Alpha : une réclamation saisie au guichet du Plateau par Aya pour une cliente
+ * sans smartphone, une saisie par téléphone par Serge, un doublon possible (Yao Kouassi redépose pour
+ * sa carte avalée), et Mamadou absent aujourd'hui et demain (avec l'attribution) : ses dossiers en
+ * cours sont dans la file « À réassigner » des superviseurs.
+ */
+async function guichetAlpha(
+  bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, exemples: NonNullable<Awaited<ReturnType<typeof reclamationsExemple>>>, maintenant: Date,
+) {
+  const c = alpha.comptes;
+  const personne = (prenom: string, role: 'AGENT' | 'SUPERVISEUR', nom: string) =>
+    ({ type: 'UTILISATEUR' as const, id: c[prenom]!.id, role, libelle: nom });
+  const point = async (canal: 'GUICHET' | 'TELEPHONE', agenceId: string | null) => (await bd.enBanque(alpha.id, (tx) => tx.pointDepot.create({
+    data: { tenantId: alpha.id, code: canal === 'GUICHET' ? 'GUICHETPLAT' : 'TELEPHONEAL', canal, libelle: canal === 'GUICHET' ? 'Guichet' : 'Téléphone', agenceId },
+  }))).id;
+  await exemples.cycle.saisir({
+    tenantId: alpha.id, pointDepotId: await point('GUICHET', alpha.agences.Plateau!), categorieId: alpha.categories['Frais et prélèvements']!,
+    description: 'Cliente venue au guichet : 2 500 FCFA de frais de SMS prélevés chaque mois alors qu\'elle n\'a pas souscrit au service. Elle n\'a pas de smartphone.',
+    client: { nom: 'Ahou Kouamé', telephone: '+2250101020304', email: null }, consentementVersion: '2026-09',
+  }, { par: personne('aya', 'AGENT', 'Aya Konan'), meLAssigner: true });
+  await exemples.cycle.saisir({
+    tenantId: alpha.id, pointDepotId: await point('TELEPHONE', null), categorieId: alpha.categories['Virement et transfert']!,
+    agenceId: alpha.agences['Cocody Angré'] ?? null,
+    description: 'Appel du client : virement de 120 000 FCFA vers sa sœur, envoyé lundi, toujours pas reçu à Cocody.',
+    client: { nom: 'Bakary Fofana', telephone: '+2250505060708', email: null }, consentementVersion: '2026-09',
+  }, { par: personne('serge', 'SUPERVISEUR', 'Serge Kouadio') });
+  // Doublon possible : même client, même catégorie que sa réclamation « carte » en cours
+  const qr = await bd.enSysteme((tx) => tx.pointDepot.findUniqueOrThrow({ where: { code: alpha.points.qr } }));
+  await exemples.cycle.deposer({
+    tenantId: alpha.id, pointDepotId: qr.id, categorieId: alpha.categories['Carte bancaire']!,
+    description: 'Toujours pas de nouvelles pour mes 50 000 FCFA bloqués au distributeur du Plateau, je redépose ma réclamation.',
+    client: { nom: 'Yao Kouassi', telephone: '0708091011', email: null }, consentementVersion: '2026-09',
+  });
+  if (o.attribution && o.absenceDuJour) {
+    const jour = (n: number) => new Date(`${DateTime.fromJSDate(maintenant, { zone: 'Africa/Abidjan' }).plus({ days: n }).toISODate()}T00:00:00Z`);
+    await bd.enBanque(alpha.id, (tx) => tx.absenceAgent.create({ data: { tenantId: alpha.id, utilisateurId: c.mamadou!.id, du: jour(0), au: jour(1) } }));
+  }
+}
+
+/**
+ * Envois non remis (étape 22) : la passerelle a signalé l'accusé de dépôt de Bakary Fofana (saisi par
+ * téléphone, à personne) non remis ; les superviseurs sont prévenus, la fiche propose de le renvoyer.
+ */
+async function envoisAlpha(bd: BaseDonnees, alpha: BanqueDemo, maintenant: Date) {
+  const n = await bd.enSysteme(async (tx) => {
+    const sms = await tx.notification.findFirstOrThrow({
+      where: { tenantId: alpha.id, modele: 'client.depot', canal: 'SMS', destination: '+2250505060708' },
+    });
+    return tx.notification.update({
+      where: { id: sms.id },
+      data: {
+        statut: 'ECHEC', tentatives: 1, envoyeeLe: maintenant, segmentsSms: 1, motifEchec: 'INJOIGNABLE',
+        idFournisseur: 'demo-dlr-0001', derniereErreur: 'Accusé de remise : NON_REMIS (démonstration)',
+      },
+    });
+  });
+  await signalerNonRemis(bd, { ...n, motifEchec: 'INJOIGNABLE' }, maintenant);
 }
 
 /**

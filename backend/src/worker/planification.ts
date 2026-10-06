@@ -5,7 +5,8 @@
  * |-------------|------------------|-------------------------------------------------------------|
  * | taches-sla  | chaque minute    | alerte, dépassement + escalade (superviseur puis Admin Ent.), clôture auto, attribution en attente, avis du chat |
  * | envois      | toutes les 5 s   | notifications nouvelles (e-mail, SMS, in-app)               |
- * | relances    | toutes les 5 min | notifications en échec temporaire (5 tentatives au plus)    |
+ * | relances    | chaque minute    | notifications en échec temporaire, à l'heure prévue (1, 5, 30, 120 min : étape 22) |
+ * | antivirus   | chaque minute    | pièces jointes en attente d'analyse (étape 22)              |
  * | purge       | chaque nuit      | codes OTP, sessions et liens expirés                        |
  *
  * Chaque travail est planifié une seule fois dans Redis, quel que soit le nombre de workers :
@@ -16,6 +17,7 @@ import { Queue, Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
 import type { TachesSla } from '../application/reclamations/taches-sla.js';
 import type { BaseDonnees } from '../infrastructure/base-de-donnees/base-de-donnees.service.js';
+import type { AnalyseAntivirus } from '../application/fichiers/analyse.js';
 import type { BoiteEnvoi } from '../infrastructure/envois/boite-envoi.js';
 import { CLE_BATTEMENT_WORKER, DUREE_BATTEMENT_S } from '../infrastructure/redis/redis.service.js';
 
@@ -24,7 +26,8 @@ export const FILE = 'reclamations-planification';
 export const TRAVAUX = {
   'taches-sla': { every: 60_000 },
   envois: { every: 5_000 },
-  relances: { every: 5 * 60_000 },
+  relances: { every: 60_000 },
+  antivirus: { every: 60_000 },
   purge: { pattern: '17 3 * * *', tz: 'Africa/Abidjan' },
 } as const;
 
@@ -34,6 +37,8 @@ export interface Executants {
   readonly taches: TachesSla;
   readonly boite: BoiteEnvoi;
   readonly bd: BaseDonnees;
+  /** Étape 22 : analyse différée des pièces jointes */
+  readonly antivirus?: AnalyseAntivirus;
   readonly horloge?: () => Date;
 }
 
@@ -54,6 +59,7 @@ export async function executer(nom: NomTravail, e: Executants): Promise<unknown>
     case 'taches-sla': return e.taches.toutes(maintenant);
     case 'envois': return e.boite.vider(false);
     case 'relances': return e.boite.vider(true);
+    case 'antivirus': return e.antivirus?.enAttente() ?? { saines: 0, infectees: 0, enAttente: 0 };
     case 'purge': return purger(e.bd, maintenant);
   }
 }

@@ -5,13 +5,17 @@
 import 'reflect-metadata';
 import { Inject, Injectable, Logger, Module, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { AnalyseAntivirus } from './application/fichiers/analyse.js';
 import { CycleDeVie } from './application/reclamations/cycle-de-vie.js';
+import { signalerNonRemis } from './application/reclamations/envois.js';
 import { TachesSla } from './application/reclamations/taches-sla.js';
 import { CONFIGURATION, lireConfiguration, urlPortail, type Configuration } from './configuration/configuration.js';
 import { BaseDonnees } from './infrastructure/base-de-donnees/base-de-donnees.service.js';
 import { EmailSmtp, SmsHttp, SmsJournal, type AdaptateurSms } from './infrastructure/envois/adaptateurs.js';
 import { BoiteEnvoi } from './infrastructure/envois/boite-envoi.js';
 import { adaptateurWhatsapp } from './infrastructure/canaux/whatsapp.js';
+import { antivirusDe } from './infrastructure/fichiers/antivirus.js';
+import { StockageDisque } from './infrastructure/stockage/stockage.js';
 import { Planificateur } from './worker/planification.js';
 
 @Injectable()
@@ -26,8 +30,13 @@ class ServiceWorker implements OnApplicationBootstrap, OnApplicationShutdown {
     this.email = new EmailSmtp(config.smtpUrl, config.emailExpediteur);
     this.planificateur = new Planificateur(config.redisUrl, {
       taches: new TachesSla(this.bd.base, cycle),
-      boite: new BoiteEnvoi(this.bd, this.email, adaptateurSms(config), undefined, { whatsapp: adaptateurWhatsapp(config.whatsapp, config.production), cle: config.cleCanaux }),
+      boite: new BoiteEnvoi(
+        this.bd, this.email, adaptateurSms(config), undefined, { whatsapp: adaptateurWhatsapp(config.whatsapp, config.production), cle: config.cleCanaux },
+        // Étape 22 : un message au client non remis est signalé à l'agent
+        (n) => signalerNonRemis(this.bd, n, new Date()).then(() => undefined),
+      ),
       bd: this.bd,
+      antivirus: new AnalyseAntivirus(this.bd, new StockageDisque(config.stockageDossier), antivirusDe(config.antivirus)),
     });
   }
 
@@ -65,6 +74,7 @@ async function demarrer() {
   const app = await NestFactory.createApplicationContext(WorkerModule.pour(config), { logger: ['error', 'warn', 'log'] });
   app.enableShutdownHooks();
   new Logger('Worker').log(`Worker ${config.version} démarré`);
+  if (config.antivirus.mode === 'aucun') new Logger('Antivirus').warn('ANTIVIRUS=aucun : pièces jointes non analysées (développement seulement)');
 }
 
 demarrer().catch((e: unknown) => {

@@ -304,18 +304,22 @@ describe('plateforme (Super Admin)', () => {
     expect((await client.appeler('lireIndicateursPlateforme', { jeton: jt.fatou })).statut).toBe(403);
   });
 
-  it('facturation SMS : totaux par banque (SMS remis, segments, échecs), sans accès aux SMS', async () => {
+  it('facturation SMS : totaux par banque (SMS envoyés, segments, remis, échecs), sans accès aux SMS', async () => {
     const mois = new Date().toISOString().slice(0, 7);
     const avant = await client.appeler('lireFacturationSms', { jeton: jt.sa, requete: { mois } });
     expect(avant.statut).toBe(200);
-    const de = (corps: { banques: { banque: { id: string }; sms: number; segments: number; echecs: number }[] }, id: string) =>
+    const de = (corps: { banques: { banque: { id: string }; sms: number; segments: number; remis: number; echecs: number }[] }, id: string) =>
       corps.banques.find((b) => b.banque.id === id)!;
 
-    // Trois SMS remis à la passerelle (1 + 2 + 1 segments) et un abandonné, pour la Banque Alpha
+    // Trois SMS remis à la passerelle (1 + 2 + 1 segments), dont un arrivé au téléphone (accusé de
+    // remise, étape 22), et un abandonné, pour la Banque Alpha
     const maintenant = new Date();
     await bd.enSysteme((tx) => tx.notification.createMany({
       data: [
-        ...[1, 2, 1].map((segmentsSms) => ({ tenantId: j.alpha.id, canal: 'SMS' as const, modele: 'client.statut', destination: '+2250700000000', contenu: 'Test', statut: 'ENVOYEE' as const, envoyeeLe: maintenant, segmentsSms })),
+        ...[1, 2, 1].map((segmentsSms, i) => ({
+          tenantId: j.alpha.id, canal: 'SMS' as const, modele: 'client.statut', destination: '+2250700000000', contenu: 'Test',
+          statut: i === 0 ? 'DELIVREE' as const : 'ENVOYEE' as const, envoyeeLe: maintenant, remiseLe: i === 0 ? maintenant : null, segmentsSms,
+        })),
         { tenantId: j.alpha.id, canal: 'SMS' as const, modele: 'client.statut', destination: '+2250700000000', contenu: 'Test', statut: 'ECHEC' as const, tentatives: 5 },
         // Un e-mail ne compte pas
         { tenantId: j.alpha.id, canal: 'EMAIL' as const, modele: 'client.statut', destination: 'x@exemple.ci', contenu: 'Test', statut: 'ENVOYEE' as const, envoyeeLe: maintenant },
@@ -324,7 +328,7 @@ describe('plateforme (Super Admin)', () => {
     const apres = await client.appeler('lireFacturationSms', { jeton: jt.sa, requete: { mois } });
     const a = de(avant.corps, j.alpha.id);
     const b = de(apres.corps, j.alpha.id);
-    expect({ sms: b.sms - a.sms, segments: b.segments - a.segments, echecs: b.echecs - a.echecs }).toEqual({ sms: 3, segments: 4, echecs: 1 });
+    expect({ sms: b.sms - a.sms, segments: b.segments - a.segments, remis: b.remis - a.remis, echecs: b.echecs - a.echecs }).toEqual({ sms: 3, segments: 4, remis: 1, echecs: 1 });
     expect(de(apres.corps, j.horizon.id)).toEqual(de(avant.corps, j.horizon.id));
 
     // Un mois antérieur à la création des banques : liste vide

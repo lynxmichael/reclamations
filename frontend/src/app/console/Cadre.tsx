@@ -115,7 +115,7 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
         surCloche={() => setNotifsOuvertes((o) => !o)}
         surOuvrirNotification={(reclamationId, notificationId) => {
           lue.mutate(notificationId);
-          navigate(`/reclamations/${reclamationId}`);
+          navigate(reclamationId ? `/reclamations/${reclamationId}` : '/reclamations?file=a-reassigner');
         }}
         surToutLire={() => toutLire.mutate()}
         surDeconnexion={() => void deconnecter()}

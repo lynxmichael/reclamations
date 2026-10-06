@@ -251,6 +251,21 @@ const CRITERES_PHASE_2 = [
     ['backend/src/infrastructure/canaux', /./],
     ['verifications'],
   ]],
+  ['Étape 21 — Guichet, doublons et réaffectation : un agent ou un superviseur saisit la réclamation d\'un client venu au guichet (agence obligatoire) ou qui appelle (canaux Guichet et Téléphone, comptés à part), avec l\'accord du client inscrit au journal à son nom, et imprime un récépissé (numéro, QR code du suivi) ; le client qui a perdu son lien retrouve ses réclamations sur le portail avec le téléphone ou l\'e-mail du dépôt et un code, sans que le portail dise si le numéro est connu ; le lien n\'est renvoyé qu\'aux coordonnées du dossier ; deux réclamations en cours du même client et de la même catégorie, à moins de 30 jours, sont signalées « doublon possible », et l\'une est rattachée à l\'autre (clôturée, motif Doublon, un seul message au client, pas d\'enquête) ; les dossiers d\'un agent désactivé ou absent sont « à réassigner », ses alertes vont à son superviseur, qui les répartit en lot.', [
+    [e2e('guichet'), /./],
+    [nav('14-guichet-doublons'), /./],
+    ['backend/src/domaine/doublons', /./],
+    ['backend/src/domaine/attribution', /répartir|réassign/i],
+    ['verifications'],
+  ]],
+  ['Étape 22 — Envois non remis et pièces jointes : chaque message envoyé au client (accusé, statut, réponse, résolution…) a son état sur la fiche (en cours d\'envoi, nouvel essai, envoyé, remis, non remis et pourquoi), avec la coordonnée masquée, jamais le texte ; un échec passager est réessayé 1, 5, 30 puis 120 minutes après, un numéro invalide ou refusé ne l\'est pas ; les accusés de remise signés de la passerelle SMS sont pris en compte une seule fois ; l\'agent assigné (sinon son superviseur) est prévenu d\'un message que rien n\'a remplacé, le voit dans sa file et le renvoie à la même coordonnée (3 fois par heure, journal d\'audit) ; Makor voit les SMS remis et non remis ; les pièces jointes acceptent les documents Word (.docx sans macro, l\'ancien .doc refusé) jusqu\'à 10 Mo, chaque fichier est analysé par l\'antivirus ClamAV : infecté, il est refusé ; antivirus indisponible, il attend sans être téléchargeable et le worker l\'analyse ensuite, l\'efface s\'il est infecté et prévient l\'agent ; la santé de l\'API signale l\'antivirus indisponible.', [
+    [e2e('envois'), /./],
+    [nav('15-envois-pieces-jointes'), /./],
+    ['backend/src/domaine/envois', /./],
+    ['backend/src/infrastructure/fichiers', /./],
+    ['backend/src/infrastructure/envois', /./],
+    ['verifications'],
+  ]],
 ];
 
 // ---- Exécution ------------------------------------------------------------------------------------------------
@@ -347,7 +362,7 @@ if (mesures.length) {
 }
 
 L.push('## Critères de la phase 2', '');
-L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14), et l'étape 19 ajoutée à la demande du client (activité des agences, double authentification au choix de la banque).`, '');
+L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14), et les étapes ajoutées à la demande du client : 19 (activité des agences, double authentification au choix de la banque), 21 (guichet, doublons, réaffectation) et 22 (envois non remis, pièces jointes Word et antivirus).`, '');
 tableauCriteres(criteresPhase2);
 L.push('## Suites', '');
 L.push('| Suite | Résultat | Tests | Durée |', '|---|---|---:|---:|');

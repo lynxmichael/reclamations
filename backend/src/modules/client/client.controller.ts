@@ -13,9 +13,10 @@ import { acteurDe, AppelCourant, clientDe, EntreesValidees, traceDe, type Appel,
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
 import { introuvable, Probleme } from '../../infrastructure/contrat/probleme.js';
 import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
+import { ANTIVIRUS, type Antivirus } from '../../infrastructure/fichiers/antivirus.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
-import { avecFichiers, envoyerFichier, stockerPiecesJointes, telechargement, type S } from '../commun.js';
+import { avecFichiers, envoyerFichier, stockerPiecesJointes, telechargement, type S, exigerSaine } from '../commun.js';
 import { etatChat, INCLUSION_MESSAGE, lireVueClient, messageVisible } from '../reclamations/lecture.js';
 
 /** Le chat web s'ouvre banque par banque (décision I2). */
@@ -29,6 +30,7 @@ export class ServiceClient {
     @Inject(BaseDonnees) private readonly bd: BaseDonnees,
     @Inject(CycleDeVie) private readonly cycle: CycleDeVie,
     @Inject(STOCKAGE) private readonly stockage: Stockage,
+    @Inject(ANTIVIRUS) private readonly antivirus: Antivirus,
     @Inject(HORLOGE) private readonly horloge: Horloge,
     @Inject(Limiteur) private readonly limiteur: Limiteur,
   ) {}
@@ -94,7 +96,7 @@ export class ServiceClient {
   async message(appel: Appel, id: string, e: Entrees) {
     const c = await this.exigerSienne(appel, id);
     await this.limiteur.consommer(LIMITES.messagesClient, `${c.tenantId}:${id}`, 'Trop de messages en peu de temps : patientez quelques minutes');
-    const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, c.tenantId, e.fichiers, this.horloge());
+    const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, this.antivirus, c.tenantId, e.fichiers, this.horloge());
     await avecFichiers(annuler, () => this.cycle.messageDuClient(c.tenantId, id, acteurDe(appel), String(e.corps.contenu), traceDe(appel), fichiers));
     return this.lire(appel, id);
   }
@@ -119,8 +121,9 @@ export class ServiceClient {
         id: pieceId, reclamationId: id, reclamation: { clientId: c.id },
         OR: [{ commentaireId: null }, { commentaire: { type: { not: 'NOTE_INTERNE' } } }],
       },
-      select: { cleStockage: true, nomFichier: true },
+      select: { cleStockage: true, nomFichier: true, antivirus: true },
     }));
+    if (p) exigerSaine(p);
     const contenu = p ? await this.stockage.lire(p.cleStockage) : null;
     if (!p || !contenu) throw introuvable('Pièce jointe introuvable');
     return telechargement(contenu, p.nomFichier);

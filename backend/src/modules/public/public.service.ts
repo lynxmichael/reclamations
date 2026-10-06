@@ -18,6 +18,7 @@ import { AntiRobot, type Defi } from '../../infrastructure/securite/anti-robot.j
 import { Idempotence } from '../../infrastructure/securite/idempotence.js';
 import { DUREE_CLIENT, Jetons } from '../../infrastructure/securite/jetons.js';
 import { LIMITES, Limiteur } from '../../infrastructure/securite/limiteur.js';
+import { ANTIVIRUS, type Antivirus } from '../../infrastructure/fichiers/antivirus.js';
 import { STOCKAGE, type Stockage } from '../../infrastructure/stockage/stockage.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
 import { avecFichiers, banquePublique, CHAMPS_BANQUE_PUBLIQUE, stockerPiecesJointes, type S } from '../commun.js';
@@ -37,7 +38,9 @@ export async function pointPublic(bd: BaseDonnees, code: string) {
     where: { code },
     select: { id: true, tenantId: true, canal: true, actif: true, agence: { select: { id: true, nom: true, active: true } }, banque: { select: CHAMPS_BANQUE } },
   }));
-  if (!p) throw introuvable('Ce QR code ou ce lien n\'existe pas');
+  // Étape 21 : seuls les QR codes et les liens web s'ouvrent au portail (WhatsApp, SMS, guichet et
+  // téléphone sont des points de dépôt internes)
+  if (!p || (p.canal !== 'QR_CODE' && p.canal !== 'LIEN_WEB')) throw introuvable('Ce QR code ou ce lien n\'existe pas');
   if (p.banque.suspendueLe) throw new Probleme(403, 'BANQUE_SUSPENDUE', 'Le portail de cette banque est momentanément fermé');
   if (!p.actif) throw new Probleme(404, 'POINT_DE_DEPOT_INACTIF', 'Ce QR code ou ce lien n\'est plus actif');
   return p;
@@ -53,6 +56,7 @@ export class ServicePublic {
     @Inject(AntiRobot) private readonly antiRobot: AntiRobot,
     @Inject(Jetons) private readonly jetons: Jetons,
     @Inject(STOCKAGE) private readonly stockage: Stockage,
+    @Inject(ANTIVIRUS) private readonly antivirus: Antivirus,
     @Inject(CONFIGURATION) private readonly config: Configuration,
     @Inject(HORLOGE) private readonly horloge: Horloge,
   ) {}
@@ -129,7 +133,7 @@ export class ServicePublic {
       // Limites de débit (décision C9) : seuls comptent les dépôts réels, pas les formulaires à corriger ni les renvois
       await this.limiteur.consommer(LIMITES.depotParIp, appel.ip, 'Trop de réclamations envoyées depuis cette connexion : réessayez dans une heure');
       if (telephone) await this.limiteur.consommer(LIMITES.depotParTelephone, `${p.tenantId}:${telephone}`, 'Trop de réclamations pour ce numéro : réessayez dans une heure');
-      const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, p.tenantId, recus, maintenant);
+      const { fichiers, annuler } = await stockerPiecesJointes(this.stockage, this.antivirus, p.tenantId, recus, maintenant);
       const accuse = await avecFichiers(annuler, () => this.cycle.deposer({
         tenantId: p.tenantId,
         pointDepotId: p.id,
@@ -164,6 +168,7 @@ export class ServicePublic {
           numero: true, statut: true, creeLe: true, categorie: { select: { nom: true } }, banque: { select: CHAMPS_BANQUE },
           evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], select: { type: true, statutApres: true, visibleClient: true, creeLe: true } },
           enquete: { select: { reponduLe: true, expireLe: true } },
+          rattacheeA: { select: { id: true, numero: true, jetonSuivi: true } },
         },
       });
       return {
@@ -174,6 +179,8 @@ export class ServicePublic {
         banque: banquePublique(t.banque),
         etapes: etapesSuivi(t.evenements),
         avis: t.enquete ? { etat: etatAvis(t.enquete, this.horloge()), expireLe: t.enquete.expireLe.toISOString() } : null,
+        // Étape 21 : un doublon joint à la réclamation principale, que le client suit désormais
+        rattacheeA: t.rattacheeA ? { id: t.rattacheeA.id, numero: t.rattacheeA.numero, chemin: `/suivi/${t.rattacheeA.jetonSuivi}` } : null,
       };
     });
   }
@@ -292,6 +299,96 @@ export class ServicePublic {
     });
     if (verdict.refus) throw verdict.refus;
     return { jetonClient: await this.jetons.signerClient({ clientId: ref.clientId, tenantId: ref.tenantId }), expireDans: DUREE_CLIENT };
+  }
+
+  // ---- Retrouver ses réclamations (étape 21) ---------------------------------------
+
+  /** Banque du portail par son adresse : 404 inconnue, 403 suspendue. */
+  private async banqueParSlug(slug: string) {
+    const b = await this.bd.enSysteme((tx) => tx.banque.findUnique({ where: { slug }, select: CHAMPS_BANQUE }));
+    if (!b) throw introuvable('Ce portail n\'existe pas');
+    if (b.suspendueLe) throw new Probleme(403, 'BANQUE_SUSPENDUE', 'Le portail de cette banque est momentanément fermé');
+    return b;
+  }
+
+  async banquePortail(slug: string): Promise<S<'BanquePublique'>> {
+    return banquePublique(await this.banqueParSlug(slug));
+  }
+
+  /** Téléphone (E.164) ou e-mail, et le canal du code ; 400 si ni l'un ni l'autre n'est lisible. */
+  private contact(brut: string): { canal: 'SMS' | 'EMAIL'; valeur: string } {
+    const texte = brut.trim();
+    try {
+      if (texte.includes('@')) return { canal: 'EMAIL', valeur: normaliserEmail(texte)! };
+      const telephone = normaliserTelephone(texte);
+      if (telephone) return { canal: 'SMS', valeur: telephone };
+    } catch {
+      // le message ci-dessous
+    }
+    throw invalide([{ champ: 'contact', message: 'Indiquez le téléphone ou l\'e-mail donné au dépôt, par exemple 07 08 09 10 11' }]);
+  }
+
+  /**
+   * Le client a perdu son lien de suivi. S'il a des réclamations dans cette banque à ce numéro ou à
+   * cette adresse, un code part ; la réponse est la même dans tous les cas (rien ne dit si le numéro
+   * est connu). Chaque SMS est facturé à la banque : défi anti-robot et 3 codes par heure.
+   */
+  async demanderCodeAcces(slug: string, corps: { contact: string; jetonAntiRobot: string }, appel: Appel): Promise<S<'OtpEnvoye'>> {
+    await this.antiRobot.exiger(corps.jetonAntiRobot);
+    const b = await this.banqueParSlug(slug);
+    const c = this.contact(corps.contact);
+    await this.limiteur.consommer(LIMITES.accesParContact, `${b.id}:${c.valeur}`, 'Trois codes demandés en une heure pour ce numéro : réessayez plus tard');
+    const maintenant = this.horloge();
+    await this.bd.enBanque(b.id, async (tx) => {
+      const client = await tx.clientFinal.findFirst({
+        where: c.canal === 'SMS' ? { telephone: c.valeur } : { email: c.valeur },
+        select: { id: true, _count: { select: { reclamations: true } } },
+      });
+      if (!client || client._count.reclamations === 0) return;
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      await tx.codeOtp.updateMany({ where: { clientId: client.id, utiliseLe: null }, data: { utiliseLe: maintenant } });
+      await tx.codeOtp.create({
+        data: {
+          tenantId: b.id, clientId: client.id, canal: c.canal, destination: c.valeur, codeHash: this.hmac(client.id, code),
+          expireLe: new Date(maintenant.getTime() + DUREE_OTP_SECONDES * 1000), creeLe: maintenant,
+        },
+      });
+      await tx.notification.create({
+        data: {
+          tenantId: b.id, canal: c.canal, modele: 'client.otp', destinataireClientId: client.id, destination: c.valeur,
+          sujet: c.canal === 'EMAIL' ? `${b.nom} : votre code pour retrouver vos réclamations` : null,
+          contenu: `${b.nom} : votre code est ${code}. Il expire dans 10 minutes. Ne le communiquez à personne.`,
+        },
+      });
+      await journaliser(tx, { tenantId: b.id, acteur: { clientId: client.id }, action: 'client.code_acces_envoye', entite: 'client_final', entiteId: client.id, donnees: { canal: c.canal }, trace: traceDe(appel) });
+    });
+    return { canal: c.canal, destinationMasquee: masquer(c.canal, c.valeur), expireDans: DUREE_OTP_SECONDES };
+  }
+
+  /** Bon code : la session de l'espace client. Un numéro inconnu se comporte comme un code faux. */
+  async verifierCodeAcces(slug: string, corps: { contact: string; code: string }, appel: Appel): Promise<S<'SessionClient'>> {
+    const b = await this.banqueParSlug(slug);
+    const c = this.contact(corps.contact);
+    await this.limiteur.consommer(LIMITES.essaisAccesParContact, `${b.id}:${c.valeur}`, 'Trop d\'essais pour ce numéro : demandez un nouveau code dans quelques minutes');
+    const maintenant = this.horloge();
+    const verdict = await this.bd.enBanque(b.id, async (tx) => {
+      const client = await tx.clientFinal.findFirst({ where: c.canal === 'SMS' ? { telephone: c.valeur } : { email: c.valeur }, select: { id: true } });
+      const otp = client ? await tx.codeOtp.findFirst({ where: { clientId: client.id, utiliseLe: null }, orderBy: { creeLe: 'desc' } }) : null;
+      if (!client || !otp) return { refus: new Probleme(422, 'CODE_OTP_INVALIDE', 'Code incorrect : vérifiez-le, ou demandez un nouveau code') };
+      if (otp.expireLe <= maintenant) return { refus: new Probleme(422, 'CODE_OTP_EXPIRE', 'Ce code a expiré : demandez-en un nouveau') };
+      if (otp.tentatives >= ESSAIS_OTP) return { refus: new Probleme(429, 'TROP_DE_TENTATIVES', 'Trop d\'essais : demandez un nouveau code') };
+      const attendu = Buffer.from(otp.codeHash, 'hex');
+      const recu = Buffer.from(this.hmac(client.id, corps.code), 'hex');
+      if (attendu.length !== recu.length || !timingSafeEqual(attendu, recu)) {
+        await tx.codeOtp.update({ where: { id: otp.id }, data: { tentatives: otp.tentatives + 1 } });
+        return { refus: new Probleme(422, 'CODE_OTP_INVALIDE', 'Code incorrect : vérifiez-le, ou demandez un nouveau code') };
+      }
+      await tx.codeOtp.update({ where: { id: otp.id }, data: { utiliseLe: maintenant, tentatives: otp.tentatives + 1 } });
+      await journaliser(tx, { tenantId: b.id, acteur: { clientId: client.id }, action: 'client.session_ouverte', entite: 'client_final', entiteId: client.id, donnees: { par: 'contact' }, trace: traceDe(appel) });
+      return { refus: null, clientId: client.id };
+    });
+    if (verdict.refus) throw verdict.refus;
+    return { jetonClient: await this.jetons.signerClient({ clientId: verdict.clientId!, tenantId: b.id }), expireDans: DUREE_CLIENT };
   }
 
   // ---- Logo ---------------------------------------------------------------------

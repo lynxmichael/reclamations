@@ -50,13 +50,15 @@ test.describe.serial('activité des agences', () => {
     await expect(page).toHaveURL(`${CONSOLE}/agences`);
     await expect(page.getByRole('heading', { name: 'Activité des agences' })).toBeVisible();
     await expect(page.getByText('Agences sollicitées')).toBeVisible();
-    for (const nom of ['Plateau', 'Cocody Angré', 'Bouaké Commerce', 'Sans agence']) {
+    // Les agences actives ont toujours leur ligne ; « Sans agence » seulement s'il y a eu des dépôts sans agence
+    for (const nom of ['Plateau', 'Cocody Angré', 'Bouaké Commerce']) {
       await expect(page.getByRole('button', { name: new RegExp(`^${nom}`) })).toBeVisible();
     }
 
-    // Sur 30 jours, l'historique du jeu de démonstration touche chaque agence
+    // Sur 30 jours, l'historique du jeu de démonstration touche chaque agence, et des dépôts par lien web
     await page.getByLabel('Période').selectOption('30j');
     await expect(page).toHaveURL(/periode=30j/);
+    await expect(page.getByRole('button', { name: /^Sans agence/ })).toBeVisible();
 
     // Le détail du Plateau : catégories, agents, et son QR code du hall avec son volume
     await page.getByRole('button', { name: /^Plateau/ }).click();
@@ -73,7 +75,7 @@ test.describe.serial('activité des agences', () => {
     const fichier = readFileSync((await (await attente).path())!, 'utf8');
     expect(fichier).toContain('Agence;Code;Ville;Active');
     expect(fichier).toMatch(/Plateau;AG01;Abidjan;Oui/);
-    expect(fichier).toMatch(/Sans agence \(lien web, WhatsApp ou SMS\);/);
+    expect(fichier).toMatch(/Sans agence \(lien web, téléphone, WhatsApp ou SMS\);/);
 
     // Son tableau de bord : filtré sur l'agence
     await detail.getByRole('link', { name: 'Son tableau de bord' }).click();

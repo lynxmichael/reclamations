@@ -32,6 +32,8 @@ import { brouillonParRegles } from '@domaine/ia/consignes';
 import { categorieParRegles, faqParRegles, texteReprise, urgenceParRegles } from '@domaine/ia/assistant';
 import type { EchangeVu } from '../ecrans/portail/Assistant';
 import { canalDuFil } from '@domaine/canaux';
+import { MESSAGES_RATTACHEMENT, doublonPossible, refusRattachement, type ReclamationComparee } from '@domaine/doublons';
+import { masquerDestination, objetEnvoi } from '@domaine/envois';
 
 /* ------------------------------------------------------------------ Types internes */
 
@@ -105,6 +107,10 @@ export interface Ticket {
   conversation: Conversation | null;
   /** Préparée avec l'assistant du portail (étape 18) */
   viaAssistant?: boolean;
+  /** Étape 21 : saisie au guichet ou au téléphone par cette personne */
+  saisieParId?: string | null;
+  /** Étape 21 : doublon joint à cette réclamation principale */
+  rattacheeAId?: string | null;
 }
 
 interface Conversation extends EtatConversation {
@@ -135,6 +141,9 @@ interface Client {
 export interface Envoi {
   id: string;
   clientId: string;
+  /** Étape 22 : la réclamation et le modèle du message (« Messages au client » de la fiche) */
+  ticketId: string;
+  modele: string;
   canal: 'SMS' | 'EMAIL';
   destination: string;
   texte: string;
@@ -439,8 +448,8 @@ export class Moteur {
       // Chat web (étape 17) : réponse restée non lue 2 minutes, le client est prévenu par SMS
       if (t.conversation && avisClientDu(t.conversation, now)) {
         t.conversation.avisClientLe = new Date(now);
-        if (t.statut === 'EN_ATTENTE_CLIENT') this.envoyer(t, 'attend votre réponse.');
-        else if (t.statut === 'OUVERTE' || t.statut === 'EN_COURS') this.envoyer(t, 'a reçu une réponse de la banque.');
+        if (t.statut === 'EN_ATTENTE_CLIENT') this.envoyer(t, 'conversation.reponse', 'attend votre réponse.');
+        else if (t.statut === 'OUVERTE' || t.statut === 'EN_COURS') this.envoyer(t, 'conversation.reponse', 'a reçu une réponse de la banque.');
       }
       if (t.statut === 'RESOLUE' && t.clotureAutoPrevueLe && t.clotureAutoPrevueLe <= now) {
         const v = verifierTransition('CLOTURER_AUTOMATIQUEMENT', this.etat(t), { type: 'SYSTEME' }, now);
@@ -531,7 +540,66 @@ export class Moteur {
     return this.absences
       .filter((a) => a.au >= aujourdhui)
       .sort((a, b) => a.du.localeCompare(b.du) || a.au.localeCompare(b.au))
-      .map((a) => ({ id: a.id, agent: { id: a.agentId, nom: this.nomDe(a.agentId)! }, du: a.du, au: a.au, creeLe: a.creeLe.toISOString() }));
+      .map((a) => ({
+        id: a.id, agent: { id: a.agentId, nom: this.nomDe(a.agentId)! }, du: a.du, au: a.au, creeLe: a.creeLe.toISOString(),
+        reclamationsEnCours: this.tickets.filter((t) => t.agentId === a.agentId && t.statut !== 'CLOTUREE').length,
+      }));
+  }
+
+  /** Étape 21 : agents désactivés ou absents aujourd'hui ; leurs réclamations sont « à réassigner ». */
+  indisponibles(): string[] {
+    const aujourdhui = this.aujourdhui();
+    return PERSONNEL
+      .filter((u) => u.role === 'AGENT' && (u.statut === 'DESACTIVE' || estAbsent(this.absences.filter((a) => a.agentId === u.id), aujourdhui)))
+      .map((u) => u.id);
+  }
+
+  /* -------------------------------------------------------------- Doublons (étape 21) */
+
+  private comparee(t: Ticket): ReclamationComparee {
+    return { id: t.id, clientId: t.clientId, categorieId: t.categorieId, statut: t.statut, creeLe: t.creeLe };
+  }
+  private doublon(t: Ticket) {
+    return this.tickets.some((x) => doublonPossible(this.comparee(t), this.comparee(x)));
+  }
+
+  /** Le doublon est clôturé (motif « Doublon ») et joint à la principale ; un seul message au client. */
+  rattacher(userId: string, id: string, principaleId: string) {
+    const t = this.ticket(id);
+    const acteur = this.acteurUtilisateur(userId);
+    const p = this.tickets.find((x) => x.id === principaleId);
+    if (!p || !this.visibles(userId).includes(p)) throw erreur(404, 'INTROUVABLE', 'Réclamation introuvable');
+    this.exigerTransition('RATTACHER', t, acteur);
+    const refus = refusRattachement({ ...t, rattacheeAId: t.rattacheeAId ?? null }, { ...p, rattacheeAId: p.rattacheeAId ?? null });
+    if (refus) throw erreur(422, 'RATTACHEMENT_IMPOSSIBLE', 'Rattachement impossible', MESSAGES_RATTACHEMENT[refus]);
+    this.passer(t, 'RATTACHER', { type: 'UTILISATEUR', id: userId });
+    Object.assign(t, { echeanceSlaLe: null, alertePreventiveLe: null, slaSuspenduLe: null, clotureLe: new Date(this.maintenant), rattacheeAId: p.id });
+    t.cloture = { mode: 'FORCEE', motif: 'DOUBLON', precision: `Rattachée à ${p.numero}`, parId: userId };
+    this.evenement(p, 'RATTACHEMENT', null, null, { type: 'UTILISATEUR', id: userId }, false);
+    const c = this.client(t.clientId);
+    const texte = `${this.banque.nom} : votre réclamation ${t.numero} est jointe à ${p.numero}, déjà en cours. Suivi : ${this.lienSuivi(p.jetonSuivi).replace('https://', '')}`;
+    for (const [canal, destination] of [['SMS', c.telephone], ['EMAIL', c.email]] as const) {
+      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, ticketId: t.id, modele: 'client.rattachement', canal, destination, texte, date: new Date(this.maintenant), lien: { jeton: p.jetonSuivi } });
+    }
+    this.auditer(userId, 'reclamation.rattachement', t, { principaleId: p.id });
+    this.changer();
+  }
+
+  /** Lien de suivi perdu : renvoyé aux seules coordonnées du client. */
+  renvoyerLienSuivi(userId: string, id: string): S<'LienSuiviRenvoye'> {
+    const t = this.ticket(id);
+    this.exigerOperation('RENVOYER_LIEN', t, this.acteurUtilisateur(userId));
+    const c = this.client(t.clientId);
+    if (!c.telephone && !c.email) throw erreur(422, 'CONTACT_REQUIS', 'Aucune coordonnée pour ce client');
+    this.envoyer(t, 'client.lien_suivi', 'se suit en ligne.');
+    this.auditer(userId, 'reclamation.lien_suivi_renvoye', t);
+    this.changer();
+    return {
+      envois: [
+        ...(c.telephone ? [{ canal: 'SMS' as const, destinationMasquee: c.telephone.replace(/^\+225(\d{2})\d{6}(\d{2})$/, '+225 $1 •• •• •• $2') }] : []),
+        ...(c.email ? [{ canal: 'EMAIL' as const, destinationMasquee: c.email.replace(/^(.).*(@.*)$/, '$1••••$2') }] : []),
+      ],
+    };
   }
 
   ajouterAbsence(userId: string, v: S<'NouvelleAbsence'>) {
@@ -620,11 +688,11 @@ export class Moteur {
   }
 
   /** SMS et e-mail au client : numéro et lien seulement, jamais le contenu (décision S10). */
-  private envoyer(t: Ticket, suite: string, avecLien = true) {
+  private envoyer(t: Ticket, modele: string, suite: string, avecLien = true) {
     const c = this.client(t.clientId);
     const texte = `${this.banque.nom} : votre réclamation ${t.numero} ${suite}${avecLien ? ` Suivi : ${this.lienSuivi(t.jetonSuivi).replace('https://', '')}` : ''}`;
     for (const [canal, destination] of [['SMS', c.telephone], ['EMAIL', c.email]] as const) {
-      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, canal, destination, texte, date: new Date(this.maintenant), lien: avecLien ? { jeton: t.jetonSuivi } : null });
+      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, ticketId: t.id, modele, canal, destination, texte, date: new Date(this.maintenant), lien: avecLien ? { jeton: t.jetonSuivi } : null });
     }
   }
 
@@ -634,14 +702,14 @@ export class Moteur {
    */
   private cloturerAvecEnquete(t: Ticket, mode: ModeClotureAvecEnquete) {
     if (!this.enquetesActives || !clotureAvecEnquete(mode)) {
-      this.envoyer(t, 'est clôturée. Merci de votre confiance.', false);
+      this.envoyer(t, 'client.cloture', 'est clôturée. Merci de votre confiance.', false);
       return;
     }
     t.enquete = { ouverteLe: new Date(this.maintenant), expireLe: finEnquete(this.maintenant), reponse: null };
     const c = this.client(t.clientId);
     const texte = `${this.banque.nom} : réclamation ${t.numero} close. Votre avis : ${this.lienSuivi(t.jetonSuivi).replace('https://', '')}/avis`;
     for (const [canal, destination] of [['SMS', c.telephone], ['EMAIL', c.email]] as const) {
-      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, canal, destination, texte, date: new Date(this.maintenant), lien: { jeton: t.jetonSuivi, avis: true } });
+      if (destination) this.envois.push({ id: this.nouvelId('6666'), clientId: c.id, ticketId: t.id, modele: 'client.cloture', canal, destination, texte, date: new Date(this.maintenant), lien: { jeton: t.jetonSuivi, avis: true } });
     }
     this.apresOuvertureEnquete?.(t);
   }
@@ -739,7 +807,7 @@ export class Moteur {
       agences: p.agence ? [] : AGENCES.filter((a) => a.active).map((a) => ({ id: a.id, nom: a.nom })),
       categories: CATEGORIES.filter((c) => c.active).map(({ id, nom, description }) => ({ id, nom, description })),
       politiqueDonnees: { version: '2026-09', url: '/politique-donnees' },
-      fichiers: { maxFichiers: 5, maxOctets: 5_242_880, types: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] },
+      fichiers: { maxFichiers: 5, maxOctets: 10_485_760, types: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] },
     };
   }
 
@@ -785,7 +853,8 @@ export class Moteur {
       escaladeeVersId: null,
       clientId: client.id,
       description: e.description.trim(),
-      pieces: (e.fichiers ?? []).map((f) => ({ id: this.nouvelId('4444'), nomFichier: f.nom, typeMime: f.type, tailleOctets: f.taille, creeLe: new Date(this.maintenant).toISOString() })),
+      // Étape 22 : la démo n'a pas d'antivirus ; ses fichiers (des noms et des tailles) sont sains
+      pieces: (e.fichiers ?? []).map((f) => ({ id: this.nouvelId('4444'), nomFichier: f.nom, typeMime: f.type, tailleOctets: f.taille, creeLe: new Date(this.maintenant).toISOString(), antivirus: 'SAIN' as const })),
       creeLe: new Date(this.maintenant),
       delaiCibleMinutes: cat.delaiCibleMinutes,
       ...slaAuDepot(this.maintenant, cat.delaiCibleMinutes, this.sla),
@@ -811,7 +880,7 @@ export class Moteur {
     this.tickets.push(t);
     this.evenement(t, 'CREATION', null, 'OUVERTE', { type: 'CLIENT', id: client.id }, true);
     this.attribuerAutomatiquement(t);
-    this.envoyer(t, 'est bien reçue.');
+    this.envoyer(t, 'client.depot', 'est bien reçue.');
     if (t.priorite === 'URGENTE') this.urgente(t);
     this.auditer('CLIENT', 'reclamation.depot', t, { statut: 'OUVERTE', priorite: t.priorite });
     this.changer();
@@ -847,6 +916,7 @@ export class Moteur {
       banque: this.banquePublique(),
       etapes: this.etapesClient(t),
       avis: t.enquete ? { etat: etatAvis({ reponduLe: t.enquete.reponse?.reponduLe ?? null, expireLe: t.enquete.expireLe }, this.maintenant), expireLe: t.enquete.expireLe.toISOString() } : null,
+      rattacheeA: ((p) => (p ? { id: p.id, numero: p.numero, chemin: `/suivi/${p.jetonSuivi}` } : null))(t.rattacheeAId ? this.ticket(t.rattacheeAId) : null),
     };
   }
 
@@ -896,7 +966,7 @@ export class Moteur {
     const code = String(this.hasard.entier(100000, 999999));
     this.otp.set(jeton, { code, expire: new Date(this.maintenant.getTime() + 10 * MINUTE), essais: 0 });
     this.envois.push({
-      id: this.nouvelId('6666'), clientId: c.id, canal: choisi, destination, date: new Date(this.maintenant), lien: null,
+      id: this.nouvelId('6666'), clientId: c.id, ticketId: t.id, modele: 'client.otp', canal: choisi, destination, date: new Date(this.maintenant), lien: null,
       texte: `${this.banque.nom} : votre code est ${code}. Il expire dans 10 minutes. Ne le communiquez à personne.`,
     });
     this.changer();
@@ -972,6 +1042,7 @@ export class Moteur {
       operationsPossibles: this.operations(t, acteur),
       avis: t.enquete ? { etat: this.etatEnquete(t.enquete), expireLe: t.enquete.expireLe.toISOString(), chemin: `/suivi/${t.jetonSuivi}/avis` } : null,
       chat: this.chatActif ? this.etatChat(t) : null,
+      rattacheeA: ((p) => (p ? { id: p.id, numero: p.numero, chemin: null } : null))(t.rattacheeAId ? this.ticket(t.rattacheeAId) : null),
     };
   }
 
@@ -1182,7 +1253,25 @@ export class Moteur {
       enRetard: c.etat === 'DEPASSE',
       escaladee: t.escaladeeVersId !== null,
       sla: { etat: c.etat, delaiCibleMinutes: t.delaiCibleMinutes, minutesRestantes: c.etat === 'ARRETE' ? null : c.minutesRestantes },
+      doublonPossible: this.doublon(t),
+      // Étape 22 : la passerelle simulée remet tous les SMS
+      envoiNonRemis: false,
     };
+  }
+
+  /** Étape 22 : messages au client de la réclamation, les plus récents d'abord ; SMS remis, e-mails acceptés. */
+  private envoisFiche(t: Ticket): S<'EnvoiClient'>[] {
+    // Les plus récents d'abord ; au même instant, le dernier envoyé
+    return this.envois
+      .filter((e) => e.ticketId === t.id)
+      .reverse()
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .slice(0, 50)
+      .map((e) => ({
+        id: e.id, canal: e.canal, objet: objetEnvoi(e.modele), destinationMasquee: masquerDestination(e.canal, e.destination),
+        etat: e.canal === 'SMS' ? 'REMIS' : 'ENVOYE', motif: null, tentatives: 1, prochaineTentativeLe: null,
+        creeLe: e.date.toISOString(), envoyeLe: e.date.toISOString(), remiseLe: e.canal === 'SMS' ? e.date.toISOString() : null, renvoyable: false,
+      }));
   }
 
   /** Files : réclamations en cours de la personne, plus les dernières clôturées. */
@@ -1201,6 +1290,7 @@ export class Moteur {
         urgentes: donnees.filter((r) => r.priorite === 'URGENTE' && r.statut !== 'CLOTUREE').length,
         enRetard: donnees.filter((r) => r.enRetard).length,
         escaladees: donnees.filter((r) => r.escaladee && r.statut !== 'CLOTUREE').length,
+        aReassigner: agent ? 0 : ((ind) => actives.filter((t) => t.agentId && ind.includes(t.agentId)).length)(this.indisponibles()),
       },
     };
   }
@@ -1214,6 +1304,18 @@ export class Moteur {
     const chrono = this.chrono(t);
     const qui = (q: Qui): S<'ActeurVisible'> => ({ type: q.type, nom: q.type === 'UTILISATEUR' ? this.nomDe(q.id) : null });
     const iso = (d: Date | null) => (d ? d.toISOString() : null);
+    // Étape 21 : les autres réclamations du client ; un agent n'ouvre que les siennes
+    const visibles = this.visibles(userId);
+    const duMemeClient: S<'ReclamationDuClient'>[] = this.tickets
+      .filter((x) => x.clientId === t.clientId && x.id !== t.id)
+      .sort((a, b) => b.creeLe.getTime() - a.creeLe.getTime())
+      .slice(0, 10)
+      .map((x) => ({
+        id: x.id, numero: x.numero, categorie: { id: x.categorieId, nom: this.categorie(x.categorieId).nom }, statut: x.statut, creeLe: x.creeLe.toISOString(),
+        agent: x.agentId ? { id: x.agentId, nom: this.nomDe(x.agentId)! } : null,
+        doublonPossible: doublonPossible(this.comparee(t), this.comparee(x)), accessible: visibles.includes(x),
+      }));
+    const principale = t.rattacheeAId ? this.ticket(t.rattacheeAId) : null;
     return {
       id: t.id,
       numero: t.numero,
@@ -1256,8 +1358,13 @@ export class Moteur {
       chronologie: t.evenements.map((e) => ({
         type: e.type, statutAvant: e.statutAvant, statutApres: e.statutApres, acteur: qui(e.acteur), visibleClient: e.visibleClient, date: e.date.toISOString(),
       })),
-      actionsPossibles: this.actions(t, acteur),
+      actionsPossibles: this.actions(t, acteur).filter((x) => x !== 'RATTACHER' || duMemeClient.some((d) => d.statut !== 'CLOTUREE' && d.accessible)),
       operationsPossibles: this.operations(t, acteur),
+      saisiePar: t.saisieParId ? { id: t.saisieParId, nom: this.nomDe(t.saisieParId)! } : null,
+      duMemeClient,
+      rattacheeA: principale ? { id: principale.id, numero: principale.numero, chemin: null } : null,
+      doublonsRattaches: this.tickets.filter((x) => x.rattacheeAId === t.id).map((x) => ({ id: x.id, numero: x.numero, chemin: null })),
+      envois: this.envoisFiche(t),
       avis: t.enquete
         ? { etat: this.etatEnquete(t.enquete), ouverteLe: t.enquete.ouverteLe.toISOString(), expireLe: t.enquete.expireLe.toISOString(), reponse: this.reponseEnquete(t.enquete) }
         : null,
@@ -1288,7 +1395,7 @@ export class Moteur {
   private priseEnCharge(t: Ticket, userId: string) {
     this.passer(t, 'PRENDRE_EN_CHARGE', { type: 'UTILISATEUR', id: userId });
     t.prisEnChargeLe = new Date(this.maintenant);
-    this.envoyer(t, 'est prise en charge par un conseiller.');
+    this.envoyer(t, 'client.statut', 'est prise en charge par un conseiller.');
     this.auditer(userId, 'reclamation.prise_en_charge', t, { statut: 'EN_COURS' });
   }
 
@@ -1326,10 +1433,10 @@ export class Moteur {
       Object.assign(t, slaEnPause(this.maintenant, t, this.sla));
       t.aEteQuestionne = true;
       this.passer(t, 'QUESTIONNER_CLIENT', { type: 'UTILISATEUR', id: userId });
-      if (!differe) this.envoyer(t, 'attend votre réponse.');
+      if (!differe) this.envoyer(t, 'client.question', 'attend votre réponse.');
     } else {
       this.evenement(t, 'MESSAGE', null, null, { type: 'UTILISATEUR', id: userId }, true);
-      if (!differe) this.envoyer(t, 'a reçu une réponse de la banque.');
+      if (!differe) this.envoyer(t, 'client.reponse', 'a reçu une réponse de la banque.');
     }
     this.auditer(userId, 'reclamation.reponse_client', t, { question: attendreReponse });
     this.changer();
@@ -1369,7 +1476,7 @@ export class Moteur {
     });
     this.passer(t, 'RESOUDRE', { type: 'UTILISATEUR', id: userId });
     const fin = r.clotureAutoPrevueLe.toLocaleDateString('fr-FR', { timeZone: this.calendrier.zone, day: '2-digit', month: '2-digit' });
-    this.envoyer(t, `est résolue. Confirmez ou contestez avant le ${fin}.`);
+    this.envoyer(t, 'client.resolution', `est résolue. Confirmez ou contestez avant le ${fin}.`);
     this.auditer(userId, 'reclamation.resolution', t, { statut: 'RESOLUE', slaRespecte: r.slaRespecte });
     this.changer();
   }
@@ -1402,7 +1509,7 @@ export class Moteur {
     this.passer(t, 'CLOTURER_DE_FORCE', { type: 'UTILISATEUR', id: userId });
     Object.assign(t, { echeanceSlaLe: null, alertePreventiveLe: null, slaSuspenduLe: null, clotureLe: new Date(this.maintenant) });
     t.cloture = { mode: 'FORCEE', motif, precision: precision.trim(), parId: userId };
-    this.envoyer(t, 'est clôturée par la banque.', false);
+    this.envoyer(t, 'client.cloture', 'est clôturée par la banque.', false);
     this.auditer(userId, 'reclamation.cloture_forcee', t, { motif });
     this.changer();
   }
@@ -1457,7 +1564,7 @@ export class Moteur {
       parStatut,
       parCategorie: compte((t) => t.categorieId, (k) => this.categorie(k).nom),
       parCanal: compte((t) => t.canal, (k) => (k === 'QR_CODE' ? 'QR code en agence' : 'Lien web')),
-      parAgence: compte((t) => t.agenceId ?? 'aucune', (k) => (k === 'aucune' ? 'Sans agence (lien web, WhatsApp ou SMS)' : AGENCES.find((a) => a.id === k)!.nom)),
+      parAgence: compte((t) => t.agenceId ?? 'aucune', (k) => (k === 'aucune' ? 'Sans agence (lien web, téléphone, WhatsApp ou SMS)' : AGENCES.find((a) => a.id === k)!.nom)),
       delaiPremiereReponseMoyenMinutes: moyenne(repondues.map((t) => delaiPremiereReponse(t.premiereReponseLe!, t.creeLe, this.sla))),
       delaiResolutionMoyenMinutes: moyenne(resolues.map((t) => Math.floor(minutesOuvreesEntre(t.creeLe, t.resolueLe!, this.calendrier)))),
       tauxRespectSla: resolues.length ? resolues.filter((t) => t.slaRespecte).length / resolues.length : null,

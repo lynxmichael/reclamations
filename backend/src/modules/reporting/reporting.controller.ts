@@ -14,7 +14,8 @@ import { AppelCourant, EntreesValidees, personnelBanque, traceDe, type Appel, ty
 import { Operation } from '../../infrastructure/contrat/operation.decorator.js';
 import { Probleme } from '../../infrastructure/contrat/probleme.js';
 import { HORLOGE, type Horloge } from '../../noyau/noyau.module.js';
-import { filtresReclamations } from '../reclamations/reclamations.controller.js';
+import { chargerParametres } from '../../application/reclamations/parametres.js';
+import { filtresReclamations, indisponiblesPour } from '../reclamations/reclamations.controller.js';
 import { BOM, ligne, type Cellule } from './csv.js';
 import {
   CANAUX, MODES_CLOTURE, MOTIFS_CLOTURE, PRIORITES, STATUTS,
@@ -135,7 +136,11 @@ export class ServiceReporting {
   async exporter(appel: Appel, q: Record<string, unknown>, res: Response): Promise<void> {
     const moi = personnelBanque(appel);
     const maintenant = this.horloge();
-    const { where } = filtresReclamations(moi, q, maintenant);
+    // Étape 21 : la file « à réassigner » dépend des absences et des comptes désactivés du jour
+    const indisponibles = q.file === 'a-reassigner'
+      ? await this.bd.enBanque(moi.tenantId, async (tx) => indisponiblesPour(tx, await chargerParametres(tx, moi.tenantId), moi, maintenant))
+      : [];
+    const { where } = filtresReclamations(moi, q, maintenant, indisponibles);
     const banque = await this.bd.enBanque(moi.tenantId, async (tx) => {
       const [total, b] = await enSerie([
         () => tx.reclamation.count({ where }),

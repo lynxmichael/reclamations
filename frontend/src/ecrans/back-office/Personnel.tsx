@@ -354,7 +354,14 @@ export function Personnel({
         >
           <p className="text-[15px] leading-relaxed text-encre-2">
             {confirmation.type === 'desactiver'
-              ? 'Ses sessions sont fermées tout de suite et elle ne peut plus se connecter. Son historique reste dans les réclamations et le journal. Vous pourrez réactiver le compte.'
+              ? <>
+                Ses sessions sont fermées tout de suite et elle ne peut plus se connecter. Son historique reste dans les réclamations et le journal. Vous pourrez réactiver le compte.
+                {confirmation.u.reclamationsEnCours > 0 && (
+                  <span className="mt-2 block font-semibold text-encre">
+                    {confirmation.u.reclamationsEnCours} réclamation{confirmation.u.reclamationsEnCours > 1 ? 's' : ''} en cours à son nom : elles iront dans la file « À réassigner », et ses superviseurs en sont prévenus.
+                  </span>
+                )}
+              </>
               : totpObligatoire
                 ? `À sa prochaine connexion, ${confirmation.u.prenom} scannera un nouveau QR code avec son téléphone. Ses sessions ouvertes sont fermées.`
                 : `${confirmation.u.prenom} se connectera avec son mot de passe et pourra réactiver la double authentification depuis « Mon compte ». Ses sessions ouvertes sont fermées.`}

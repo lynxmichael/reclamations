@@ -17,6 +17,8 @@ import { chargerContexte, suggestion, type ContexteAttribution } from '../../app
 import type { ParametresBanque } from '../../application/reclamations/parametres.js';
 import { clientEnLigne, disponibilite, nonLueParLaBanque, reponseDue } from '../../domaine/conversation.js';
 import { canalDuFil } from '../../domaine/canaux.js';
+import { doublonPossible } from '../../domaine/doublons.js';
+import { aSignaler, etatEnvoi, masquerDestination, nonRemisEnSuspens, objetEnvoi, renvoyable, type MotifEchec, type StatutNotificationBrut } from '../../domaine/envois.js';
 
 type S<N extends keyof components['schemas']> = components['schemas'][N];
 
@@ -25,7 +27,7 @@ export const nomComplet = (u: { prenom: string; nom: string }) => `${u.prenom} $
 const reference = (u: { id: string; prenom: string; nom: string } | null) => (u ? { id: u.id, nom: nomComplet(u) } : null);
 
 const PERSONNE = { select: { id: true, nom: true, prenom: true } } as const;
-const PIECE = { select: { id: true, nomFichier: true, typeMime: true, tailleOctets: true, creeLe: true } } as const;
+const PIECE = { select: { id: true, nomFichier: true, typeMime: true, tailleOctets: true, creeLe: true, antivirus: true } } as const;
 
 /** Un message et ses pièces jointes (fiche, vue du client, conversations). */
 export const INCLUSION_MESSAGE = {
@@ -43,15 +45,71 @@ export const INCLUSION_FICHE = {
   client: { select: { id: true, nom: true, email: true, telephone: true } },
   commentaires: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: INCLUSION_MESSAGE },
   piecesJointes: { where: { commentaireId: null }, ...PIECE, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] },
-  evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: { acteurUtilisateur: { select: { nom: true, prenom: true } } } },
+  evenements: { orderBy: [{ creeLe: 'asc' }, { id: 'asc' }], include: { acteurUtilisateur: { select: { id: true, nom: true, prenom: true } } } },
   enquete: true,
   conversation: true,
+  // Étape 21 : doublons
+  rattacheeA: { select: { id: true, numero: true } },
+  doublons: { select: { id: true, numero: true }, orderBy: [{ creeLe: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.ReclamationInclude;
 
 export type TicketComplet = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_FICHE }>;
 
-export const piece = (p: { id: string; nomFichier: string; typeMime: string; tailleOctets: number; creeLe: Date }): S<'PieceJointe'> =>
-  ({ id: p.id, nomFichier: p.nomFichier, typeMime: p.typeMime, tailleOctets: p.tailleOctets, creeLe: p.creeLe.toISOString() });
+export const piece = (p: { id: string; nomFichier: string; typeMime: string; tailleOctets: number; creeLe: Date; antivirus: S<'EtatAntivirus'> }): S<'PieceJointe'> =>
+  ({ id: p.id, nomFichier: p.nomFichier, typeMime: p.typeMime, tailleOctets: p.tailleOctets, creeLe: p.creeLe.toISOString(), antivirus: p.antivirus });
+
+// ---------------------------------------------------------------------------
+//  Envois au client (étape 22)
+// ---------------------------------------------------------------------------
+
+/** Nombre de messages au client montrés sur la fiche */
+export const ENVOIS_MAX = 50;
+
+const CHAMPS_ENVOI = {
+  id: true, canal: true, modele: true, destination: true, statut: true, tentatives: true, prochaineTentativeLe: true,
+  motifEchec: true, creeLe: true, envoyeeLe: true, remiseLe: true, lueLe: true,
+} as const;
+
+/**
+ * Les messages au client d'une réclamation, les plus récents d'abord : leur objet, leur coordonnée
+ * masquée et leur état, jamais leur texte (il porte le lien de suivi, montré une seule fois au personnel).
+ */
+export async function envoisDe(tx: ClientTransaction, t: Parameters<typeof etat>[0] & { id: string }, acteur: Acteur): Promise<S<'EnvoiClient'>[]> {
+  const lignes = await tx.notification.findMany({
+    where: { reclamationId: t.id, destinataireClientId: { not: null }, canal: { not: 'IN_APP' } },
+    select: CHAMPS_ENVOI,
+    orderBy: [{ creeLe: 'desc' }, { id: 'desc' }],
+    take: ENVOIS_MAX,
+  });
+  const peutRenvoyer = verifierOperation('RENVOYER_LIEN', etat(t), acteur).ok;
+  const enSuspens = new Set(nonRemisEnSuspens(lignes.map((l) => ({ ...l, statut: l.statut as StatutNotificationBrut }))).map((l) => l.id));
+  return lignes.map((l) => ({
+    id: l.id,
+    canal: l.canal as 'EMAIL' | 'SMS' | 'WHATSAPP',
+    objet: objetEnvoi(l.modele),
+    destinationMasquee: l.destination ? masquerDestination(l.canal as 'EMAIL' | 'SMS' | 'WHATSAPP', l.destination) : '—',
+    etat: etatEnvoi(l),
+    motif: l.statut === 'ECHEC' ? ((l.motifEchec as MotifEchec | null) ?? 'ERREUR_TECHNIQUE') : null,
+    tentatives: l.tentatives,
+    prochaineTentativeLe: l.statut === 'EN_ATTENTE' ? iso(l.prochaineTentativeLe) : null,
+    creeLe: l.creeLe.toISOString(),
+    envoyeLe: iso(l.envoyeeLe),
+    remiseLe: iso(l.remiseLe ?? (l.statut === 'DELIVREE' ? l.lueLe : null)),
+    renvoyable: peutRenvoyer && renvoyable(l.modele) && enSuspens.has(l.id),
+  }));
+}
+
+/** Étape 22 : réclamations d'une page dont un message au client n'a pas été remis, et rien ne l'a remplacé. */
+export async function nonRemisDeLaPage(tx: ClientTransaction, ids: readonly string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const lignes = await tx.notification.findMany({
+    where: { reclamationId: { in: [...ids] }, destinataireClientId: { not: null }, canal: { not: 'IN_APP' } },
+    select: { reclamationId: true, modele: true, statut: true, creeLe: true },
+  });
+  const parTicket = new Map<string, typeof lignes>();
+  for (const l of lignes) if (l.reclamationId && aSignaler(l.modele)) parTicket.set(l.reclamationId, [...(parTicket.get(l.reclamationId) ?? []), l]);
+  return new Set([...parTicket].filter(([, l]) => nonRemisEnSuspens(l.map((x) => ({ ...x, statut: x.statut as StatutNotificationBrut }))).length > 0).map(([id]) => id));
+}
 
 // ---------------------------------------------------------------------------
 //  Chrono SLA
@@ -100,7 +158,36 @@ export async function lireFiche(tx: ClientTransaction, id: string, acteur: Acteu
   const t = await tx.reclamation.findUnique({ where: { id }, include: INCLUSION_FICHE });
   if (!t || !verifierOperation('CONSULTER', etat(t), acteur).ok) throw introuvable('Réclamation introuvable');
   const ctx = peutRecevoirSuggestion(p, acteur) && !t.agentId && t.statut === 'OUVERTE' ? await chargerContexte(tx, p, maintenant) : null;
-  return fiche(t, acteur, maintenant, p.sla.calendrier, suggestion(ctx, t), p.banque);
+  return fiche(t, acteur, maintenant, p.sla.calendrier, suggestion(ctx, t), p.banque, await duMemeClient(tx, t, acteur), await envoisDe(tx, t, acteur));
+}
+
+/** Nombre de réclamations du même client montrées sur la fiche (étape 21) */
+export const DU_MEME_CLIENT_MAX = 10;
+
+/**
+ * Étape 21 : les autres réclamations du même client, les plus récentes d'abord, chacune signalée
+ * comme doublon possible. Un agent les voit toutes (numéro, catégorie, statut, agent), mais n'ouvre
+ * que les siennes (C5).
+ */
+export async function duMemeClient(
+  tx: ClientTransaction, t: { id: string; clientId: string; categorieId: string; statut: TicketComplet['statut']; creeLe: Date }, acteur: Acteur,
+): Promise<S<'ReclamationDuClient'>[]> {
+  const autres = await tx.reclamation.findMany({
+    where: { clientId: t.clientId, id: { not: t.id } },
+    select: { id: true, numero: true, clientId: true, categorieId: true, statut: true, creeLe: true, agentId: true, clotureAutoPrevueLe: true, categorie: { select: { id: true, nom: true } }, agent: PERSONNE },
+    orderBy: [{ creeLe: 'desc' }, { id: 'desc' }],
+    take: DU_MEME_CLIENT_MAX,
+  });
+  return autres.map((a) => ({
+    id: a.id,
+    numero: a.numero,
+    categorie: { id: a.categorie.id, nom: a.categorie.nom },
+    statut: a.statut,
+    creeLe: a.creeLe.toISOString(),
+    agent: reference(a.agent),
+    doublonPossible: doublonPossible({ ...t, clientId: t.clientId }, a),
+    accessible: verifierOperation('CONSULTER', etat(a), acteur).ok,
+  }));
 }
 
 /** Mode suggestion (étape 16) : l'agent proposé s'affiche pour qui peut assigner, le superviseur. */
@@ -115,7 +202,7 @@ export async function contexteSuggestions(tx: ClientTransaction, p: ParametresBa
 
 export function fiche(
   t: TicketComplet, acteur: Acteur, maintenant: Date, cal: CalendrierNormalise, suggeree: Choix | null = null,
-  canaux: CanauxOuverts | null = null,
+  canaux: CanauxOuverts | null = null, autres: S<'ReclamationDuClient'>[] = [], envois: S<'EnvoiClient'>[] = [],
 ): S<'ReclamationDetail'> {
   const c = chrono(t, maintenant, cal);
   const qui = (type: 'CLIENT' | 'UTILISATEUR' | 'SYSTEME', u: { nom: string; prenom: string } | null): S<'ActeurVisible'> =>
@@ -167,7 +254,9 @@ export function fiche(
       visibleClient: e.visibleClient,
       date: e.creeLe.toISOString(),
     })),
-    actionsPossibles: actionsPossibles(etat(t), acteur, maintenant),
+    // Étape 21 : rattacher, seulement s'il y a une réclamation du même client à laquelle la joindre
+    actionsPossibles: actionsPossibles(etat(t), acteur, maintenant)
+      .filter((x) => x !== 'RATTACHER' || autres.some((o) => o.statut !== 'CLOTUREE' && o.accessible)),
     operationsPossibles: operationsPossibles(etat(t), acteur),
     avis: avisReclamation(t.enquete, maintenant),
     attributionSuggeree: suggeree
@@ -175,7 +264,18 @@ export function fiche(
       : null,
     conversation: canaux?.chatWeb && t.conversation ? conversationTicket(t.conversation, t.statut, maintenant, canaux) : null,
     depotAssistant: depotAssistant(t.evenements),
+    saisiePar: saisiePar(t.evenements),
+    duMemeClient: autres,
+    rattacheeA: t.rattacheeA ? { id: t.rattacheeA.id, numero: t.rattacheeA.numero, chemin: null } : null,
+    doublonsRattaches: t.doublons.map((d) => ({ id: d.id, numero: d.numero, chemin: null })),
+    envois,
   };
+}
+
+/** Étape 21 : saisie au guichet ou au téléphone par un membre du personnel, auteur de l'événement de création. */
+export function saisiePar(evenements: readonly { type: string; acteurType: string; acteurUtilisateur: { id: string; nom: string; prenom: string } | null }[]): S<'ReferenceNommee'> | null {
+  const creation = evenements.find((e) => e.type === 'CREATION');
+  return creation?.acteurType === 'UTILISATEUR' && creation.acteurUtilisateur ? reference(creation.acteurUtilisateur) : null;
 }
 
 /** Déposée avec l'assistant du portail (étape 18) : noté dans l'événement de création. */
@@ -281,7 +381,9 @@ export const INCLUSION_RESUME = {
 
 export type TicketResume = Prisma.ReclamationGetPayload<{ include: typeof INCLUSION_RESUME }>;
 
-export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormalise, ctx: ContexteAttribution | null = null): S<'ReclamationResume'> {
+export function resume(
+  t: TicketResume, maintenant: Date, cal: CalendrierNormalise, ctx: ContexteAttribution | null = null, doublon = false, nonRemis = false,
+): S<'ReclamationResume'> {
   const suggeree = suggestion(ctx, t);
   const c = chrono(t, maintenant, cal);
   return {
@@ -300,7 +402,25 @@ export function resume(t: TicketResume, maintenant: Date, cal: CalendrierNormali
     enRetard: enCours(t.statut) && estEnRetard(t, maintenant),
     escaladee: t.escaladeeVersId !== null || t.escaladeeLe !== null,
     sla: { etat: c.etat, delaiCibleMinutes: t.delaiCibleMinutes, minutesRestantes: c.etat === 'ARRETE' ? null : c.minutesRestantes },
+    doublonPossible: doublon,
+    envoiNonRemis: nonRemis,
   };
+}
+
+/**
+ * Étape 21 : parmi les réclamations d'une page de la file, celles qui ont un doublon possible (même
+ * client, même catégorie, non clôturées, à moins de 30 jours d'écart), en une requête.
+ */
+export async function doublonsDeLaPage(
+  tx: ClientTransaction, lignes: readonly { id: string; clientId: string; categorieId: string; statut: TicketComplet['statut']; creeLe: Date }[],
+): Promise<Set<string>> {
+  const ouvertes = lignes.filter((l) => l.statut !== 'CLOTUREE');
+  if (!ouvertes.length) return new Set();
+  const autres = await tx.reclamation.findMany({
+    where: { clientId: { in: [...new Set(ouvertes.map((l) => l.clientId))] }, statut: { not: 'CLOTUREE' } },
+    select: { id: true, clientId: true, categorieId: true, statut: true, creeLe: true },
+  });
+  return new Set(ouvertes.filter((l) => autres.some((a) => doublonPossible(l, a))).map((l) => l.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -334,5 +454,6 @@ export async function lireVueClient(tx: ClientTransaction, id: string, clientId:
     operationsPossibles: operationsPossibles(etat(t), acteur),
     avis: avisClient(t.enquete, t.jetonSuivi, maintenant),
     chat: p.banque.chatWeb ? etatChat(t.conversation, maintenant, p.sla.calendrier) : null,
+    rattacheeA: t.rattacheeA ? { id: t.rattacheeA.id, numero: t.rattacheeA.numero, chemin: null } : null,
   };
 }

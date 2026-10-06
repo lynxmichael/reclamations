@@ -11,6 +11,8 @@ async function demarrer() {
   const app = await creerApplication({ configuration });
   await app.listen(configuration.port, '0.0.0.0');
   new Logger('API').log(`API ${configuration.version} à l'écoute sur le port ${configuration.port} — documentation : /api/docs`);
+  // Étape 22 : rappel, à chaque démarrage, d'une installation sans antivirus (refusée en production)
+  if (configuration.antivirus.mode === 'aucun') new Logger('Antivirus').warn('ANTIVIRUS=aucun : pièces jointes acceptées sans analyse (développement seulement)');
 }
 
 demarrer().catch((e: unknown) => {
