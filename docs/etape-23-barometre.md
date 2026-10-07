@@ -1,7 +1,7 @@
 # Étape 23 — Baromètre mensuel de l'expérience client et recommandations
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 06/10/2026 · **Statut : en attente de validation** (décisions V1 à V13, partie 7).
+Version du 06/10/2026 · **Statut : validé le 07/10/2026** (décisions V1 à V13 retenues telles que proposées).
 
 Dernière fonction de la phase 2 (cadrage de l'étape 14) : chaque mois, une synthèse par banque de ce que vivent ses clients, et des recommandations que l'Admin Entreprise retient ou écarte.
 
