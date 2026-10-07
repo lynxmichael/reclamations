@@ -343,6 +343,7 @@ describe('journal des appels et consommation (décisions I2 et I5)', () => {
       banque: { id: a.id, nom: 'Banque Alpha' }, assistantIa: true,
       tours: lignes.filter((l) => l.finalite === 'ACCUEIL_PORTAIL').length,
       suggestions: lignes.filter((l) => l.finalite === 'SUGGESTION_AGENT').length,
+      barometres: 0,
       parIa: lignes.filter((l) => l.issue === 'OK').length,
       regles: lignes.filter((l) => l.issue !== 'OK').length,
       jetonsEntree: somme((l) => l.jetonsEntree), jetonsSortie: somme((l) => l.jetonsSortie),

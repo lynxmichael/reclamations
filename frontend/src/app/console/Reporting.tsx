@@ -256,11 +256,11 @@ export function PageActivite() {
         annoncer('Facturation WhatsApp et SMS téléchargée.');
       } : undefined}
       surExporterIa={ia.data ? () => {
-        const lignes = ia.data.banques.map((b) => [b.banque.nom, b.tours, b.suggestions, b.parIa, b.regles, b.jetonsEntree, b.jetonsSortie, b.coutUsd] as const);
+        const lignes = ia.data.banques.map((b) => [b.banque.nom, b.tours, b.suggestions, b.barometres, b.parIa, b.regles, b.jetonsEntree, b.jetonsSortie, b.coutUsd] as const);
         enregistrer({
           nom: `assistant-ia-${choisi}.csv`,
           type: 'text/csv',
-          contenu: csv([['Banque', 'Tours du portail', 'Brouillons', 'Par l\'IA', 'Par les règles', 'Jetons en entrée', 'Jetons en sortie', 'Coût (USD)'], ...lignes]),
+          contenu: csv([['Banque', 'Tours du portail', 'Brouillons', 'Baromètres', 'Par l\'IA', 'Par les règles', 'Jetons en entrée', 'Jetons en sortie', 'Coût (USD)'], ...lignes]),
         });
         annoncer('Consommation de l\'assistant IA téléchargée.');
       } : undefined}

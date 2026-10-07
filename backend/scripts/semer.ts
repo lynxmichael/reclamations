@@ -34,6 +34,7 @@ async function principal() {
       guichet: true,
       absenceDuJour: true,
       envois: true,
+      barometre: true,
       motDePasse: demo.motDePasse,
       graineTotp: demo.graineTotp,
       lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}`,

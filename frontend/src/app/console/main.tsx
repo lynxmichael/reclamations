@@ -11,6 +11,7 @@ import { PageConnexion, PageInvitation, PageMotDePasseOublie, PageReinitialisati
 import { Accueil, Protege, Reserve } from './Cadre';
 import { ROUTES_BANQUE, ROUTES_PLATEFORME } from './contexte';
 import { PageAbsences, PageAttribution } from './Attribution';
+import { PageBarometre } from './Barometre';
 import { PageConversations } from './Conversations';
 import { PageAssistant, PageAudit, PageBanque, PageCategories, PageHoraires, PagePersonnel, PagePoints } from './Parametrage';
 import { PageAdministrateurs, PageAlertes, PageBanques, PageJournalPlateforme, PagePlans } from './Plateforme';
@@ -45,6 +46,7 @@ const routeur = createBrowserRouter([
       { path: `${ROUTES_BANQUE.conversations}/:id`, element: <Reserve roles={[...BANQUE]}><PageConversations /></Reserve> },
       { path: ROUTES_BANQUE.tableau, element: <Reserve roles={['AGENT', ...ENCADREMENT]}><PageTableau /></Reserve> },
       { path: ROUTES_BANQUE.agences, element: <Reserve roles={[...ENCADREMENT]}><PageAgences /></Reserve> },
+      { path: ROUTES_BANQUE.barometre, element: <Reserve roles={[...ENCADREMENT]}><PageBarometre /></Reserve> },
       { path: ROUTES_BANQUE.compte, element: <Reserve roles={[...BANQUE]}><PageCompte /></Reserve> },
       { path: ROUTES_BANQUE.categories, element: <Reserve roles={[...ADMIN]}><PageCategories /></Reserve> },
       { path: ROUTES_BANQUE.points, element: <Reserve roles={[...ENCADREMENT]}><PagePoints /></Reserve> },

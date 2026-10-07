@@ -55,7 +55,7 @@ async function principal() {
     SMS_ENTRANT_SECRET: 'developpement-sms-entrant-0123456789',
   });
   const bd = new BaseDonnees(urls.application);
-  await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 60, enquetes: true, attribution: true, lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` });
+  await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 60, enquetes: true, attribution: true, barometre: true, lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` });
   await bd.fermer();
 
   const app = await creerApplication({ configuration: config, journaux: process.env.JOURNAUX_NAVIGATEUR === '1' });

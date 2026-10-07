@@ -26,6 +26,8 @@ export interface ParametresBanque {
     /** WhatsApp Business et SMS entrant (étape 20), ouverts par Makor (exigent le chat) */
     readonly whatsapp: boolean;
     readonly smsEntrant: boolean;
+    /** Baromètre mensuel et recommandations (étape 23), ouverts par Makor */
+    readonly barometre: boolean;
     readonly suspendueLe: Date | null;
     readonly plafondTicketsMois: number | null;
   };
@@ -57,6 +59,7 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
       assistantIa: banque.assistantIa && banque.chatWeb,
       whatsapp: banque.whatsapp && banque.chatWeb,
       smsEntrant: banque.smsEntrant && banque.chatWeb,
+      barometre: banque.barometre,
       suspendueLe: banque.suspendueLe,
       plafondTicketsMois: banque.plan.plafondTicketsMois,
     },

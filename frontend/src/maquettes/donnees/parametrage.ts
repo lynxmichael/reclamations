@@ -75,6 +75,7 @@ export const PARAMETRES: S<'ParametresBanque'> = {
   modeAttribution: 'SUGGESTION',
   chatWeb: true,
   assistantIa: true,
+  barometre: true,
   doubleAuthentificationObligatoire: false,
   whatsapp: '+2252722000000',
   smsEntrant: '+2252722000001',

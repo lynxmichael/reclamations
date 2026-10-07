@@ -12,7 +12,10 @@
 import { createHash } from 'node:crypto';
 import { DateTime } from 'luxon';
 import { base32Encode } from './base32.js';
+import { BarometresMensuels, moisEcoule } from '../src/application/barometre/barometres.js';
+import { MoteurIa } from '../src/application/ia/moteur.js';
 import { CycleDeVie } from '../src/application/reclamations/cycle-de-vie.js';
+import { decalerMois } from '../src/domaine/barometre.js';
 import { lectureClient } from '../src/application/reclamations/conversations.js';
 import { signalerNonRemis } from '../src/application/reclamations/envois.js';
 import type { Acteur } from '../src/domaine/reclamation/machine.js';
@@ -122,6 +125,12 @@ export interface OptionsSemis {
    * injoignable, d'après la passerelle) et l'alerte des superviseurs. Non par défaut dans les tests
    */
   readonly envois?: boolean;
+  /**
+   * Étape 23 : baromètre ouvert pour la Banque Alpha ; avec l'historique, les baromètres des deux derniers
+   * mois écoulés (analyse par les règles), la première recommandation du plus ancien déjà retenue par
+   * l'Admin Entreprise. Non par défaut dans les tests
+   */
+  readonly barometre?: boolean;
   readonly horloge?: () => Date;
   readonly lienSuivi?: (slug: string, jeton: string) => string;
   /** Environnement de démonstration : mot de passe et graine TOTP propres à l'installation */
@@ -217,6 +226,7 @@ export async function semer(bd: BaseDonnees, o: OptionsSemis): Promise<JeuDemo> 
   if (o.chat && o.canaux) await canauxAlpha(bd, alpha, o, exemples);
   if (o.guichet && exemples) await guichetAlpha(bd, alpha, o, exemples, maintenant);
   if (o.guichet && o.envois && exemples) await envoisAlpha(bd, alpha, maintenant);
+  if (o.barometre) await barometreAlpha(bd, alpha, o, maintenant);
   return { superAdmin: { id: sa.id, email: sa.email }, alpha, horizon };
 }
 
@@ -408,6 +418,30 @@ async function assistantAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemi
   await bd.enBanque(alpha.id, (tx) => tx.appelIa.createMany({ data: lignes }));
 }
 
+/**
+ * Baromètre de la Banque Alpha (étape 23) : ouvert par Makor ; les deux derniers mois écoulés publiés
+ * comme le ferait le worker, par les règles (sans fournisseur d'IA), avec leur notification.
+ */
+async function barometreAlpha(bd: BaseDonnees, alpha: BanqueDemo, o: OptionsSemis, maintenant: Date) {
+  await bd.enSysteme((tx) => tx.banque.update({ where: { id: alpha.id }, data: { barometre: true } }));
+  if (!o.historique) return;
+  const barometres = new BarometresMensuels(bd, new MoteurIa(bd, { fournisseur: 'regles', plafondJour: 0 }, null, () => maintenant), () => maintenant);
+  const dernier = moisEcoule(maintenant, 'Africa/Abidjan');
+  for (const mois of [decalerMois(dernier, -1), dernier]) await barometres.generer(alpha.id, mois);
+  // Fatou a déjà retenu la première recommandation du mois le plus ancien
+  await bd.enBanque(alpha.id, async (tx) => {
+    const premiere = await tx.recommandationBarometre.findFirst({
+      where: { barometre: { mois: new Date(`${decalerMois(dernier, -1)}-01T00:00:00Z`) } }, orderBy: { ordre: 'asc' }, select: { id: true },
+    });
+    if (premiere) {
+      await tx.recommandationBarometre.update({
+        where: { id: premiere.id },
+        data: { decision: 'RETENUE', commentaire: 'Point chaque lundi avec l\'équipe concernée.', decideeParId: alpha.comptes.fatou!.id, decideeLe: maintenant },
+      });
+    }
+  });
+}
+
 // ---- Historique (étape 9) ---------------------------------------------------------------------
 
 /** Générateur pseudo-aléatoire déterministe (mulberry32) : le même historique à chaque semis. */
@@ -424,9 +458,19 @@ function aleatoire(graine: number): () => number {
 
 /** Commentaires des enquêtes simulées, selon la note donnée. */
 const COMMENTAIRES: Record<'positif' | 'mitige' | 'negatif', readonly string[]> = {
-  positif: ['Traitement rapide, merci au conseiller.', 'Très satisfait, le conseiller a été clair.', 'Réponse claire et courtoise.'],
-  mitige: ['Bonne prise en charge, mais j\'ai dû relancer une fois.', 'Le délai était trop long pour un simple virement.'],
-  negatif: ['Le délai était trop long pour un simple virement.', 'On ne m\'a pas expliqué pourquoi l\'opération avait été bloquée.'],
+  positif: [
+    'Traitement rapide, merci au conseiller.', 'Très satisfait, le conseiller a été clair.', 'Réponse claire et courtoise.',
+    'Bon accueil en agence, dossier réglé en deux jours.', 'J\'ai été tenu informé à chaque étape, merci.',
+  ],
+  mitige: [
+    'Bonne prise en charge, mais j\'ai dû relancer une fois.', 'Le délai était trop long pour un simple virement.',
+    'Problème réglé, mais personne ne m\'a prévenu de l\'avancement.', 'Les frais ont été remboursés, mais il a fallu insister.',
+  ],
+  negatif: [
+    'Le délai était trop long pour un simple virement.', 'On ne m\'a pas expliqué pourquoi l\'opération avait été bloquée.',
+    'Trois semaines d\'attente pour ma carte, sans aucune nouvelle.', 'Le distributeur a avalé ma carte et personne ne rappelle.',
+    'Frais prélevés deux fois, toujours pas remboursés.',
+  ],
 };
 
 /** Avis simulé : plutôt satisfait, la recommandation suit la note ; un commentaire une fois sur quatre, accordé à la note. */

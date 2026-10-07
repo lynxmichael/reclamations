@@ -10,7 +10,7 @@ export const PLANS: S<'Plan'>[] = [
 
 const plan = (n: number) => ({ id: PLANS[n - 1]!.id, nom: PLANS[n - 1]!.nom });
 
-function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'enqueteSatisfaction' | 'attributionAutomatique' | 'chatWeb' | 'assistantIa' | 'doubleAuthentificationObligatoire' | 'suspendueLe' | 'motifSuspension' | 'whatsapp' | 'smsEntrant' | 'raccordements'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
+function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire' | 'seuilAlerteSlaPourcent' | 'delaiClotureAutoJours' | 'smsChaqueChangementStatut' | 'enqueteSatisfaction' | 'attributionAutomatique' | 'chatWeb' | 'assistantIa' | 'barometre' | 'doubleAuthentificationObligatoire' | 'suspendueLe' | 'motifSuspension' | 'whatsapp' | 'smsEntrant' | 'raccordements'> & Partial<S<'BanquePlateforme'>>): S<'BanquePlateforme'> {
   return {
     id: id('banque', n),
     fuseauHoraire: FUSEAU,
@@ -21,6 +21,7 @@ function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire'
     attributionAutomatique: false,
     chatWeb: false,
     assistantIa: false,
+    barometre: false,
     doubleAuthentificationObligatoire: false,
     whatsapp: false,
     smsEntrant: false,
@@ -32,7 +33,7 @@ function banque(n: number, b: Omit<S<'BanquePlateforme'>, 'id' | 'fuseauHoraire'
 }
 
 export const BANQUES: S<'BanquePlateforme'>[] = [
-  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true,
+  banque(1, { nom: 'Banque Alpha', slug: 'alpha', prefixeTickets: 'ALP', plan: plan(2), creeLe: '2026-03-02T09:00:00Z', enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, barometre: true,
     whatsapp: true, smsEntrant: true,
     raccordements: { whatsapp: { numero: '+2252722000000', identifiant: '109876543210987', compte: '209876543210987' }, sms: { numero: '+2252722000001' } },
     consommation: { agents: 7, ticketsCeMois: 312 } }),

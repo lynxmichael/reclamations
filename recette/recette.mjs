@@ -266,6 +266,13 @@ const CRITERES_PHASE_2 = [
     ['backend/src/infrastructure/envois', /./],
     ['verifications'],
   ]],
+  ['Étape 23 — Baromètre mensuel et recommandations : ouvert banque par banque par le Super Admin ; le 1er de chaque mois, le worker publie pour chaque banque qui l\'a le baromètre du mois écoulé, une seule fois et figé ensuite (réclamations reçues, délais respectés, premier contact, contestations, satisfaction, NPS, taux de réponse, comparés au mois précédent ; tendance sur 6 mois ; irritants par catégorie et par agence ; thèmes des commentaires des clients avec des exemples ; faits marquants) ; les thèmes et jusqu\'à 5 recommandations sont rédigés par l\'IA si la banque a l\'assistant (commentaires masqués, ni nom, ni coordonnées, ni numéro de réclamation ; une réponse qui cite un chiffre absent des données est écartée), sinon par des règles ; l\'Admin Entreprise et les superviseurs sont prévenus et le lisent, l\'Admin Entreprise retient ou écarte chaque recommandation avec un commentaire (journal d\'audit), sans en changer le texte ; le Super Admin n\'y a aucun accès et voit seulement l\'usage de l\'IA ; la page s\'imprime.', [
+    [e2e('barometre'), /./],
+    [nav('16-barometre'), /./],
+    ['backend/src/domaine/barometre', /./],
+    ['backend/src/domaine/ia/barometre', /./],
+    ['verifications'],
+  ]],
 ];
 
 // ---- Exécution ------------------------------------------------------------------------------------------------
@@ -362,7 +369,7 @@ if (mesures.length) {
 }
 
 L.push('## Critères de la phase 2', '');
-L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14), et les étapes ajoutées à la demande du client : 19 (activité des agences, double authentification au choix de la banque), 21 (guichet, doublons, réaffectation) et 22 (envois non remis, pièces jointes Word et antivirus).`, '');
+L.push(`${criteresPhase2.filter((c) => c.ok).length} critère(s) sur ${criteresPhase2.length} vérifié(s) : un par fonction de la phase 2 livrée (cadrage de l'étape 14), et les étapes ajoutées à la demande du client : 19 (activité des agences, double authentification au choix de la banque), 21 (guichet, doublons, réaffectation), 22 (envois non remis, pièces jointes Word et antivirus) et 23 (baromètre mensuel et recommandations).`, '');
 tableauCriteres(criteresPhase2);
 L.push('## Suites', '');
 L.push('| Suite | Résultat | Tests | Durée |', '|---|---|---:|---:|');

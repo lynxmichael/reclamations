@@ -18,6 +18,7 @@ import { Agences } from '../ecrans/back-office/Agences';
 import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
+import { Barometre } from '../ecrans/back-office/Barometre';
 import { CadreBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
 import { Compte } from '../ecrans/back-office/Compte';
@@ -29,6 +30,7 @@ import { PointsDepot } from '../ecrans/back-office/PointsDepot';
 import { ReponsesAssistant } from '../ecrans/back-office/ReponsesAssistant';
 import { TableauDeBord } from '../ecrans/back-office/TableauDeBord';
 import { Ticket } from '../ecrans/back-office/Ticket';
+import { barometreDemo } from '../maquettes/donnees/barometre';
 import { DOMAINE } from '../maquettes/donnees/commun';
 import { AGENCES, AGENTS_DES_GROUPES, CATEGORIES, HORAIRES, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, moi } from '../maquettes/donnees/parametrage';
 import { heure } from '../ui/format';
@@ -153,7 +155,7 @@ export function adresseBanque(d: Demo) {
   const { page, ficheId } = d.banque;
   if (ficheId) return `${base}/reclamations/${d.moteur.ticket(ficheId).numero}`;
   if (page === 'conversations' && d.banque.conversationId) return `${base}/conversations/${d.banque.conversationId.slice(-6)}`;
-  return `${base}/${{ reclamations: 'reclamations', conversations: 'conversations', tableau: 'tableau-de-bord', agences: 'agences', compte: 'mon-compte', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', attribution: 'parametrage/attribution', assistant: 'parametrage/assistant', personnel: 'personnel', absences: 'absences', audit: 'journal-audit' }[page]}`;
+  return `${base}/${{ reclamations: 'reclamations', conversations: 'conversations', tableau: 'tableau-de-bord', agences: 'agences', barometre: 'barometre', compte: 'mon-compte', categories: 'parametrage/categories', points: 'parametrage/points-de-depot', horaires: 'parametrage/horaires', banque: 'parametrage/banque', attribution: 'parametrage/attribution', assistant: 'parametrage/assistant', personnel: 'personnel', absences: 'absences', audit: 'journal-audit' }[page]}`;
 }
 
 /** Textes proposés dans la fiche de la réclamation de la démo, tant qu'ils servent. */
@@ -238,6 +240,10 @@ export function EcranBanque({ d }: { d: Demo }) {
         // Étape 19 : l'activité de chaque agence, calculée sur les réclamations de la démo
         contenu = <Agences key={b.role} indicateurs={moteur.indicateursAgences(30)} periode="30 derniers jours" ouverte={AGENCES[0]!.id} surExporter={a.exporter} />;
         break;
+      case 'barometre':
+        // Étape 23 : le baromètre des maquettes, recalé sur le mois écoulé ; les décisions restent dans la page
+        contenu = <BarometreDemo key={b.role} moi={moiCourant} maintenant={moteur.maintenant} fuseau={PARAMETRES.fuseauHoraire} />;
+        break;
       case 'compte':
         contenu = <CompteDemo key={moiCourant.id} moi={moiCourant} banque={moteur.banque.nom} />;
         break;
@@ -312,6 +318,29 @@ export function EcranBanque({ d }: { d: Demo }) {
     >
       {contenu}
     </CadreBackOffice>
+  );
+}
+
+/** Baromètre de la démo (étape 23) : l'Admin Entreprise décide pour de faux, dans la page. */
+function BarometreDemo({ moi: m, maintenant, fuseau }: { moi: S<'Moi'>; maintenant: Date; fuseau: string }) {
+  const [{ liste, barometre }, setDonnees] = useState(() => barometreDemo(maintenant));
+  return (
+    <Barometre
+      liste={liste}
+      barometre={barometre}
+      peutDecider={m.role === 'ADMIN_ENTREPRISE'}
+      fuseau={fuseau}
+      surImprimer={() => window.print()}
+      surDecider={(id, decision, commentaire) => setDonnees((d) => {
+        const recommandations = d.barometre.recommandations.map((r) => (r.id !== id ? r : {
+          ...r, decision, commentaire,
+          decideePar: decision === 'A_ETUDIER' ? null : { id: m.id, nom: `${m.prenom} ${m.nom}` },
+          decideeLe: decision === 'A_ETUDIER' ? null : maintenant.toISOString(),
+        }));
+        const aEtudier = recommandations.filter((r) => r.decision === 'A_ETUDIER').length;
+        return { liste: { ...d.liste, donnees: d.liste.donnees.map((x) => ({ ...x, aEtudier })) }, barometre: { ...d.barometre, recommandations } };
+      })}
+    />
   );
 }
 

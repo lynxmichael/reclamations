@@ -28,13 +28,13 @@ Référence : cahier des charges consolidé (version du 25/09/2026).
 | 19 | Activité des agences et double authentification au choix de la banque | Validé | [`backend/src/modules/reporting/indicateurs.ts`](backend/src/modules/reporting/indicateurs.ts) · [`frontend/src/ecrans/back-office/Agences.tsx`](frontend/src/ecrans/back-office/Agences.tsx) · [`frontend/src/ecrans/back-office/Compte.tsx`](frontend/src/ecrans/back-office/Compte.tsx) · [note](docs/etape-19-agences-double-authentification.md) |
 | 20 | WhatsApp Business et SMS entrant | Validé | [`backend/src/domaine/canaux.ts`](backend/src/domaine/canaux.ts) · [`backend/src/modules/canaux/canaux.service.ts`](backend/src/modules/canaux/canaux.service.ts) · [`backend/src/infrastructure/canaux/whatsapp.ts`](backend/src/infrastructure/canaux/whatsapp.ts) · [`frontend/src/ui/Canaux.tsx`](frontend/src/ui/Canaux.tsx) · [note](docs/etape-20-whatsapp-sms-entrant.md) |
 | 21 | Saisie au guichet et par téléphone, dossiers retrouvés, doublons, réaffectation | Validé | [`backend/src/domaine/doublons.ts`](backend/src/domaine/doublons.ts) · [`backend/src/application/reclamations/cycle-de-vie.ts`](backend/src/application/reclamations/cycle-de-vie.ts) · [`frontend/src/ecrans/back-office/NouvelleReclamation.tsx`](frontend/src/ecrans/back-office/NouvelleReclamation.tsx) · [`frontend/src/ecrans/portail/Retrouver.tsx`](frontend/src/ecrans/portail/Retrouver.tsx) · [note](docs/etape-21-guichet-doublons-reaffectation.md) |
-| 22 | Envois non remis et pièces jointes (Word, antivirus) | En attente de validation | [`backend/src/domaine/envois.ts`](backend/src/domaine/envois.ts) · [`backend/src/infrastructure/fichiers/antivirus.ts`](backend/src/infrastructure/fichiers/antivirus.ts) · [`backend/src/infrastructure/fichiers/word.ts`](backend/src/infrastructure/fichiers/word.ts) · [`frontend/src/ecrans/back-office/Ticket.tsx`](frontend/src/ecrans/back-office/Ticket.tsx) · [note](docs/etape-22-envois-pieces-jointes.md) |
-| 23 | Baromètre et recommandations IA | À venir | |
+| 22 | Envois non remis et pièces jointes (Word, antivirus) | Validé | [`backend/src/domaine/envois.ts`](backend/src/domaine/envois.ts) · [`backend/src/infrastructure/fichiers/antivirus.ts`](backend/src/infrastructure/fichiers/antivirus.ts) · [`backend/src/infrastructure/fichiers/word.ts`](backend/src/infrastructure/fichiers/word.ts) · [`frontend/src/ecrans/back-office/Ticket.tsx`](frontend/src/ecrans/back-office/Ticket.tsx) · [note](docs/etape-22-envois-pieces-jointes.md) |
+| 23 | Baromètre et recommandations IA | En attente de validation | [`backend/src/domaine/barometre.ts`](backend/src/domaine/barometre.ts) · [`backend/src/domaine/ia/barometre.ts`](backend/src/domaine/ia/barometre.ts) · [`backend/src/application/barometre/barometres.ts`](backend/src/application/barometre/barometres.ts) · [`frontend/src/ecrans/back-office/Barometre.tsx`](frontend/src/ecrans/back-office/Barometre.tsx) · [note](docs/etape-23-barometre.md) |
 
 ## Structure
 
 ```
-contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (126 opérations)
+contrat/openapi.yaml                  contrat d'API OpenAPI 3.1 (129 opérations)
 docker-compose.yml                    développement : PostgreSQL 16, Redis 8, Mailpit, API, worker, écrans, outils
 docker-compose.prod.yml               production (VPS Contabo) : Caddy et écrans, API, worker, migrations, PostgreSQL, Redis, antivirus ClamAV, sauvegarde
 docker-compose.demo.yml               environnement de démonstration (second serveur) : surcharge de la production
@@ -53,12 +53,13 @@ docker/caddy/commun.caddy             en-têtes de sécurité, /api/* vers l'API
 docker/caddy/options-*.caddy          émission des certificats : Let's Encrypt, ou autorité locale en répétition
 backend/
   Dockerfile                          image de l'application (API et worker) et image des migrations
-  prisma/schema.prisma                modèle de données (29 modèles, 18 énumérations)
-  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting, enquêtes, attribution, conversations, assistant IA, WhatsApp et SMS, guichet et doublons, envois et antivirus
+  prisma/schema.prisma                modèle de données (31 modèles, 18 énumérations)
+  prisma/migrations/                  modèle initial, sécurité (rôles, RLS, CHECK, audit), cycle de vie, reporting, enquêtes, attribution, conversations, assistant IA, WhatsApp et SMS, guichet et doublons, envois et antivirus, baromètre
   prisma.config.ts                    configuration Prisma 7
-  src/domaine/                        code pur : temps ouvré, machine d'états, SLA, escalade, enquêtes, attribution, conversations, assistant IA, dialogue WhatsApp et SMS (+ tests unitaires), partagé avec la démo
-  src/domaine/ia/                     assistant IA : masquage, interdits, tri par règles, consignes envoyées au fournisseur
+  src/domaine/                        code pur : temps ouvré, machine d'états, SLA, escalade, enquêtes, attribution, conversations, assistant IA, dialogue WhatsApp et SMS, baromètre (+ tests unitaires), partagé avec la démo
+  src/domaine/ia/                     assistant IA et baromètre : masquage, interdits, tri par règles, consignes envoyées au fournisseur, réponses vérifiées
   src/application/reclamations/       cycle de vie d'une réclamation, attribution, conversations, tâches planifiées du SLA
+  src/application/barometre/          baromètre mensuel : chiffres du mois, analyse (IA ou règles), publication par le worker
   src/contrat/                        types générés du contrat + tests de cohérence contrat ↔ code
   src/infrastructure/base-de-donnees/ accès contextuel : banque, plateforme, système
   src/infrastructure/contrat/         routes, rôles, validation et erreurs lus dans le contrat ; Swagger
@@ -73,25 +74,25 @@ backend/
   scripts/semer.ts                    jeu de démonstration : deux banques, leur personnel, 60 jours d'historique
   scripts/demonstration.ts            environnement de démonstration : mot de passe et graine TOTP de l'installation
   scripts/creer-super-admin.ts        premier Super Admin d'une installation
-  scripts/taches.ts                   un passage des tâches planifiées du worker, à la demande (tests navigateur, dépannage)
+  scripts/taches.ts                   un passage des tâches planifiées du worker, à la demande (tests navigateur, dépannage) ; --barometre : les baromètres qui manquent
   scripts/banc-ia.ts · banc-ia/       banc d'essai des fournisseurs d'IA : 100 échanges, notes pondérées, rapport (npm run banc-ia)
   scripts/canal.ts                    un client écrit sur WhatsApp ou par SMS, accusé de remise d'un SMS, en développement (npm run canal)
-  test/e2e/                           221 tests de bout en bout, chaque réponse validée contre le contrat
+  test/e2e/                           235 tests de bout en bout, chaque réponse validée contre le contrat
   scripts/verifier-integrite.ts       32 vérifications du modèle (étape 2)
-  scripts/verifier-securite.ts        190 vérifications de sécurité (étapes 3, 9, 15 à 22)
+  scripts/verifier-securite.ts        214 vérifications de sécurité (étapes 3, 9, 15 à 23)
   scripts/verifier-cycle-de-vie.ts    45 vérifications du cycle de vie et du SLA (étape 4)
 frontend/
   Dockerfile                          image web : Caddy, la console et le portail construits
   portail/ · console/                 pages d'entrée des deux applications (étape 8)
   src/app/portail/                    portail client branché sur l'API : assistant, dépôt, suivi, espace client, chat, avis
-  src/app/console/                    console : connexion, réclamations, conversations, tableau de bord, paramétrage, attribution, assistant IA, personnel, absences, audit, plateforme
+  src/app/console/                    console : connexion, réclamations, conversations, tableau de bord, baromètre, paramétrage, attribution, assistant IA, personnel, absences, audit, plateforme
   src/api/                            client d'API tiré du contrat, sessions du personnel et du client, anti-robot
-  src/ui/                             système visuel : statuts, chrono SLA, couleurs de la banque, courbe d'évolution
+  src/ui/                             système visuel : statuts, chrono SLA, couleurs de la banque, courbe d'évolution, tendances mensuelles
   src/ecrans/                         écrans du portail, du back-office et de la console (étape 6)
   src/maquettes/                      données fictives conformes au contrat, galerie des maquettes
   src/demo/                           démo cliquable : API simulée, 30 jours d'historique, visite guidée
-  tests/                              300 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
-  tests/navigateur/                   68 tests dans Chromium (Playwright) sur la vraie API
+  tests/                              314 tests : maquettes et démo ↔ contrat ↔ machine d'états, client d'API, reporting, anti-robot
+  tests/navigateur/                   73 tests dans Chromium (Playwright) sur la vraie API
 docs/
   etape-2-modele-de-donnees.md        note de l'étape 2 et diagramme entité-relation
   etape-3-architecture.md             note d'architecture de l'étape 3 et diagrammes
@@ -114,12 +115,13 @@ docs/
   etape-20-whatsapp-sms-entrant.md    le client écrit sur WhatsApp ou par SMS, la réponse part là où il a écrit ; raccordement par Makor
   etape-21-guichet-doublons-reaffectation.md  saisie au guichet et au téléphone, réclamations retrouvées, doublons rattachés, dossiers à réassigner
   etape-22-envois-pieces-jointes.md   état de chaque message au client, accusés de remise, renvoi ; Word et antivirus ClamAV, 10 Mo
+  etape-23-barometre.md               baromètre mensuel de chaque banque : chiffres, irritants, ce que disent les clients, recommandations (IA ou règles)
   banc-ia/rapport.md                  rapport du banc d'essai de l'IA (à relancer avec les clés des fournisseurs)
   exploitation.md                     guide d'exploitation : VPS, installation, sauvegardes, supervision, mises à jour, restauration
   recette/                            cahier de recette (à signer) et rapport de la recette automatique
   demo-cliquable.md                   présenter la démo à une banque : préparation, visite, mode libre
   api/index.html                      documentation du contrat, lisible sans connexion
-  maquettes/index.html                les 36 écrans en une page, lisible sans connexion
+  maquettes/index.html                les 37 écrans en une page, lisible sans connexion
   demo/index.html                     démo cliquable pour les rendez-vous commerciaux, sans connexion
 ```
 
@@ -137,9 +139,9 @@ docker compose exec api npm run totp -- serge.kouadio@banque-alpha.example   # c
 docker compose logs -f api worker       # journaux (les SMS et WhatsApp de développement s'y affichent)
 docker compose exec api npm run canal -- whatsapp 0707070707 "Bonjour"   # un client écrit à la Banque Alpha (étape 20)
 docker compose exec api npm run canal -- remise 0505060708 NON_REMIS      # accusé de remise du dernier SMS à ce numéro (étape 22)
-docker compose run --rm verification    # contrat, typage, tests unitaires, 267 vérifications, tests de bout en bout
-docker compose run --rm maquettes       # écrans : 300 tests, les deux applications, docs/maquettes/ et docs/demo/
-docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 68 tests
+docker compose run --rm verification    # contrat, typage, tests unitaires, 291 vérifications, tests de bout en bout
+docker compose run --rm maquettes       # écrans : 314 tests, les deux applications, docs/maquettes/ et docs/demo/
+docker compose run --rm navigateur      # écrans dans Chromium sur la vraie API : 73 tests
 docker compose run --rm recette         # tout ce qui précède, plus l'essai de sauvegarde : rapport des 11 critères et de la phase 2
 ```
 
@@ -153,7 +155,7 @@ docker compose run --rm recette         # tout ce qui précède, plus l'essai de
 
 Comptes de démonstration, mot de passe et codes TOTP : [note de l'étape 7, section 7](docs/etape-7-backend.md#7-jeu-de-démonstration). L'API, le worker et les écrans se rechargent à chaque modification du code, contrat d'API compris, y compris sous Windows (les fichiers sont relus chaque seconde : Docker Desktop ne signale pas les changements du dossier partagé). Si une nouvelle livraison ne semble pas prise en compte : `docker compose restart api worker console portail`, puis rechargement forcé de la page (Ctrl+Maj+R). L'antivirus ClamAV est désactivé par défaut en développement ; pour l'essayer : `COMPOSE_PROFILES=antivirus` et `ANTIVIRUS=clamav` dans `.env` (voir `.env.example`). Les liens des e-mails (Mailpit) pointent vers la console et le portail ci-dessus. Le tableau de bord et les exports de la Banque Alpha s'appuient sur 60 jours d'historique ; une base semée avant l'étape 9 ne l'a pas : `docker compose down -v`, `docker compose up -d`, puis `npm run semer`.
 
-La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `403 passed` (tests unitaires), puis `32`, `190` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `221 passed` (tests de bout en bout de l'API). Pour les écrans : `300 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `68 passed`.
+La vérification tourne entièrement dans un conteneur Node 22 : rien à installer sur la machine hôte. Résultat attendu : contrat valide, `413 passed` (tests unitaires), puis `32`, `214` et `45 vérifications réussies` (modèle, sécurité, cycle de vie), chacune avec `0 en échec`, enfin `235 passed` (tests de bout en bout de l'API). Pour les écrans : `314 passed`, les deux applications construites, puis `docs/maquettes/index.html` et `docs/demo/index.html` reconstruits ; dans le navigateur : `73 passed`.
 
 Les maquettes et la démo s'ouvrent aussi directement dans un navigateur, sans Docker : `docs/maquettes/index.html` et `docs/demo/index.html`. Pour présenter la démo à une banque : [guide](docs/demo-cliquable.md).
 
@@ -195,8 +197,8 @@ npm install                 # installe les dépendances et génère le client Pr
 npm run migrate:deploy      # applique les migrations sur reclamations_dev
 npm run dev                 # API : http://localhost:3000/api/docs
 npm run dev:worker          # worker (dans un second terminal)
-npm test                    # 403 tests unitaires
-npm run test:e2e            # 221 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
+npm test                    # 413 tests unitaires
+npm run test:e2e            # 235 tests de bout en bout (base reclamations_e2e recréée à chaque fois)
 npx prisma studio           # parcourir les tables (connexion propriétaire)
 ```
 
@@ -211,7 +213,7 @@ npm run dev:console         # console : http://localhost:5173 (appelle l'API sur
 npm run dev:portail         # portail : http://alpha.localhost:5174/d/7K3QX9P2MA
 npm test                    # 198 tests unitaires
 npx playwright install chromium
-npm run test:navigateur     # 43 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
+npm run test:navigateur     # 73 tests dans Chromium (API de test sur le port 3300, base reclamations_navigateur)
 npm run build               # console, portail, docs/maquettes/ et docs/demo/
 ```
 

@@ -35,6 +35,7 @@ export const ROUTES_BANQUE: Record<PageBackOffice, string> = {
   conversations: '/conversations',
   tableau: '/tableau-de-bord',
   agences: '/agences',
+  barometre: '/barometre',
   categories: '/parametrage/categories',
   points: '/parametrage/agences',
   horaires: '/parametrage/horaires',
@@ -47,7 +48,7 @@ export const ROUTES_BANQUE: Record<PageBackOffice, string> = {
   compte: '/compte',
 };
 export const PAGES_BANQUE: PageBackOffice[] = [
-  'reclamations', 'conversations', 'tableau', 'agences', 'categories', 'points', 'horaires', 'banque', 'attribution', 'assistant', 'personnel', 'absences', 'audit', 'compte',
+  'reclamations', 'conversations', 'tableau', 'agences', 'barometre', 'categories', 'points', 'horaires', 'banque', 'attribution', 'assistant', 'personnel', 'absences', 'audit', 'compte',
 ];
 /** Pages de l'attribution automatique (étape 16) : offertes quand Makor a ouvert la fonction à la banque. */
 export const PAGES_ATTRIBUTION: PageBackOffice[] = ['attribution', 'absences'];
@@ -55,9 +56,11 @@ export const PAGES_ATTRIBUTION: PageBackOffice[] = ['attribution', 'absences'];
 export const PAGES_CHAT: PageBackOffice[] = ['conversations'];
 /** Base de réponses de l'assistant IA (étape 18) : offerte quand Makor a ouvert l'assistant à la banque. */
 export const PAGES_ASSISTANT: PageBackOffice[] = ['assistant'];
+/** Baromètre mensuel (étape 23) : offert quand Makor a ouvert la fonction à la banque. */
+export const PAGES_BAROMETRE: PageBackOffice[] = ['barometre'];
 export const pagesBanque = (p: S<'ParametresBanque'>): PageBackOffice[] =>
   PAGES_BANQUE.filter((page) => (p.attributionAutomatique || !PAGES_ATTRIBUTION.includes(page)) && (p.chatWeb || !PAGES_CHAT.includes(page))
-    && (p.assistantIa || !PAGES_ASSISTANT.includes(page)));
+    && (p.assistantIa || !PAGES_ASSISTANT.includes(page)) && (p.barometre || !PAGES_BAROMETRE.includes(page)));
 
 export const ROUTES_PLATEFORME: Record<PageConsole, string> = {
   banques: '/plateforme/banques',

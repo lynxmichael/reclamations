@@ -26,6 +26,11 @@ async function telephone(browser: Browser): Promise<Page> {
 }
 
 test.describe.serial('guichet, doublons et réaffectation (étape 21)', () => {
+  test.afterAll(async () => {
+    // Quoi qu'il arrive, Mamadou n'est plus absent pour les tests suivants (attribution, étape 16)
+    await sql('DELETE FROM absence_agent WHERE utilisateur_id = (SELECT id FROM utilisateur WHERE email = $1)', [COMPTES.agent2]);
+  });
+
   test('Aya saisit au guichet la réclamation d\'une cliente sans smartphone et imprime son récépissé', async ({ page }) => {
     await connecter(page, COMPTES.agent);
     await page.getByRole('button', { name: 'Nouvelle réclamation' }).click();
@@ -179,6 +184,10 @@ test.describe.serial('guichet, doublons et réaffectation (étape 21)', () => {
     await page.getByRole('link', { name: 'Absences' }).click();
     await expect(page.getByRole('heading', { name: 'Absences', level: 1 })).toBeVisible();
     await page.getByLabel('Agent').selectOption({ label: 'Mamadou Traoré' });
+    // Jusqu'à dans 10 jours : le soir ou le week-end, la file « À réassigner » regarde le prochain jour
+    // ouvré (étape 16) ; une absence d'aujourd'hui seulement n'y serait plus comptée
+    const dans10Jours = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+    await page.getByLabel('Dernier jour').fill(dans10Jours);
     await page.getByRole('button', { name: 'Déclarer l\'absence' }).click();
     await expect(page.getByText('Absence de Mamadou Traoré déclarée')).toBeVisible();
     const ligne = page.getByRole('row', { name: /Mamadou Traoré/ });

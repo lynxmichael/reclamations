@@ -81,6 +81,8 @@ tags:
     description: Assistant automatique du portail, base de réponses de la banque, brouillons pour les agents, consommation (phase 2, étape 18)
   - name: Canaux
     description: Messages des clients reçus sur WhatsApp et par SMS, statuts des envois WhatsApp (phase 2, étape 20)
+  - name: Baromètre
+    description: Baromètre mensuel de l'expérience client et recommandations, par banque (phase 2, étape 23)
 
 paths:
   # ===========================================================================
@@ -2330,6 +2332,87 @@ paths:
         '403': { $ref: '#/components/responses/Interdit' }
         '404': { $ref: '#/components/responses/Introuvable' }
 
+  /banque/barometres:
+    get:
+      tags: [Baromètre]
+      operationId: listerBarometres
+      summary: Baromètres publiés, du plus récent au plus ancien
+      description: |
+        Un baromètre par mois, publié par le worker le 1er du mois suivant (dans le fuseau de la banque)
+        et figé ensuite. Le premier arrive dans les 10 minutes qui suivent l'ouverture de la fonction, pour
+        le mois écoulé. Fonction ouverte par Makor (`modifierBanque`, `barometre`) : sinon 403
+        FONCTION_NON_OUVERTE.
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      responses:
+        '200':
+          description: Baromètres publiés et date du prochain
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListeBarometres' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+
+  /banque/barometres/{mois}:
+    get:
+      tags: [Baromètre]
+      operationId: lireBarometre
+      summary: Le baromètre d'un mois
+      description: |
+        Indicateurs du mois et du précédent, tendance sur 6 mois, irritants par catégorie et par agence,
+        thèmes des commentaires des clients avec des exemples, faits marquants et recommandations. Les
+        chiffres sont calculés par la plateforme ; l'IA (si l'assistant est ouvert) ne fait que regrouper
+        les commentaires et rédiger les recommandations, sans chiffre qui ne soit dans les données.
+        Mois sans baromètre : 404.
+      x-roles: [SUPERVISEUR, ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Mois'
+      responses:
+        '200':
+          description: Le baromètre
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Barometre' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
+  /banque/barometres/{mois}/recommandations/{id}:
+    put:
+      tags: [Baromètre]
+      operationId: deciderRecommandation
+      summary: Retenir ou écarter une recommandation
+      description: |
+        L'Admin Entreprise décide de chaque recommandation (`RETENUE`, `ECARTEE`, ou `A_ETUDIER` pour
+        revenir sur sa décision), avec un commentaire facultatif (l'action prévue, la raison). Seule la
+        décision change : le baromètre et le texte des recommandations restent tels que publiés. Chaque
+        décision est inscrite au journal d'audit.
+      x-roles: [ADMIN_ENTREPRISE]
+      security:
+        - jetonPersonnel: []
+      parameters:
+        - $ref: '#/components/parameters/Mois'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecisionRecommandation' }
+      responses:
+        '200':
+          description: Recommandation décidée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecommandationBarometre' }
+        '400': { $ref: '#/components/responses/Invalide' }
+        '401': { $ref: '#/components/responses/NonAuthentifie' }
+        '403': { $ref: '#/components/responses/Interdit' }
+        '404': { $ref: '#/components/responses/Introuvable' }
+
   /banque/utilisateurs:
     get:
       tags: [Personnel]
@@ -3142,6 +3225,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    Mois:
+      name: mois
+      in: path
+      required: true
+      description: Mois civil, dans le fuseau de la banque
+      schema: { $ref: '#/components/schemas/MoisCivil' }
     PieceId:
       name: pieceId
       in: path
@@ -4824,7 +4913,7 @@ components:
     ParametresBanque:
       type: object
       required: [nom, slug, prefixeTickets, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, assistantIa, doubleAuthentificationObligatoire,
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, modeAttribution, chatWeb, assistantIa, barometre, doubleAuthentificationObligatoire,
         whatsapp, smsEntrant, couleurPrimaire, couleurSecondaire, logoUrl, emailContact, plan, consommation]
       properties:
         whatsapp:
@@ -4846,6 +4935,7 @@ components:
         modeAttribution: { $ref: '#/components/schemas/ModeAttribution' }
         chatWeb: { type: boolean, description: "Chat web du portail et boîte de réception (étape 17), ouverts par Makor" }
         assistantIa: { type: boolean, description: "Assistant du portail et brouillons pour les agents (étape 18), ouverts par Makor" }
+        barometre: { type: boolean, description: "Baromètre mensuel et recommandations (étape 23), ouverts par Makor" }
         doubleAuthentificationObligatoire: { type: boolean, description: "Double authentification exigée de tout le personnel (étape 19), réglée par l'Admin Entreprise" }
         couleurPrimaire: { $ref: '#/components/schemas/Couleur' }
         couleurSecondaire: { $ref: '#/components/schemas/Couleur' }
@@ -5266,7 +5356,7 @@ components:
     BanquePlateforme:
       type: object
       required: [id, nom, slug, prefixeTickets, plan, fuseauHoraire, seuilAlerteSlaPourcent, delaiClotureAutoJours,
-        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, assistantIa, doubleAuthentificationObligatoire,
+        smsChaqueChangementStatut, enqueteSatisfaction, attributionAutomatique, chatWeb, assistantIa, barometre, doubleAuthentificationObligatoire,
         whatsapp, smsEntrant, raccordements, suspendueLe, motifSuspension, creeLe, consommation]
       properties:
         whatsapp: { type: boolean, description: "WhatsApp Business ouvert (étape 20)" }
@@ -5285,6 +5375,7 @@ components:
         attributionAutomatique: { type: boolean }
         chatWeb: { type: boolean }
         assistantIa: { type: boolean }
+        barometre: { type: boolean, description: "Baromètre mensuel (étape 23)" }
         doubleAuthentificationObligatoire: { type: boolean, description: "Réglée par l'Admin Entreprise de la banque (étape 19)" }
         suspendueLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
         motifSuspension: { type: [string, 'null'] }
@@ -5339,6 +5430,11 @@ components:
         smsEntrant:
           type: boolean
           description: "SMS entrant (étape 20) ; mêmes conditions que WhatsApp"
+        barometre:
+          type: boolean
+          description: |
+            Baromètre mensuel et recommandations (étape 23). Sans l'assistant IA, l'analyse se fait par les
+            règles ; avec, les commentaires des clients passent masqués par le fournisseur d'IA.
     IndicateursPlateforme:
       type: object
       required: [du, au, banques]
@@ -5593,14 +5689,192 @@ components:
           type: array
           items:
             type: object
-            required: [banque, assistantIa, tours, suggestions, parIa, regles, jetonsEntree, jetonsSortie, coutUsd]
+            required: [banque, assistantIa, tours, suggestions, barometres, parIa, regles, jetonsEntree, jetonsSortie, coutUsd]
             properties:
               banque: { $ref: '#/components/schemas/ReferenceNommee' }
               assistantIa: { type: boolean }
               tours: { type: integer, minimum: 0 }
               suggestions: { type: integer, minimum: 0 }
+              barometres: { type: integer, minimum: 0, description: "Analyses du baromètre mensuel (étape 23)" }
               parIa: { type: integer, minimum: 0 }
               regles: { type: integer, minimum: 0 }
               jetonsEntree: { type: integer, minimum: 0 }
               jetonsSortie: { type: integer, minimum: 0 }
               coutUsd: { type: number, minimum: 0, examples: [1.2345] }
+
+    # ---- Baromètre (étape 23) ---------------------------------------------------------------
+    MoisCivil:
+      type: string
+      pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+      examples: ['2026-09']
+    ListeBarometres:
+      type: object
+      required: [prochainLe, donnees]
+      properties:
+        prochainLe: { type: string, format: date, description: "Publication du prochain baromètre (le 1er du mois prochain)" }
+        donnees:
+          type: array
+          items: { $ref: '#/components/schemas/ResumeBarometre' }
+    ResumeBarometre:
+      type: object
+      required: [mois, source, genereLe, reclamations, tauxRespectSla, tauxSatisfaits, recommandations, aEtudier]
+      properties:
+        mois: { $ref: '#/components/schemas/MoisCivil' }
+        source: { $ref: '#/components/schemas/SourceAnalyse' }
+        genereLe: { $ref: '#/components/schemas/Horodatage' }
+        reclamations: { type: integer, minimum: 0 }
+        tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        recommandations: { type: integer, minimum: 0, maximum: 5 }
+        aEtudier: { type: integer, minimum: 0, maximum: 5, description: "Recommandations sans décision" }
+    SourceAnalyse:
+      type: string
+      enum: [IA, REGLES]
+      description: "Thèmes et recommandations rédigés par l'IA, ou par les règles de la plateforme"
+    MesuresBarometre:
+      type: object
+      description: |
+        Chiffres d'un mois civil. Réclamations : déposées pendant le mois ; résolues, délais et premier
+        contact : résolues pendant le mois (minutes ouvrées) ; contestées : clôtures contestées pendant le
+        mois ; réponses, satisfaits (notes 4 et 5), note et NPS : réponses reçues pendant le mois ; taux de
+        réponse : enquêtes dont le délai de réponse a pris fin pendant le mois.
+      required: [reclamations, urgentes, resolues, tauxRespectSla, tauxPremierContact, delaiResolutionMoyenMinutes, contestees,
+        enquetes, tauxReponse, reponses, tauxSatisfaits, noteMoyenne, nps]
+      properties:
+        reclamations: { type: integer, minimum: 0 }
+        urgentes: { type: integer, minimum: 0 }
+        resolues: { type: integer, minimum: 0 }
+        tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        tauxPremierContact: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        delaiResolutionMoyenMinutes: { type: [integer, 'null'], minimum: 0 }
+        contestees: { type: integer, minimum: 0 }
+        enquetes: { type: integer, minimum: 0 }
+        tauxReponse: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        reponses: { type: integer, minimum: 0 }
+        tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        noteMoyenne: { type: [number, 'null'], minimum: 1, maximum: 5 }
+        nps: { type: [integer, 'null'], minimum: -100, maximum: 100 }
+    PointTendance:
+      type: object
+      required: [mois, reclamations, tauxRespectSla, reponses, tauxSatisfaits, nps]
+      properties:
+        mois: { $ref: '#/components/schemas/MoisCivil' }
+        reclamations: { type: integer, minimum: 0 }
+        tauxRespectSla: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        reponses: { type: integer, minimum: 0 }
+        tauxSatisfaits: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        nps: { type: [integer, 'null'], minimum: -100, maximum: 100 }
+    Irritant:
+      type: object
+      description: |
+        Une catégorie ou une agence du mois. Score : une réclamation déposée compte 1, et chaque
+        réclamation résolue hors délai, chaque clôture contestée et chaque client insatisfait (note de 1 à
+        3) ajoute 1. 3 réclamations au moins pour figurer.
+      required: [id, nom, score, reclamations, precedent, resolues, horsDelai, contestees, reponses, insatisfaits]
+      properties:
+        id: { type: string, format: uuid }
+        nom: { type: string }
+        score: { type: integer, minimum: 0 }
+        reclamations: { type: integer, minimum: 0 }
+        precedent: { type: integer, minimum: 0, description: "Réclamations déposées le mois précédent" }
+        resolues: { type: integer, minimum: 0 }
+        horsDelai: { type: integer, minimum: 0 }
+        contestees: { type: integer, minimum: 0 }
+        reponses: { type: integer, minimum: 0 }
+        insatisfaits: { type: integer, minimum: 0 }
+    ThemeBarometre:
+      type: object
+      required: [libelle, mentions, negatifs, positifs, exemples]
+      properties:
+        libelle: { type: string }
+        mentions: { type: integer, minimum: 1, description: "Commentaires du mois qui en parlent" }
+        negatifs: { type: integer, minimum: 0, description: "Dont notes de 1 à 3" }
+        positifs: { type: integer, minimum: 0, description: "Dont notes 4 et 5" }
+        exemples:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            required: [numero, note, texte]
+            properties:
+              numero: { type: string, description: "Réclamation de ce commentaire" }
+              note: { type: integer, minimum: 1, maximum: 5 }
+              texte: { type: string, maxLength: 240 }
+    FaitMarquant:
+      type: object
+      required: [sens, texte]
+      properties:
+        sens: { type: string, enum: [MIEUX, MOINS_BIEN] }
+        texte: { type: string }
+    DecisionRecommandationValeur:
+      type: string
+      enum: [A_ETUDIER, RETENUE, ECARTEE]
+    RecommandationBarometre:
+      type: object
+      required: [id, ordre, titre, constat, action, categorie, priorite, source, decision, commentaire, decideePar, decideeLe]
+      properties:
+        id: { type: string, format: uuid }
+        ordre: { type: integer, minimum: 1, maximum: 5 }
+        titre: { type: string }
+        constat: { type: string, description: "Ce que disent les chiffres du mois" }
+        action: { type: string, description: "Ce qui est proposé" }
+        categorie:
+          description: Catégorie concernée, s'il y en a une
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        priorite: { type: string, enum: [HAUTE, MOYENNE] }
+        source: { $ref: '#/components/schemas/SourceAnalyse' }
+        decision: { $ref: '#/components/schemas/DecisionRecommandationValeur' }
+        commentaire: { type: [string, 'null'] }
+        decideePar:
+          oneOf:
+            - $ref: '#/components/schemas/ReferenceNommee'
+            - type: 'null'
+        decideeLe: { $ref: '#/components/schemas/HorodatageFacultatif' }
+    DecisionRecommandation:
+      type: object
+      required: [decision]
+      properties:
+        decision: { $ref: '#/components/schemas/DecisionRecommandationValeur' }
+        commentaire: { type: [string, 'null'], maxLength: 1000 }
+    Barometre:
+      type: object
+      required: [mois, du, au, source, genereLe, mesures, precedent, peuDeReponses, tendance, irritants, agences, themes,
+        commentaires, faitsMarquants, recommandations]
+      properties:
+        mois: { $ref: '#/components/schemas/MoisCivil' }
+        du: { $ref: '#/components/schemas/Horodatage' }
+        au: { $ref: '#/components/schemas/Horodatage' }
+        source: { $ref: '#/components/schemas/SourceAnalyse' }
+        genereLe: { $ref: '#/components/schemas/Horodatage' }
+        mesures: { $ref: '#/components/schemas/MesuresBarometre' }
+        precedent:
+          description: Le mois précédent, s'il a eu de l'activité
+          oneOf:
+            - $ref: '#/components/schemas/MesuresBarometre'
+            - type: 'null'
+        peuDeReponses: { type: boolean, description: "Moins de 30 réponses à l'enquête : satisfaction et NPS à lire avec prudence" }
+        tendance:
+          type: array
+          description: Les 6 derniers mois, jusqu'à celui-ci
+          items: { $ref: '#/components/schemas/PointTendance' }
+        irritants:
+          type: array
+          description: Catégories, les plus irritantes d'abord (5 au plus)
+          items: { $ref: '#/components/schemas/Irritant' }
+        agences:
+          type: array
+          description: Agences, les plus irritantes d'abord (3 au plus)
+          items: { $ref: '#/components/schemas/Irritant' }
+        themes:
+          type: array
+          items: { $ref: '#/components/schemas/ThemeBarometre' }
+        commentaires: { type: integer, minimum: 0, description: "Commentaires des clients reçus pendant le mois (200 lus au plus)" }
+        faitsMarquants:
+          type: array
+          items: { $ref: '#/components/schemas/FaitMarquant' }
+        recommandations:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/RecommandationBarometre' }

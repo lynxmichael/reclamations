@@ -78,9 +78,9 @@ export const CONSOMMATION_IA: S<'ConsommationIa'> = {
   mois: '2026-09',
   fournisseur: { nom: 'mistral', modele: 'mistral-small-latest' },
   banques: [
-    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, assistantIa: true, tours: 2864, suggestions: 341, parIa: 3129, regles: 76, jetonsEntree: 3_402_118, jetonsSortie: 141_903, coutUsd: 0.5955 },
-    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, assistantIa: false, tours: 0, suggestions: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
-    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, assistantIa: false, tours: 0, suggestions: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
-    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, assistantIa: false, tours: 0, suggestions: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
+    { banque: { id: id('banque', 1), nom: 'Banque Alpha' }, assistantIa: true, tours: 2864, suggestions: 341, barometres: 1, parIa: 3130, regles: 76, jetonsEntree: 3_402_118, jetonsSortie: 141_903, coutUsd: 0.5955 },
+    { banque: { id: id('banque', 2), nom: 'Banque Horizon' }, assistantIa: false, tours: 0, suggestions: 0, barometres: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
+    { banque: { id: id('banque', 3), nom: 'Caisse Lagune' }, assistantIa: false, tours: 0, suggestions: 0, barometres: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
+    { banque: { id: id('banque', 4), nom: 'Banque Savane' }, assistantIa: false, tours: 0, suggestions: 0, barometres: 0, parIa: 0, regles: 0, jetonsEntree: 0, jetonsSortie: 0, coutUsd: 0 },
   ],
 };

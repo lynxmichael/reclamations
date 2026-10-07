@@ -4,10 +4,11 @@
  * et son équipe ; l'Admin Entreprise paramètre la banque et consulte le journal d'audit.
  * Étape 19 : l'activité des agences (superviseurs et Admin Entreprise) ; « Mon compte » depuis le
  * nom de la personne connectée, en haut à droite ; un bandeau au-dessus de la page.
+ * Étape 23 : le baromètre mensuel (superviseurs et Admin Entreprise), quand Makor l'a ouvert.
  */
 import type { ReactNode } from 'react';
 import {
-  Bell, Bot, Building2, CalendarClock, CalendarOff, ChartColumn, Inbox, ListChecks, LogOut, MessagesSquare, QrCode, ScrollText, Search, Store, Users, Waypoints,
+  Bell, Bot, Building2, CalendarClock, CalendarOff, ChartColumn, Gauge, Inbox, ListChecks, LogOut, MessagesSquare, QrCode, ScrollText, Search, Store, Users, Waypoints,
 } from 'lucide-react';
 import type { S } from '../../api/types';
 import { Avatar, LogoBanque, Pastille, cx } from '../../ui/composants';
@@ -16,7 +17,7 @@ import { ROLE } from '../../ui/libelles';
 import { styleMarque } from '../../ui/marque';
 
 export type PageBackOffice =
-  | 'reclamations' | 'conversations' | 'tableau' | 'agences' | 'categories' | 'points' | 'horaires' | 'banque' | 'attribution' | 'assistant' | 'personnel' | 'absences' | 'audit'
+  | 'reclamations' | 'conversations' | 'tableau' | 'agences' | 'barometre' | 'categories' | 'points' | 'horaires' | 'banque' | 'attribution' | 'assistant' | 'personnel' | 'absences' | 'audit'
   | 'compte';
 
 const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle: string; icone: typeof Inbox; roles: S<'RoleUtilisateur'>[] }[] }[] = [
@@ -29,6 +30,8 @@ const NAVIGATION: { titre: string | null; liens: { cle: PageBackOffice; libelle:
       { cle: 'tableau', libelle: 'Tableau de bord', icone: ChartColumn, roles: ['AGENT', 'SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
       // Étape 19 : ce que fait chaque agence
       { cle: 'agences', libelle: 'Activité des agences', icone: Store, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
+      // Étape 23 : seulement si Makor a ouvert le baromètre à la banque (pages offertes)
+      { cle: 'barometre', libelle: 'Baromètre', icone: Gauge, roles: ['SUPERVISEUR', 'ADMIN_ENTREPRISE'] },
     ],
   },
   {
@@ -89,8 +92,8 @@ export function CadreBackOffice({
   /** Démo cliquable : navigation, notifications */
   surNaviguer?: (page: PageBackOffice) => void;
   surCloche?: () => void;
-  /** reclamationId vide : une alerte sans réclamation (étape 21 : dossiers à réassigner) */
-  surOuvrirNotification?: (reclamationId: string | null, notificationId: string) => void;
+  /** reclamationId vide : une alerte sans réclamation (étape 21 : dossiers à réassigner ; étape 23 : baromètre) */
+  surOuvrirNotification?: (reclamationId: string | null, notificationId: string, modele: string) => void;
   surToutLire?: () => void;
   /** Pages offertes (étape 8 : sans le tableau de bord, qui arrive à l'étape 9) */
   pages?: PageBackOffice[];
@@ -106,7 +109,7 @@ export function CadreBackOffice({
   const nom = `${moi.prenom} ${moi.nom}`;
   return (
     <div style={styleMarque(banque.couleurPrimaire)} className="relative flex min-h-full bg-fond text-encre">
-      <nav aria-label="Menu principal" className="w-60 shrink-0 border-r border-trait bg-surface">
+      <nav aria-label="Menu principal" className="cadre-menu w-60 shrink-0 border-r border-trait bg-surface">
         <div className="sticky top-0">
         <div className="flex h-16 items-center gap-2.5 border-b border-trait px-4">
           <LogoBanque nom={banque.nom} logoUrl={banque.logoUrl} taille={32} />
@@ -160,7 +163,7 @@ export function CadreBackOffice({
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="relative flex h-16 shrink-0 items-center gap-4 border-b border-trait bg-surface px-6">
+        <header className="cadre-barre relative flex h-16 shrink-0 items-center gap-4 border-b border-trait bg-surface px-6">
           <form
             role="search"
             className="relative w-full max-w-md"
@@ -223,7 +226,7 @@ export function CadreBackOffice({
             <PanneauNotifications notifications={notifications} maintenant={maintenant} surOuvrir={surOuvrirNotification} surToutLire={surToutLire} />
           )}
         </header>
-        <main className="min-w-0 flex-1 px-8 py-7">
+        <main className="cadre-page min-w-0 flex-1 px-8 py-7">
           {bandeau}
           {children}
         </main>
@@ -231,6 +234,9 @@ export function CadreBackOffice({
     </div>
   );
 }
+
+/** Alertes qui ouvrent une page plutôt qu'une réclamation : dossiers à réassigner, baromètre du mois */
+const NOTIFICATIONS_SANS_RECLAMATION = ['superviseur.reassignation', 'barometre.pret'];
 
 function PanneauNotifications({
   notifications,
@@ -240,7 +246,7 @@ function PanneauNotifications({
 }: {
   notifications: S<'PageNotifications'>;
   maintenant: string;
-  surOuvrir?: (reclamationId: string | null, notificationId: string) => void;
+  surOuvrir?: (reclamationId: string | null, notificationId: string, modele: string) => void;
   surToutLire?: () => void;
 }) {
   return (
@@ -257,8 +263,8 @@ function PanneauNotifications({
           <li key={n.id} className="border-b border-trait last:border-0">
             <button
               type="button"
-              disabled={!surOuvrir || (!n.reclamationId && n.modele !== 'superviseur.reassignation')}
-              onClick={() => surOuvrir?.(n.reclamationId, n.id)}
+              disabled={!surOuvrir || (!n.reclamationId && !NOTIFICATIONS_SANS_RECLAMATION.includes(n.modele))}
+              onClick={() => surOuvrir?.(n.reclamationId, n.id, n.modele)}
               className={cx('flex w-full gap-3 px-4 py-3 text-left enabled:hover:bg-fond', !n.lueLe && 'bg-marque-doux/60')}
             >
               <span aria-hidden className={cx('mt-2 h-2 w-2 shrink-0 rounded-full', n.lueLe ? 'bg-transparent' : 'bg-urgent')} />

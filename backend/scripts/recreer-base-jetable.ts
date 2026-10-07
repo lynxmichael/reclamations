@@ -29,7 +29,7 @@ async function principal() {
   const config = lireConfiguration({ ...process.env, APP_DATABASE_URL: urls.application });
   const bd = new BaseDonnees(urls.application);
   try {
-    await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 7, enquetes: true, attribution: true, chat: true, assistant: true, canaux: true, guichet: true, envois: true });
+    await semer(bd, { cleTotp: config.cleTotp, reclamations: true, historique: 7, enquetes: true, attribution: true, chat: true, assistant: true, canaux: true, guichet: true, envois: true, barometre: true });
   } finally {
     await bd.fermer();
   }

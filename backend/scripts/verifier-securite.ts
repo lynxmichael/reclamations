@@ -618,6 +618,66 @@ async function main() {
   });
 
   // ----------------------------------------------------------------------------------
+  cr.section('Baromètre mensuel et recommandations (étape 23)');
+
+  await cr.doitEtreRefuse('L\'Admin Entreprise ouvre lui-même le baromètre (réservé au Super Admin)', '42501', () =>
+    enA.banque.update({ where: { id: A.tenantId }, data: { barometre: true } }));
+  await cr.doitReussir('Le Super Admin ouvre le baromètre d\'une banque', () =>
+    plateforme.banque.update({ where: { id: A.tenantId }, data: { barometre: true } }));
+  const septembre = new Date('2026-09-01T00:00:00Z');
+  const contenu = { version: 1, mois: '2026-09', mesures: { reclamations: 12 }, themes: [{ libelle: 'Délais', exemples: [{ texte: 'Trois semaines sans nouvelles' }] }] };
+  const reco = (tenantId: string, barometreId: string, ordre: number) => ({
+    tenantId, barometreId, ordre, titre: 'Traiter plus vite les réclamations carte', constat: '4 réclamations sur 10 hors délai.', action: 'Renforcer l\'équipe.', priorite: 'HAUTE', source: 'REGLES',
+  });
+  let barometreA = { id: '' };
+  let recoA = { id: '' };
+  await cr.doitReussir('Contexte système (worker) : publier le baromètre et ses recommandations', async () => {
+    barometreA = await systeme.barometre.create({ data: { tenantId: A.tenantId, mois: septembre, source: 'REGLES', contenu } });
+    recoA = await systeme.recommandationBarometre.create({ data: reco(A.tenantId, barometreA.id, 1) });
+  });
+  const barometreB = await proprietaire.barometre.create({ data: { tenantId: B.tenantId, mois: septembre, source: 'IA', contenu } });
+  const recoB = await proprietaire.recommandationBarometre.create({ data: { ...reco(B.tenantId, barometreB.id, 1), source: 'IA' } });
+  await cr.doitEtreRefuse('Deux baromètres pour le même mois', 'P2002', () =>
+    systeme.barometre.create({ data: { tenantId: A.tenantId, mois: septembre, source: 'REGLES', contenu } }));
+  await cr.doitEtreRefuse('Contexte système : modifier un baromètre publié', '42501', () =>
+    systeme.barometre.update({ where: { id: barometreA.id }, data: { contenu: { ...contenu, mesures: { reclamations: 3 } } } }));
+  await cr.doitEtreRefuse('Contexte système : effacer un baromètre publié', '42501', () => systeme.barometre.delete({ where: { id: barometreA.id } }));
+  await cr.doitEtreRefuse('Contexte système : décider d\'une recommandation à la place de la banque', '42501', () =>
+    systeme.recommandationBarometre.update({ where: { id: recoA.id }, data: { decision: 'ECARTEE' } }));
+  await cr.doitReussir('En contexte A, seul le baromètre de A est visible (et ses recommandations)', async () => {
+    const [b, r] = await Promise.all([enA.barometre.findMany(), enA.recommandationBarometre.findMany()]);
+    verifier(b.length === 1 && b[0]!.tenantId === A.tenantId && r.length === 1 && r[0]!.tenantId === A.tenantId, `${b.length} baromètre(s), ${r.length} recommandation(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, publier un baromètre', '42501', () =>
+    enA.barometre.create({ data: { tenantId: A.tenantId, mois: new Date('2026-08-01T00:00:00Z'), source: 'REGLES', contenu } }));
+  await cr.doitEtreRefuse('En contexte A, retoucher les chiffres du baromètre publié', '42501', () =>
+    enA.barometre.update({ where: { id: barometreA.id }, data: { contenu: { ...contenu, mesures: { reclamations: 3 } } } }));
+  await cr.doitEtreRefuse('En contexte A, réécrire le texte d\'une recommandation', '42501', () =>
+    enA.recommandationBarometre.update({ where: { id: recoA.id }, data: { constat: 'Tout va bien.' } }));
+  await cr.doitEtreRefuse('En contexte A, ajouter une recommandation', '42501', () =>
+    enA.recommandationBarometre.create({ data: reco(A.tenantId, barometreA.id, 2) }));
+  await cr.doitEtreRefuse('En contexte A, effacer une recommandation', '42501', () => enA.recommandationBarometre.delete({ where: { id: recoA.id } }));
+  await cr.doitReussir('En contexte A, l\'Admin Entreprise retient une recommandation (décision, commentaire, auteur, date)', () =>
+    enA.recommandationBarometre.update({ where: { id: recoA.id }, data: { decision: 'RETENUE', commentaire: 'Renfort lundi', decideeParId: A.admin.id, decideeLe: new Date() } }));
+  await cr.doitReussir('En contexte A, la recommandation de B reste hors d\'atteinte', async () => {
+    const n = await enA.recommandationBarometre.updateMany({ where: { id: recoB.id }, data: { decision: 'ECARTEE' } });
+    verifier(n.count === 0, `${n.count} ligne(s) modifiée(s)`);
+  });
+  await cr.doitEtreRefuse('En contexte A, décider au nom d\'un utilisateur de B', '23503', () =>
+    enA.recommandationBarometre.update({ where: { id: recoA.id }, data: { decideeParId: B.admin.id, decideeLe: new Date() } }));
+  await refusCheck('Décision inconnue', () => enA.recommandationBarometre.update({ where: { id: recoA.id }, data: { decision: 'PEUT_ETRE' } }));
+  await refusCheck('Décision datée sans auteur', () => enA.recommandationBarometre.update({ where: { id: recoA.id }, data: { decideeParId: null } }));
+  await refusCheck('Baromètre daté d\'un autre jour que le 1er du mois', () =>
+    systeme.barometre.create({ data: { tenantId: A.tenantId, mois: new Date('2026-08-15T00:00:00Z'), source: 'REGLES', contenu } }));
+  await refusCheck('Analyse qui ne vient ni de l\'IA ni des règles', () =>
+    systeme.barometre.create({ data: { tenantId: A.tenantId, mois: new Date('2026-07-01T00:00:00Z'), source: 'HUMAIN', contenu } }));
+  await refusCheck('Contenu qui n\'est pas un objet', () =>
+    systeme.barometre.create({ data: { tenantId: A.tenantId, mois: new Date('2026-06-01T00:00:00Z'), source: 'REGLES', contenu: [1, 2] } }));
+  await refusCheck('Plus de 5 recommandations', () => systeme.recommandationBarometre.create({ data: reco(A.tenantId, barometreA.id, 6) }));
+  await cr.doitEtreRefuse('Super Admin : lire les baromètres (ils contiennent les commentaires des clients)', '42501', () => plateforme.barometre.count());
+  await cr.doitEtreRefuse('Super Admin : lire les recommandations', '42501', () => plateforme.recommandationBarometre.count());
+
+  // ----------------------------------------------------------------------------------
   cr.section('Transactions dans un contexte');
 
   await cr.doitReussir('Dépôt atomique en contexte A : numéro, réclamation et événement', async () => {

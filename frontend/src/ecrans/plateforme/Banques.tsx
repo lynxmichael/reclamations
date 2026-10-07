@@ -115,6 +115,7 @@ export function Banques({
                     {b.attributionAutomatique && <div>Attribution et escalade automatiques</div>}
                     {b.chatWeb && <div>Chat web et boîte de réception</div>}
                     {b.assistantIa && <div>Assistant IA</div>}
+                    {b.barometre && <div>Baromètre mensuel</div>}
                     {b.whatsapp && b.raccordements.whatsapp && <div className="flex items-center gap-1"><IconeCanal canal="WHATSAPP" taille={13} />WhatsApp <span className="chiffres">{telephone(b.raccordements.whatsapp.numero)}</span></div>}
                     {b.smsEntrant && b.raccordements.sms && <div className="flex items-center gap-1"><IconeCanal canal="SMS" taille={13} />SMS entrant <span className="chiffres">{telephone(b.raccordements.sms.numero)}</span></div>}
                   </td>
@@ -256,12 +257,13 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
   const [assistant, setAssistant] = useState(b.assistantIa);
   const [whatsapp, setWhatsapp] = useState(b.whatsapp);
   const [smsEntrant, setSmsEntrant] = useState(b.smsEntrant);
+  const [barometre, setBarometre] = useState(b.barometre);
   const [motif, setMotif] = useState('');
   const e = actions.erreurs ?? {};
   const valide = nom.trim().length >= 2 && Number(seuil) >= 1 && Number(seuil) <= 99 && Number(delai) >= 1 && Number(delai) <= 60;
   const enregistrer = async () => {
     const issue = await actions.modifier(b.id, { nom: nom.trim(), planId, fuseauHoraire: fuseau, seuilAlerteSlaPourcent: Number(seuil), delaiClotureAutoJours: Number(delai), smsChaqueChangementStatut: sms, enqueteSatisfaction: enquete, attributionAutomatique: attribution, chatWeb: chat, assistantIa: chat && assistant,
-      whatsapp: chat && whatsapp && !!b.raccordements.whatsapp, smsEntrant: chat && smsEntrant && !!b.raccordements.sms });
+      whatsapp: chat && whatsapp && !!b.raccordements.whatsapp, smsEntrant: chat && smsEntrant && !!b.raccordements.sms, barometre });
     if (issue !== false) surFermer();
   };
   return (
@@ -364,6 +366,18 @@ function FicheBanque({ b, plans, actions, surFermer }: { b: S<'BanquePlateforme'
               </span>
             </label>
           ))}
+          <label className="flex items-start gap-2.5 text-[15px]">
+            <input type="checkbox" checked={barometre} onChange={(x) => setBarometre(x.target.checked)} className="mt-1 h-4 w-4 accent-[var(--marque)]" />
+            <span>
+              Baromètre et recommandations (phase 2)
+              <span className="block text-sm text-encre-3">
+                Le 1<sup>er</sup> de chaque mois, l'Admin Entreprise et les superviseurs reçoivent le baromètre du mois écoulé : chiffres clés, irritants,
+                ce que disent les clients, recommandations à retenir ou écarter. {chat && assistant
+                  ? 'Avec l\'assistant IA, l\'analyse passe par l\'IA (commentaires masqués, usage facturé à la banque).'
+                  : 'Sans l\'assistant IA, l\'analyse se fait par les règles de la plateforme.'} Makor ne voit pas le baromètre.
+              </span>
+            </span>
+          </label>
         </fieldset>
 
         <Raccordements b={b} actions={actions} />

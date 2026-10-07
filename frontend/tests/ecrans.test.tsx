@@ -31,6 +31,8 @@ import { PieceJointe } from '../src/ecrans/portail/MaReclamation';
 import { FICHE_54, PAGE_SUPERVISEUR } from '../src/maquettes/donnees/reclamations';
 import { AYA, SERGE } from '../src/maquettes/donnees/parametrage';
 import { ACCUSE_SAISIE_54, FICHE_42, FICHE_53 } from '../src/maquettes/donnees/reclamations';
+import { Barometre, deMois, jourEnLettres, libelleMois } from '../src/ecrans/back-office/Barometre';
+import { BAROMETRE_AOUT, LISTE_BAROMETRES, barometreDemo } from '../src/maquettes/donnees/barometre';
 
 /** Toutes les combinaisons de variantes d'un écran. */
 function combinaisons(e: (typeof ECRANS)[number]): Record<string, string>[] {
@@ -309,5 +311,70 @@ describe('étape 22 : envois non remis, pièces jointes', () => {
     const activite = lisible(ecran('activite', {}));
     expect(activite).toContain('Remis');
     expect(activite).toContain('Non remis');
+  });
+});
+
+describe('étape 23 : baromètre mensuel et recommandations', () => {
+  const ecran = (idEcran: string, v: Record<string, string>) => {
+    const e = ECRANS.find((x) => x.id === idEcran)!;
+    return renderToString(<>{e.rendu({ v, banque: ALPHA })}</>);
+  };
+  const lisible = (html: string) => html.replace(/<!-- -->/g, '').replace(/<[^>]+>/g, ' ').replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ');
+
+  it('Admin Entreprise : chiffres du mois et variation, recommandations à retenir ou écarter, décisions déjà prises', () => {
+    const texte = lisible(ecran('barometre', { role: 'ADMIN_ENTREPRISE', etat: 'publie' }));
+    expect(texte).toContain('Baromètre de l\'expérience client · août 2026');
+    expect(texte).toContain('Analyse par l\'IA');
+    expect(texte).toContain('Réclamations reçues 318');
+    expect(texte).toContain('+16 % sur juil.');
+    expect(texte).toContain('−5 points sur juil.');
+    expect(texte).toContain('4 proposées, 2 à étudier.');
+    expect(texte).toContain('Retenue par Fatou Diabaté le 02/09/2026');
+    expect(texte).toContain('Écartée par Fatou Diabaté');
+    expect(texte.match(/Retenir/g)).toHaveLength(2);
+    expect(texte).toContain('Revenir sur la décision');
+    // Irritants, thèmes avec leurs exemples et le lien vers la réclamation, définitions
+    expect(texte).toContain('Carte bancaire 112 72 le mois d\'avant 27 sur 104 résolues 6 15 sur 38 avis 160');
+    expect(texte).toContain('Cartes bloquées ou avalées');
+    expect(ecran('barometre', { role: 'ADMIN_ENTREPRISE', etat: 'publie' })).toContain('href="#ALP-2026-000812"');
+    expect(texte).toContain('Comment lire ce baromètre');
+    // 109 réponses : pas d'avertissement de prudence
+    expect(texte).not.toContain('à lire avec prudence');
+    // Jamais un agent nommé dans le baromètre (seul l'auteur d'une décision l'est)
+    expect(texte.replace(/par Fatou Diabaté/g, '')).not.toMatch(/Aya|Konan|Mamadou|Ibrahim/);
+  });
+
+  it('superviseur : il lit, sans décider ; avant le premier baromètre, la date du prochain', () => {
+    const texte = lisible(ecran('barometre', { role: 'SUPERVISEUR', etat: 'publie' }));
+    expect(texte).not.toContain('Retenir');
+    expect(texte).not.toContain('Revenir sur la décision');
+    expect(texte).toContain('L\'Admin Entreprise n\'a pas encore décidé de cette recommandation.');
+    expect(texte).toContain('Deux agents du back-office en renfort jusqu\'au 30 septembre.');
+    const vide = lisible(ecran('barometre', { role: 'SUPERVISEUR', etat: 'premier' }));
+    expect(vide).toContain('Premier baromètre le 1er octobre 2026');
+    expect(vide).not.toContain('Imprimer');
+  });
+
+  it('peu de réponses : avertissement ; aucune recommandation : le dire', () => {
+    const b = { ...BAROMETRE_AOUT, peuDeReponses: true, mesures: { ...BAROMETRE_AOUT.mesures, reponses: 12 }, recommandations: [] };
+    const texte = lisible(renderToString(<Barometre liste={LISTE_BAROMETRES} barometre={b} peutDecider fuseau="Africa/Abidjan" />));
+    expect(texte).toContain('12 réponses à l\'enquête ce mois-ci : moins de 30, la satisfaction et le NPS sont à lire avec prudence.');
+    expect(texte).toContain('Aucune recommandation ce mois-ci');
+  });
+
+  it('libellés : mois, élision, jour du prochain baromètre ; démo recalée sur le mois écoulé', () => {
+    expect([libelleMois('2026-08'), deMois('2026-08'), deMois('2026-09'), deMois('2026-04')]).toEqual(['août 2026', 'd\'août 2026', 'de septembre 2026', 'd\'avril 2026']);
+    expect([jourEnLettres('2026-10-01'), jourEnLettres('2026-11-15')]).toEqual(['1er octobre 2026', '15 novembre 2026']);
+    const d = barometreDemo(new Date('2027-02-10T09:00:00Z'));
+    expect([d.barometre.mois, d.barometre.du, d.barometre.au, d.liste.prochainLe]).toEqual(['2027-01', '2027-01-01T00:00:00.000Z', '2027-02-01T00:00:00.000Z', '2027-03-01']);
+    expect(d.barometre.tendance.map((p) => p.mois)).toEqual(['2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01']);
+    expect(d.liste.donnees.map((x) => x.mois)).toEqual(['2027-01']);
+  });
+
+  it('console de la plateforme : le baromètre se coche ; l\'usage de l\'IA compte les baromètres', () => {
+    const activite = lisible(ecran('activite', {}));
+    expect(activite).toContain('Assistant IA et baromètre de septembre 2026');
+    expect(activite).toContain('Baromètres');
+    expect(lisible(ecran('banques', {}))).toContain('Baromètre mensuel');
   });
 });

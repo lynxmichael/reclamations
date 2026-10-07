@@ -234,12 +234,15 @@ export function Alertes({
 
 const dollars = (n: number) => `${n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} $`;
 
-/** Usage de l'assistant IA (étape 18) : les banques qui l'ont, ou qui s'en sont servies ce mois-là. */
+/**
+ * Usage de l'IA : l'assistant (étape 18) et l'analyse du baromètre mensuel (étape 23) ; les banques qui
+ * ont l'assistant, ou qui s'en sont servies ce mois-là.
+ */
 function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExporter?: () => void }) {
-  const lignes = ia.banques.filter((b) => b.assistantIa || b.tours + b.suggestions > 0);
+  const lignes = ia.banques.filter((b) => b.assistantIa || b.tours + b.suggestions + b.barometres > 0);
   return (
     <Panneau
-      titre={`Assistant IA de ${nomMois(ia.mois)}`}
+      titre={`Assistant IA et baromètre de ${nomMois(ia.mois)}`}
       sansMarge
       action={surExporter && <Bouton icone={<Download aria-hidden size={17} />} onClick={surExporter}>Exporter l'usage en CSV</Bouton>}
     >
@@ -249,6 +252,7 @@ function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExpor
             <th scope="col" className="py-2.5 pr-3 pl-5 font-semibold">Banque</th>
             <th scope="col" className="px-3 py-2.5 text-right font-semibold">Tours du portail</th>
             <th scope="col" className="px-3 py-2.5 text-right font-semibold">Brouillons</th>
+            <th scope="col" className="px-3 py-2.5 text-right font-semibold">Baromètres</th>
             <th scope="col" className="px-3 py-2.5 text-right font-semibold">Par l'IA</th>
             <th scope="col" className="px-3 py-2.5 text-right font-semibold">Par les règles</th>
             <th scope="col" className="px-3 py-2.5 text-right font-semibold">Jetons</th>
@@ -257,16 +261,19 @@ function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExpor
         </thead>
         <tbody>
           {lignes.length === 0 && (
-            <tr><td colSpan={7} className="px-5 py-6 text-center text-encre-3">Aucune banque n'a l'assistant IA ce mois-ci.</td></tr>
+            <tr><td colSpan={8} className="px-5 py-6 text-center text-encre-3">Aucune banque n'a utilisé l'IA ce mois-ci.</td></tr>
           )}
           {lignes.map((b) => (
             <tr key={b.banque.id} className="border-b border-trait last:border-0">
               <td className="py-3 pr-3 pl-5 font-semibold">
                 {b.banque.nom}
-                {!b.assistantIa && <span className="ml-2 text-sm font-normal text-encre-3">(fermé depuis)</span>}
+                {!b.assistantIa && (
+                  <span className="ml-2 text-sm font-normal text-encre-3">{b.tours + b.suggestions > 0 ? '(assistant fermé depuis)' : '(sans assistant)'}</span>
+                )}
               </td>
               <td className="chiffres px-3 py-3 text-right">{nombre(b.tours)}</td>
               <td className="chiffres px-3 py-3 text-right">{nombre(b.suggestions)}</td>
+              <td className="chiffres px-3 py-3 text-right">{nombre(b.barometres)}</td>
               <td className="chiffres px-3 py-3 text-right">{nombre(b.parIa)}</td>
               <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.regles)}</td>
               <td className="chiffres px-3 py-3 text-right text-encre-2">{nombre(b.jetonsEntree + b.jetonsSortie)}</td>
@@ -277,7 +284,7 @@ function ConsommationIa({ ia, surExporter }: { ia: S<'ConsommationIa'>; surExpor
       </table>
       <p className="border-t border-trait px-5 py-3 text-sm text-encre-3">
         Fournisseur configuré : {ia.fournisseur.nom === 'regles' ? 'aucun (règles seules, rien n\'est envoyé)' : `${ia.fournisseur.nom}${ia.fournisseur.modele ? `, ${ia.fournisseur.modele}` : ''}`}.
-        {' '}« Par les règles » : sans fournisseur, plafond du jour atteint, délai dépassé ou réponse hors format. Le journal ne garde aucun message, seulement les volumes.
+        {' '}« Par les règles » : sans fournisseur, plafond du jour atteint, délai dépassé ou réponse hors format ; pour le baromètre, aussi sans l'assistant (pas d'accord de la banque pour l'IA). Le journal ne garde aucun message, seulement les volumes.
       </p>
     </Panneau>
   );

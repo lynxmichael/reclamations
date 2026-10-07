@@ -157,7 +157,7 @@ test.describe.serial('assistant IA (étape 18)', () => {
   test('Makor voit l\'usage du mois, sans contenu ; puis referme le chat, donc l\'assistant', async ({ page }) => {
     await connecter(page, COMPTES.superAdmin);
     await page.goto(`${CONSOLE}/plateforme/activite`);
-    const panneau = page.locator('section', { has: page.getByRole('heading', { name: /^Assistant IA de/ }) });
+    const panneau = page.locator('section', { has: page.getByRole('heading', { name: /^Assistant IA et baromètre de/ }) });
     await expect(panneau.getByRole('row', { name: /Banque Alpha/ })).toBeVisible();
     await expect(panneau.getByText(/aucun \(règles seules, rien n'est envoyé\)/)).toBeVisible();
     await panneau.scrollIntoViewIfNeeded();

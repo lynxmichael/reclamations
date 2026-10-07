@@ -174,6 +174,8 @@ enum FinaliteIa {
   ACCUEIL_PORTAIL
   /// Brouillon de réponse demandé par un agent
   SUGGESTION_AGENT
+  /// Analyse du baromètre mensuel : thèmes des commentaires et recommandations (étape 23)
+  BAROMETRE
 
   @@map("finalite_ia")
 }
@@ -295,6 +297,8 @@ model Banque {
   whatsapp                          Boolean         @default(false)
   /// SMS entrant (étape 20) : le client écrit au numéro de la banque ; exige le chat web
   smsEntrant                        Boolean         @default(false) @map("sms_entrant")
+  /// Baromètre mensuel et recommandations (étape 23), ouvert par Makor banque par banque (décision I2)
+  barometre                         Boolean         @default(false)
   suspendueLe                       DateTime?       @map("suspendue_le") @db.Timestamptz(3)
   motifSuspension                   String?         @map("motif_suspension")
   creeLe                            DateTime        @default(now()) @map("cree_le") @db.Timestamptz(3)
@@ -319,6 +323,8 @@ model Banque {
   canaux            CanalBanque[]
   sessionsCanal     SessionCanal[]
   messagesEntrants  MessageEntrant[]
+  barometres        Barometre[]
+  recommandations   RecommandationBarometre[]
 
   @@index([planId])
   @@map("banque")
@@ -396,9 +402,10 @@ model Categorie {
   creeLe                           DateTime @default(now()) @map("cree_le") @db.Timestamptz(3)
   modifieLe                        DateTime @updatedAt @map("modifie_le") @db.Timestamptz(3)
 
-  banque       Banque        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  groupe       GroupeAgents? @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Restrict)
-  reclamations Reclamation[]
+  banque          Banque                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  groupe          GroupeAgents?             @relation(fields: [tenantId, groupeId], references: [tenantId, id], onDelete: Restrict)
+  reclamations    Reclamation[]
+  recommandations RecommandationBarometre[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, nom])
@@ -488,6 +495,7 @@ model Utilisateur {
   notifications          Notification[]
   groupes                GroupeAgentsMembre[]
   absences               AbsenceAgent[]
+  decisionsBarometre     RecommandationBarometre[]
 
   @@unique([tenantId, id])
   @@index([tenantId, role, statut])
@@ -939,6 +947,59 @@ model AppelIa {
   @@index([tenantId, creeLe])
   @@index([creeLe])
   @@map("appel_ia")
+}
+
+/// Baromètre mensuel de l'expérience client d'une banque (étape 23) : un instantané, publié le 1er du
+/// mois suivant et figé ensuite. `contenu` : indicateurs du mois et du précédent, évolution sur 6 mois,
+/// irritants, thèmes des commentaires, faits marquants (domaine/barometre.ts). Les recommandations,
+/// que l'Admin Entreprise décide, sont à part.
+model Barometre {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  /// Premier jour du mois
+  mois     DateTime @db.Date
+  /// IA ou REGLES : d'où viennent les thèmes et les recommandations
+  source   String   @db.VarChar(10)
+  contenu  Json
+  genereLe DateTime @default(now()) @map("genere_le") @db.Timestamptz(3)
+
+  banque          Banque                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  recommandations RecommandationBarometre[]
+
+  @@unique([tenantId, mois])
+  @@unique([tenantId, id])
+  @@map("barometre")
+}
+
+/// Recommandation d'un baromètre (étape 23) : proposée par l'IA ou par les règles, retenue, écartée ou
+/// à étudier par l'Admin Entreprise. Seule la décision se modifie.
+model RecommandationBarometre {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  barometreId  String    @map("barometre_id") @db.Uuid
+  ordre        Int       @db.SmallInt
+  titre        String    @db.VarChar(160)
+  constat      String    @db.VarChar(600)
+  action       String    @db.VarChar(600)
+  categorieId  String?   @map("categorie_id") @db.Uuid
+  /// HAUTE ou MOYENNE
+  priorite     String    @db.VarChar(10)
+  /// IA ou REGLES
+  source       String    @db.VarChar(10)
+  /// A_ETUDIER, RETENUE ou ECARTEE
+  decision     String    @default("A_ETUDIER") @db.VarChar(12)
+  commentaire  String?   @db.VarChar(1000)
+  decideeParId String?   @map("decidee_par_id") @db.Uuid
+  decideeLe    DateTime? @map("decidee_le") @db.Timestamptz(3)
+
+  banque     Banque       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  barometre  Barometre    @relation(fields: [tenantId, barometreId], references: [tenantId, id], onDelete: Restrict)
+  categorie  Categorie?   @relation(fields: [tenantId, categorieId], references: [tenantId, id], onDelete: Restrict)
+  decideePar Utilisateur? @relation(fields: [tenantId, decideeParId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([barometreId, ordre])
+  @@index([tenantId, barometreId])
+  @@map("recommandation_barometre")
 }
 
 /// Fichier joint (image ou PDF, 5 au plus au dépôt), avec empreinte SHA-256.

@@ -35,7 +35,7 @@ export function clientProprietaire() {
 export type ClientProprietaire = ReturnType<typeof clientProprietaire>;
 
 const TABLES = [
-  'journal_audit', 'notification', 'appel_ia', 'reponse_assistant', 'enquete_satisfaction', 'conversation', 'reclamation_evenement', 'piece_jointe', 'commentaire',
+  'recommandation_barometre', 'barometre', 'journal_audit', 'notification', 'appel_ia', 'reponse_assistant', 'enquete_satisfaction', 'conversation', 'reclamation_evenement', 'piece_jointe', 'commentaire',
   'reclamation', 'compteur_numero', 'code_otp', 'client_final', 'jeton_utilisateur',
   'session_utilisateur', 'absence_agent', 'groupe_agents_membre', 'utilisateur', 'jour_ferie', 'horaire_ouvre', 'categorie',
   'point_depot', 'agence', 'groupe_agents', 'banque', 'plan',

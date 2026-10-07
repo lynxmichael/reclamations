@@ -1,7 +1,7 @@
 # Étape 22 — Envois non remis, pièces jointes Word et antivirus
 
 Plateforme de gestion des réclamations · Makor Telecoms · Solution 1
-Version du 06/10/2026 · **Statut : en attente de validation** (décisions V1 à V13, partie 7).
+Version du 06/10/2026 · **Statut : validé le 06/10/2026** (décisions V1 à V13 retenues telles que proposées).
 
 Cette étape répond à trois questions posées après l'étape 20 :
 

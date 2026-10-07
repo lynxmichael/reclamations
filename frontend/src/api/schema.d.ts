@@ -1621,6 +1621,76 @@ export interface paths {
         patch: operations["modifierReponseAssistant"];
         trace?: never;
     };
+    "/banque/barometres": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Baromètres publiés, du plus récent au plus ancien
+         * @description Un baromètre par mois, publié par le worker le 1er du mois suivant (dans le fuseau de la banque)
+         *     et figé ensuite. Le premier arrive dans les 10 minutes qui suivent l'ouverture de la fonction, pour
+         *     le mois écoulé. Fonction ouverte par Makor (`modifierBanque`, `barometre`) : sinon 403
+         *     FONCTION_NON_OUVERTE.
+         */
+        get: operations["listerBarometres"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/barometres/{mois}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Le baromètre d'un mois
+         * @description Indicateurs du mois et du précédent, tendance sur 6 mois, irritants par catégorie et par agence,
+         *     thèmes des commentaires des clients avec des exemples, faits marquants et recommandations. Les
+         *     chiffres sont calculés par la plateforme ; l'IA (si l'assistant est ouvert) ne fait que regrouper
+         *     les commentaires et rédiger les recommandations, sans chiffre qui ne soit dans les données.
+         *     Mois sans baromètre : 404.
+         */
+        get: operations["lireBarometre"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/banque/barometres/{mois}/recommandations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Retenir ou écarter une recommandation
+         * @description L'Admin Entreprise décide de chaque recommandation (`RETENUE`, `ECARTEE`, ou `A_ETUDIER` pour
+         *     revenir sur sa décision), avec un commentaire facultatif (l'action prévue, la raison). Seule la
+         *     décision change : le baromètre et le texte des recommandations restent tels que publiés. Chaque
+         *     décision est inscrite au journal d'audit.
+         */
+        put: operations["deciderRecommandation"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/banque/utilisateurs": {
         parameters: {
             query?: never;
@@ -3302,6 +3372,8 @@ export interface components {
             chatWeb: boolean;
             /** @description Assistant du portail et brouillons pour les agents (étape 18), ouverts par Makor */
             assistantIa: boolean;
+            /** @description Baromètre mensuel et recommandations (étape 23), ouverts par Makor */
+            barometre: boolean;
             /** @description Double authentification exigée de tout le personnel (étape 19), réglée par l'Admin Entreprise */
             doubleAuthentificationObligatoire: boolean;
             couleurPrimaire: components["schemas"]["Couleur"];
@@ -3691,6 +3763,8 @@ export interface components {
             attributionAutomatique: boolean;
             chatWeb: boolean;
             assistantIa: boolean;
+            /** @description Baromètre mensuel (étape 23) */
+            barometre: boolean;
             /** @description Réglée par l'Admin Entreprise de la banque (étape 19) */
             doubleAuthentificationObligatoire: boolean;
             suspendueLe: components["schemas"]["HorodatageFacultatif"];
@@ -3736,6 +3810,11 @@ export interface components {
             whatsapp?: boolean;
             /** @description SMS entrant (étape 20) ; mêmes conditions que WhatsApp */
             smsEntrant?: boolean;
+            /**
+             * @description Baromètre mensuel et recommandations (étape 23). Sans l'assistant IA, l'analyse se fait par les
+             *     règles ; avec, les commentaires des clients passent masqués par le fournisseur d'IA.
+             */
+            barometre?: boolean;
         };
         IndicateursPlateforme: {
             du: components["schemas"]["Horodatage"];
@@ -3948,6 +4027,8 @@ export interface components {
                 assistantIa: boolean;
                 tours: number;
                 suggestions: number;
+                /** @description Analyses du baromètre mensuel (étape 23) */
+                barometres: number;
                 parIa: number;
                 regles: number;
                 jetonsEntree: number;
@@ -3955,6 +4036,148 @@ export interface components {
                 /** @example 1.2345 */
                 coutUsd: number;
             }[];
+        };
+        /** @example 2026-09 */
+        MoisCivil: string;
+        ListeBarometres: {
+            /**
+             * Format: date
+             * @description Publication du prochain baromètre (le 1er du mois prochain)
+             */
+            prochainLe: string;
+            donnees: components["schemas"]["ResumeBarometre"][];
+        };
+        ResumeBarometre: {
+            mois: components["schemas"]["MoisCivil"];
+            source: components["schemas"]["SourceAnalyse"];
+            genereLe: components["schemas"]["Horodatage"];
+            reclamations: number;
+            tauxRespectSla: number | null;
+            tauxSatisfaits: number | null;
+            recommandations: number;
+            /** @description Recommandations sans décision */
+            aEtudier: number;
+        };
+        /**
+         * @description Thèmes et recommandations rédigés par l'IA, ou par les règles de la plateforme
+         * @enum {string}
+         */
+        SourceAnalyse: "IA" | "REGLES";
+        /**
+         * @description Chiffres d'un mois civil. Réclamations : déposées pendant le mois ; résolues, délais et premier
+         *     contact : résolues pendant le mois (minutes ouvrées) ; contestées : clôtures contestées pendant le
+         *     mois ; réponses, satisfaits (notes 4 et 5), note et NPS : réponses reçues pendant le mois ; taux de
+         *     réponse : enquêtes dont le délai de réponse a pris fin pendant le mois.
+         */
+        MesuresBarometre: {
+            reclamations: number;
+            urgentes: number;
+            resolues: number;
+            tauxRespectSla: number | null;
+            tauxPremierContact: number | null;
+            delaiResolutionMoyenMinutes: number | null;
+            contestees: number;
+            enquetes: number;
+            tauxReponse: number | null;
+            reponses: number;
+            tauxSatisfaits: number | null;
+            noteMoyenne: number | null;
+            nps: number | null;
+        };
+        PointTendance: {
+            mois: components["schemas"]["MoisCivil"];
+            reclamations: number;
+            tauxRespectSla: number | null;
+            reponses: number;
+            tauxSatisfaits: number | null;
+            nps: number | null;
+        };
+        /**
+         * @description Une catégorie ou une agence du mois. Score : une réclamation déposée compte 1, et chaque
+         *     réclamation résolue hors délai, chaque clôture contestée et chaque client insatisfait (note de 1 à
+         *     3) ajoute 1. 3 réclamations au moins pour figurer.
+         */
+        Irritant: {
+            /** Format: uuid */
+            id: string;
+            nom: string;
+            score: number;
+            reclamations: number;
+            /** @description Réclamations déposées le mois précédent */
+            precedent: number;
+            resolues: number;
+            horsDelai: number;
+            contestees: number;
+            reponses: number;
+            insatisfaits: number;
+        };
+        ThemeBarometre: {
+            libelle: string;
+            /** @description Commentaires du mois qui en parlent */
+            mentions: number;
+            /** @description Dont notes de 1 à 3 */
+            negatifs: number;
+            /** @description Dont notes 4 et 5 */
+            positifs: number;
+            exemples: {
+                /** @description Réclamation de ce commentaire */
+                numero: string;
+                note: number;
+                texte: string;
+            }[];
+        };
+        FaitMarquant: {
+            /** @enum {string} */
+            sens: "MIEUX" | "MOINS_BIEN";
+            texte: string;
+        };
+        /** @enum {string} */
+        DecisionRecommandationValeur: "A_ETUDIER" | "RETENUE" | "ECARTEE";
+        RecommandationBarometre: {
+            /** Format: uuid */
+            id: string;
+            ordre: number;
+            titre: string;
+            /** @description Ce que disent les chiffres du mois */
+            constat: string;
+            /** @description Ce qui est proposé */
+            action: string;
+            /** @description Catégorie concernée, s'il y en a une */
+            categorie: components["schemas"]["ReferenceNommee"] | null;
+            /** @enum {string} */
+            priorite: "HAUTE" | "MOYENNE";
+            source: components["schemas"]["SourceAnalyse"];
+            decision: components["schemas"]["DecisionRecommandationValeur"];
+            commentaire: string | null;
+            decideePar: components["schemas"]["ReferenceNommee"] | null;
+            decideeLe: components["schemas"]["HorodatageFacultatif"];
+        };
+        DecisionRecommandation: {
+            decision: components["schemas"]["DecisionRecommandationValeur"];
+            commentaire?: string | null;
+        };
+        Barometre: {
+            mois: components["schemas"]["MoisCivil"];
+            du: components["schemas"]["Horodatage"];
+            au: components["schemas"]["Horodatage"];
+            source: components["schemas"]["SourceAnalyse"];
+            genereLe: components["schemas"]["Horodatage"];
+            mesures: components["schemas"]["MesuresBarometre"];
+            /** @description Le mois précédent, s'il a eu de l'activité */
+            precedent: components["schemas"]["MesuresBarometre"] | null;
+            /** @description Moins de 30 réponses à l'enquête : satisfaction et NPS à lire avec prudence */
+            peuDeReponses: boolean;
+            /** @description Les 6 derniers mois, jusqu'à celui-ci */
+            tendance: components["schemas"]["PointTendance"][];
+            /** @description Catégories, les plus irritantes d'abord (5 au plus) */
+            irritants: components["schemas"]["Irritant"][];
+            /** @description Agences, les plus irritantes d'abord (3 au plus) */
+            agences: components["schemas"]["Irritant"][];
+            themes: components["schemas"]["ThemeBarometre"][];
+            /** @description Commentaires des clients reçus pendant le mois (200 lus au plus) */
+            commentaires: number;
+            faitsMarquants: components["schemas"]["FaitMarquant"][];
+            recommandations: components["schemas"]["RecommandationBarometre"][];
         };
     };
     responses: {
@@ -4151,6 +4374,8 @@ export interface components {
     };
     parameters: {
         Id: string;
+        /** @description Mois civil, dans le fuseau de la banque */
+        Mois: components["schemas"]["MoisCivil"];
         PieceId: string;
         /** @description Un message au client (fiche, champ envois) */
         EnvoiId: string;
@@ -6559,6 +6784,87 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReponseBanque"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    listerBarometres: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Baromètres publiés et date du prochain */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListeBarometres"];
+                };
+            };
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+        };
+    };
+    lireBarometre: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Mois civil, dans le fuseau de la banque */
+                mois: components["parameters"]["Mois"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Le baromètre */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Barometre"];
+                };
+            };
+            400: components["responses"]["Invalide"];
+            401: components["responses"]["NonAuthentifie"];
+            403: components["responses"]["Interdit"];
+            404: components["responses"]["Introuvable"];
+        };
+    };
+    deciderRecommandation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Mois civil, dans le fuseau de la banque */
+                mois: components["parameters"]["Mois"];
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRecommandation"];
+            };
+        };
+        responses: {
+            /** @description Recommandation décidée */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommandationBarometre"];
                 };
             };
             400: components["responses"]["Invalide"];

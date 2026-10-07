@@ -1,11 +1,13 @@
 /**
  * Point d'entrée du worker (décision A8) : même code que l'API, sans serveur HTTP.
- * Tâches SLA, envois des notifications et purge, planifiés par BullMQ.
+ * Tâches SLA, envois des notifications, analyse antivirus, baromètres mensuels et purge, planifiés par BullMQ.
  */
 import 'reflect-metadata';
 import { Inject, Injectable, Logger, Module, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { BarometresMensuels } from './application/barometre/barometres.js';
 import { AnalyseAntivirus } from './application/fichiers/analyse.js';
+import { MoteurIa } from './application/ia/moteur.js';
 import { CycleDeVie } from './application/reclamations/cycle-de-vie.js';
 import { signalerNonRemis } from './application/reclamations/envois.js';
 import { TachesSla } from './application/reclamations/taches-sla.js';
@@ -15,6 +17,7 @@ import { EmailSmtp, SmsHttp, SmsJournal, type AdaptateurSms } from './infrastruc
 import { BoiteEnvoi } from './infrastructure/envois/boite-envoi.js';
 import { adaptateurWhatsapp } from './infrastructure/canaux/whatsapp.js';
 import { antivirusDe } from './infrastructure/fichiers/antivirus.js';
+import { creerFournisseur } from './infrastructure/ia/fournisseurs.js';
 import { StockageDisque } from './infrastructure/stockage/stockage.js';
 import { Planificateur } from './worker/planification.js';
 
@@ -37,6 +40,8 @@ class ServiceWorker implements OnApplicationBootstrap, OnApplicationShutdown {
       ),
       bd: this.bd,
       antivirus: new AnalyseAntivirus(this.bd, new StockageDisque(config.stockageDossier), antivirusDe(config.antivirus)),
+      // Étape 23 : même moteur d'IA que l'API (plafond, journal appel_ia, repli sur les règles)
+      barometres: new BarometresMensuels(this.bd, new MoteurIa(this.bd, config.ia, config.ia.fournisseur === 'regles' ? null : creerFournisseur(config.ia), () => new Date())),
     });
   }
 

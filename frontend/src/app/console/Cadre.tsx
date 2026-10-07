@@ -97,7 +97,7 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
   return (
     <ContexteConsole.Provider value={contexte}>
       {/* Poste de travail (décision F9) : sous 1 180 px, la page défile plutôt que de s'écraser */}
-      <div className="h-full min-w-[1180px]">
+      <div className="poste-de-travail h-full min-w-[1180px]">
       <CadreBackOffice
         banque={banque}
         moi={moi}
@@ -113,9 +113,9 @@ function CadreBanque({ session, moi }: { session: SessionPersonnel; moi: S<'Moi'
         surRechercher={(texte) => navigate(texte ? `/reclamations?file=toutes&recherche=${encodeURIComponent(texte)}` : '/reclamations')}
         rechercheInitiale={recherche}
         surCloche={() => setNotifsOuvertes((o) => !o)}
-        surOuvrirNotification={(reclamationId, notificationId) => {
+        surOuvrirNotification={(reclamationId, notificationId, modele) => {
           lue.mutate(notificationId);
-          navigate(reclamationId ? `/reclamations/${reclamationId}` : '/reclamations?file=a-reassigner');
+          navigate(reclamationId ? `/reclamations/${reclamationId}` : modele === 'barometre.pret' ? ROUTES_BANQUE.barometre : '/reclamations?file=a-reassigner');
         }}
         surToutLire={() => toutLire.mutate()}
         surDeconnexion={() => void deconnecter()}
@@ -144,7 +144,7 @@ function CadrePlateforme({ session, moi }: { session: SessionPersonnel; moi: S<'
   const page = pageDe(ROUTES_PLATEFORME, location.pathname) ?? 'banques';
   return (
     <ContexteConsole.Provider value={contexte}>
-      <div className="h-full min-w-[1180px]">
+      <div className="poste-de-travail h-full min-w-[1180px]">
       <CadreConsole
         page={page}
         moi={moi}

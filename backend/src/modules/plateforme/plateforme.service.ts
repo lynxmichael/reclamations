@@ -28,7 +28,7 @@ const HORAIRES_PAR_DEFAUT = [1, 2, 3, 4, 5].map((jourSemaine) => ({ jourSemaine,
 
 const SELECTION_BANQUE = {
   id: true, nom: true, slug: true, prefixeTickets: true, fuseauHoraire: true, seuilAlerteSlaPourcent: true, delaiClotureAutoJours: true,
-  smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, doubleAuthentificationObligatoire: true,
+  smsChaqueChangementStatut: true, enqueteSatisfaction: true, attributionAutomatique: true, chatWeb: true, assistantIa: true, barometre: true, doubleAuthentificationObligatoire: true,
   whatsapp: true, smsEntrant: true,
   suspendueLe: true, motifSuspension: true, creeLe: true,
   plan: { select: { id: true, nom: true } },
@@ -75,6 +75,7 @@ export class ServicePlateforme {
       attributionAutomatique: b.attributionAutomatique,
       chatWeb: b.chatWeb,
       assistantIa: b.assistantIa,
+      barometre: b.barometre,
       doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,
       whatsapp: b.whatsapp,
       smsEntrant: b.smsEntrant,
@@ -140,7 +141,7 @@ export class ServicePlateforme {
   modifierBanque(appel: Appel, id: string, m: {
     nom?: string; planId?: string; fuseauHoraire?: string; seuilAlerteSlaPourcent?: number; delaiClotureAutoJours?: number;
     smsChaqueChangementStatut?: boolean; enqueteSatisfaction?: boolean; attributionAutomatique?: boolean; chatWeb?: boolean; assistantIa?: boolean;
-    whatsapp?: boolean; smsEntrant?: boolean;
+    whatsapp?: boolean; smsEntrant?: boolean; barometre?: boolean;
   }) {
     if (m.fuseauHoraire && !fuseauValide(m.fuseauHoraire)) throw invalideChamp('fuseauHoraire', 'Fuseau horaire inconnu (ex. Africa/Abidjan)');
     return this.bd.enPlateforme(async (tx) => {

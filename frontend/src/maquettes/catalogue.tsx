@@ -19,6 +19,7 @@ import { Agences } from '../ecrans/back-office/Agences';
 import { Attribution } from '../ecrans/back-office/Attribution';
 import { Audit } from '../ecrans/back-office/Audit';
 import { Banque } from '../ecrans/back-office/Banque';
+import { Barometre } from '../ecrans/back-office/Barometre';
 import { CadreBackOffice, type PageBackOffice } from '../ecrans/back-office/CadreBackOffice';
 import { Categories } from '../ecrans/back-office/Categories';
 import { BandeauDoubleAuthentification, Compte } from '../ecrans/back-office/Compte';
@@ -37,6 +38,7 @@ import { Banques } from '../ecrans/plateforme/Banques';
 import { CadreConsole, type PageConsole } from '../ecrans/plateforme/Console';
 import { ALPHA, DOMAINE, MAINTENANT } from './donnees/commun';
 import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './donnees/agences';
+import { BAROMETRE_AOUT, LISTE_BAROMETRES, LISTE_BAROMETRES_VIDE } from './donnees/barometre';
 import { CONSOMMATION_IA, REPONSES_BANQUE, SUGGESTION_42, conversationAssistant } from './donnees/assistant';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './donnees/auth';
 import {
@@ -782,6 +784,43 @@ export const ECRANS: Ecran[] = [
     variantes: [{ cle: 'detail', libelle: 'Détail', options: [{ valeur: 'plateau', libelle: 'Plateau déplié' }, { valeur: 'aucun', libelle: 'Liste' }] }],
     rendu: ({ v }) =>
       backOffice(ADMIN, 'agences', <Agences key={v.detail} indicateurs={INDICATEURS_AGENCES} ouverte={v.detail === 'plateau' ? AGENCES[0]!.id : null} />),
+  },
+  {
+    id: 'barometre',
+    groupe: 'back-office',
+    titre: 'Baromètre de l\'expérience client',
+    format: 'bureau',
+    adresse: () => site(ALPHA, '/back-office/barometre'),
+    operations: ['listerBarometres', 'lireBarometre', 'deciderRecommandation'],
+    roles: 'Admin Entreprise (décide des recommandations) et superviseurs (lecture), quand Makor a ouvert le baromètre à la banque (étape 23).',
+    notes: [
+      'Publié par le worker le 1er de chaque mois pour le mois écoulé, puis figé ; une notification prévient l\'Admin Entreprise et les superviseurs.',
+      'Chiffres calculés par la plateforme : réclamations reçues, délais respectés, premier contact, satisfaction, NPS, taux de réponse, comparés au mois précédent ; tendance sur 6 mois en petits graphiques (une mesure, un axe chacun), avec le tableau des valeurs.',
+      'Irritants : un score par catégorie et par agence (réclamation reçue, hors délai, contestée, client insatisfait). Jamais d\'agent nommé.',
+      'Ce que disent les clients : les commentaires de l\'enquête regroupés en thèmes, avec leurs mentions et deux exemples ; lien vers la réclamation.',
+      'Recommandations proposées par l\'IA (assistant ouvert : commentaires masqués, aucun chiffre inventé) ou par les règles ; l\'Admin Entreprise retient ou écarte chacune avec un commentaire, sans en changer le texte.',
+      'Moins de 30 réponses à l\'enquête : un avertissement de prudence. La page s\'imprime telle quelle (bouton Imprimer).',
+    ],
+    variantes: [
+      VU_PAR(['ADMIN_ENTREPRISE', 'SUPERVISEUR']),
+      { cle: 'etat', libelle: 'État', options: [{ valeur: 'publie', libelle: 'Baromètre d\'août' }, { valeur: 'premier', libelle: 'Avant le premier' }] },
+    ],
+    rendu: ({ v }) => {
+      const u = PROFILS[v.role as 'ADMIN_ENTREPRISE' | 'SUPERVISEUR'];
+      const premier = v.etat === 'premier';
+      return backOffice(
+        u,
+        'barometre',
+        <Barometre
+          key={`${v.role}-${v.etat}`}
+          liste={premier ? LISTE_BAROMETRES_VIDE : LISTE_BAROMETRES}
+          barometre={premier ? null : BAROMETRE_AOUT}
+          peutDecider={u.role === 'ADMIN_ENTREPRISE'}
+          fuseau="Africa/Abidjan"
+          lienReclamation={(numero) => `#${numero}`}
+        />,
+      );
+    },
   },
   {
     id: 'categories',

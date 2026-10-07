@@ -17,6 +17,7 @@ import { AttributionModule } from './modules/attribution/attribution.controller.
 import { ConversationsModule } from './modules/conversations/conversations.controller.js';
 import { AuditModule } from './modules/audit/audit.controller.js';
 import { AuthModule } from './modules/auth/auth.controller.js';
+import { BarometreModule } from './modules/barometre/barometre.controller.js';
 import { CanauxModule } from './modules/canaux/canaux.controller.js';
 import { ClientModule } from './modules/client/client.controller.js';
 import { NotificationsModule } from './modules/notifications/notifications.controller.js';
@@ -51,6 +52,7 @@ export class AppModule {
         ConversationsModule,
         AssistantModule,
         CanauxModule,
+        BarometreModule,
         PersonnelModule,
         AuditModule,
         PlateformeModule,

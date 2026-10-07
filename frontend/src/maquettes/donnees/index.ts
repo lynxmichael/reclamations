@@ -6,6 +6,7 @@ import type { Schemas } from '../../api/types';
 import { ALPHA, HORIZON } from './commun';
 import { ENROLEMENT, ERREUR_CONNEXION, ETAPE_TOTP } from './auth';
 import { ENROLEMENT_COMPTE, INDICATEURS_AGENCES } from './agences';
+import { BAROMETRE_AOUT, LISTE_BAROMETRES, LISTE_BAROMETRES_VIDE, NOTIFICATION_BAROMETRE } from './barometre';
 import { ABSENCES, AGENCES, CATEGORIES, GROUPES, HORAIRES, IBRAHIM, JOURS_FERIES, PAGE_PERSONNEL, PARAMETRES, POINTS_DEPOT, REGLES, SERGE, moi } from './parametrage';
 import { ALERTES, FACTURATION_CANAUX, FACTURATION_SMS, INDICATEURS_PLATEFORME, PAGE_BANQUES, PLANS } from './plateforme';
 import {
@@ -88,4 +89,8 @@ export const EXEMPLES: Exemple[] = [
   { nom: 'facturation SMS', schema: 'FacturationSms', valeur: FACTURATION_SMS },
   { nom: 'facturation WhatsApp et SMS reçus', schema: 'FacturationCanaux', valeur: FACTURATION_CANAUX },
   { nom: 'alertes du Super Admin', schema: 'PageNotifications', valeur: ALERTES },
+  { nom: 'baromètres publiés (étape 23)', schema: 'ListeBarometres', valeur: LISTE_BAROMETRES },
+  { nom: 'aucun baromètre encore publié', schema: 'ListeBarometres', valeur: LISTE_BAROMETRES_VIDE },
+  { nom: 'baromètre d\'août', schema: 'Barometre', valeur: BAROMETRE_AOUT },
+  { nom: 'notification du baromètre', schema: 'NotificationInApp', valeur: NOTIFICATION_BAROMETRE },
 ];

@@ -424,6 +424,28 @@ Preuve automatique :
 
 Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
 
+### Critère 20 (phase 2, étape 23) — Baromètre mensuel et recommandations
+
+*Chaque mois, la banque sait ce que vivent ses clients et ce qu'elle pourrait améliorer ; l'Admin Entreprise décide de ce qu'il retient.*
+
+Comme les critères 12 à 19, il se signe à part. Il se passe avec la Banque Alpha du jeu de démonstration, qui a déjà les baromètres des deux derniers mois écoulés (analyse par les règles). Pour voir l'analyse par l'IA, l'assistant IA doit être ouvert à la banque et un fournisseur configuré (étape 18) : le baromètre du mois suivant passe alors par l'IA ; à la main, `docker compose … exec worker node dist/scripts/taches.js --barometre` publie un mois écoulé qui manque.
+
+1. Le Super Admin, **Banques**, Banque Alpha : « Baromètre et recommandations (phase 2) » est coché. Il n'a, dans sa console, aucune page pour lire un baromètre.
+2. Fatou (Admin Entreprise) : la notification « Baromètre de … est prêt » mène à la page **Baromètre**. **Attendu :** le mois écoulé, publié le 1er à minuit ; réclamations reçues, délais respectés, premier contact, clients satisfaits, NPS, réponse à l'enquête, chacun comparé au mois précédent ; tendance sur 6 mois (et son tableau) ; irritants par catégorie et par agence ; ce que disent les clients, avec deux exemples par thème et le lien vers la réclamation ; aucun agent nommé.
+3. Fatou écarte une recommandation, revient sur sa décision, puis la retient avec un commentaire. **Attendu :** « Retenue par Fatou Diabaté le … » et son commentaire ; le texte de la recommandation ne change pas ; au journal d'audit, `barometre.recommandation` à chaque décision.
+4. **Imprimer**. **Attendu :** la page seule, sans le menu ni les boutons ; les commentaires de décision y figurent.
+5. Serge (superviseur) : la même page, sans bouton de décision ; il voit les décisions et commentaires de Fatou. Aya (agente) : pas de page Baromètre (« Page réservée » par l'adresse).
+6. Le Super Admin décoche la fonction. **Attendu :** la page quitte le menu de la banque ; par l'adresse, « Le baromètre n'est pas ouvert à votre banque » ; recochée, les baromètres déjà publiés reviennent. **Activité et SMS** : la colonne « Baromètres » de l'usage de l'IA.
+
+Preuve automatique :
+
+- `barometre.e2e.test.ts` : 14 tests, sur une banque créée pour le test avec trois mois de réclamations traitées de bout en bout. Ouverture par Makor ; chiffres du mois (définitions du contrat), tendance, irritants ; règles sans l'accord de la banque (rien n'est envoyé au fournisseur) ; commentaires masqués (téléphone, e-mail, nom du client et d'un agent), ni numéro de réclamation ni identifiant envoyés ; réponse de l'IA qui invente un chiffre écartée (règles) ; recommandation citant une étiquette de masquage écartée ; un seul baromètre par mois ; rôles, isolation entre banques, décisions et journal d'audit, notifications, fermeture et réouverture, consommation de l'IA.
+- `navigateur/16-barometre.spec.ts` : 5 tests.
+- Tests unitaires de `domaine/barometre` (7) et `domaine/ia/barometre` (3) ; écran du baromètre (5).
+- Vérifications de sécurité : 24 contrôles. Baromètre publié par le seul système et figé (ni modification ni suppression, même par lui) ; la banque ne change que la décision de ses recommandations ; isolation entre banques ; contraintes (1er du mois, source, contenu, 5 recommandations au plus, décision et auteur) ; aucun accès du Super Admin.
+
+Résultat : ☐ OK ☐ KO ☐ Réserve — Observations :
+
 ## 3. Contrôles d'exploitation (hors section 10, avant la mise en production)
 
 | Contrôle | Commande | Attendu | Résultat |
@@ -465,6 +487,7 @@ Phase 2, à signer à la livraison de chaque fonction :
 | 17. WhatsApp Business et SMS entrant (étape 20) | | |
 | 18. Guichet, doublons et réaffectation (étape 21) | | |
 | 19. Envois non remis et pièces jointes (étape 22) | | |
+| 20. Baromètre mensuel et recommandations (étape 23) | | |
 
 | | Nom | Date | Signature |
 |---|---|---|---|

@@ -5,13 +5,17 @@
  *
  *   npx tsx scripts/taches.ts                                  la base de APP_DATABASE_URL
  *   npx tsx scripts/taches.ts --base reclamations_navigateur   une base jetable (tests navigateur)
+ *   npx tsx scripts/taches.ts --barometre                      en plus, les baromètres du mois écoulé qui manquent (étape 23)
  *
  * Sert aux tests navigateur (étape 16), qui n'ont pas de worker, et au dépannage.
  */
+import { BarometresMensuels } from '../src/application/barometre/barometres.js';
+import { MoteurIa } from '../src/application/ia/moteur.js';
 import { CycleDeVie } from '../src/application/reclamations/cycle-de-vie.js';
 import { TachesSla } from '../src/application/reclamations/taches-sla.js';
 import { lireConfiguration, urlPortail } from '../src/configuration/configuration.js';
 import { BaseDonnees } from '../src/infrastructure/base-de-donnees/base-de-donnees.service.js';
+import { creerFournisseur } from '../src/infrastructure/ia/fournisseurs.js';
 import { urlsBase } from './base-de-test.js';
 
 async function principal() {
@@ -24,6 +28,12 @@ async function principal() {
   try {
     const taches = new TachesSla(bd.base, new CycleDeVie(bd.base, { lienSuivi: (slug, jeton) => `${urlPortail(config, slug)}/suivi/${jeton}` }));
     console.log(JSON.stringify(await taches.toutes(new Date())));
+    if (args.includes('--barometre')) {
+      // Le même travail que le worker : le mois écoulé de chaque banque qui a le baromètre, s'il manque
+      const ia = config.ia;
+      const moteur = new MoteurIa(bd, ia, ia.fournisseur === 'regles' ? null : creerFournisseur(ia), () => new Date());
+      console.log(JSON.stringify(await new BarometresMensuels(bd, moteur).publier()));
+    }
   } finally {
     await bd.fermer();
   }

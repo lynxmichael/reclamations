@@ -78,6 +78,7 @@ export class ServiceParametrage {
       modeAttribution: b.modeAttribution,
       chatWeb: b.chatWeb,
       assistantIa: b.assistantIa && b.chatWeb,
+      barometre: b.barometre,
       whatsapp: numero('WHATSAPP', b.whatsapp),
       smsEntrant: numero('SMS', b.smsEntrant),
       doubleAuthentificationObligatoire: b.doubleAuthentificationObligatoire,

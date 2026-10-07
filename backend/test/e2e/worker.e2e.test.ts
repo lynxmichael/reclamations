@@ -206,14 +206,14 @@ describe('purge et planification', () => {
     expect(await bd.enSysteme((tx) => tx.codeOtp.count())).toBe(0);
   });
 
-  it('BullMQ : les cinq travaux sont planifiés une seule fois, et s\'exécutent', async () => {
+  it('BullMQ : les six travaux sont planifiés une seule fois, et s\'exécutent', async () => {
     const planif = new Planificateur(redisE2E(), { taches, boite: new BoiteEnvoi(bd, new EmailFactice(), new SmsJournal()), bd });
     const planif2 = new Planificateur(redisE2E(), { taches, boite: new BoiteEnvoi(bd, new EmailFactice(), new SmsJournal()), bd });
     await planif.demarrer();
     await planif2.demarrer();
     const file = new Queue(FILE, { connection: { url: redisE2E() } });
     const planifies = await file.getJobSchedulers();
-    expect(planifies.map((p) => p.key).sort()).toEqual(['antivirus', 'envois', 'purge', 'relances', 'taches-sla']);
+    expect(planifies.map((p) => p.key).sort()).toEqual(['antivirus', 'barometre', 'envois', 'purge', 'relances', 'taches-sla']);
     // Un travail « envois » ou « taches-sla » s'exécute dans les secondes qui suivent
     for (let i = 0; i < 40 && (await file.getCompletedCount()) === 0; i++) await new Promise((ok) => setTimeout(ok, 250));
     expect(await file.getCompletedCount()).toBeGreaterThan(0);

@@ -150,7 +150,8 @@ body {
 
 /* À l'impression, seul le récépissé remis au client au guichet sort de l'imprimante */
 @media print {
-  body * {
+  /* :where() : spécificité nulle, la règle de la page imprimée l'emporte toujours */
+  :where(body:has(.recepisse)) * {
     visibility: hidden;
   }
   .recepisse,
@@ -166,5 +167,42 @@ body {
   }
   .recepisse .sans-impression {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- Baromètre (étape 23) */
+
+/*
+ * À l'impression, la page du baromètre seule, à la largeur du papier : ni menu, ni barre du haut, ni
+ * largeur minimale du poste de travail ; fond blanc ; commandes masquées ; pas de bloc coupé en deux.
+ */
+@media print {
+  body:has(.barometre-imprimable) {
+    background: white;
+  }
+  :where(body:has(.barometre-imprimable)) * {
+    visibility: hidden;
+  }
+  .barometre-imprimable,
+  .barometre-imprimable * {
+    visibility: visible;
+  }
+  :where(body:has(.barometre-imprimable)) :is(.cadre-menu, .cadre-barre) {
+    display: none;
+  }
+  :where(body:has(.barometre-imprimable)) .poste-de-travail {
+    min-width: 0;
+  }
+  :where(body:has(.barometre-imprimable)) .cadre-page {
+    padding: 0;
+  }
+  .barometre-imprimable .sans-impression {
+    display: none !important;
+  }
+  .barometre-imprimable :is(li, dl, figure, tr) {
+    break-inside: avoid;
+  }
+  .barometre-imprimable :is(h2, header) {
+    break-after: avoid;
   }
 }
