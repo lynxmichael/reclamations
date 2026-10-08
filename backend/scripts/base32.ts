@@ -1,10 +1,9 @@
-/** Encodage base32 (RFC 4648, sans remplissage), comme les secrets TOTP. */
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 export function base32Encode(octets: Uint8Array): string {
   let bits = 0;
   let valeur = 0;
-  let sortie = '';
+  let sortie = "";
   for (const o of octets) {
     valeur = (valeur << 8) | o;
     bits += 8;

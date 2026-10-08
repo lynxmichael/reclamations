@@ -1,16 +1,12 @@
-/**
- * Conversation d'une réclamation (étape 17) : tenue à jour dans la transaction de chaque message.
- * Les règles (qui doit lire, qui alerter, quand prévenir le client) sont pures, dans
- * domaine/conversation.ts ; ce module les applique à la table conversation.
- *
- * Le chat est ouvert banque par banque par Makor (décision I2). Banque sans chat : rien ne change,
- * chaque réponse est signalée au client et chaque message du client alerte l'agent, comme avant.
- */
-import { canalDuFil, type CanalMessagerie } from '../../domaine/canaux.js';
-import { alerterAgent, marqueLaLecture, type Lecteur } from '../../domaine/conversation.js';
-import type { CanalConversation } from '../../generated/prisma/enums.js';
-import type { ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
-import type { ParametresBanque } from './parametres.js';
+import { canalDuFil, type CanalMessagerie } from "../../domaine/canaux.js";
+import {
+  alerterAgent,
+  marqueLaLecture,
+  type Lecteur,
+} from "../../domaine/conversation.js";
+import type { CanalConversation } from "../../generated/prisma/enums.js";
+import type { ClientTransaction } from "../../infrastructure/base-de-donnees/index.js";
+import type { ParametresBanque } from "./parametres.js";
 
 interface TicketCourant {
   readonly id: string;
@@ -18,21 +14,31 @@ interface TicketCourant {
 }
 
 /** Ouvre la conversation de la réclamation si besoin (le client a ouvert le chat ou y écrit). */
-export async function ouvrirConversation(tx: ClientTransaction, t: TicketCourant, maintenant: Date, canal: CanalConversation = 'WEB') {
+export async function ouvrirConversation(
+  tx: ClientTransaction,
+  t: TicketCourant,
+  maintenant: Date,
+  canal: CanalConversation = "WEB",
+) {
   await tx.conversation.createMany({
-    data: [{ tenantId: t.tenantId, reclamationId: t.id, canal, creeLe: maintenant }],
+    data: [
+      { tenantId: t.tenantId, reclamationId: t.id, canal, creeLe: maintenant },
+    ],
     skipDuplicates: true,
   });
-  return tx.conversation.findUniqueOrThrow({ where: { tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id } } });
+  return tx.conversation.findUniqueOrThrow({
+    where: {
+      tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id },
+    },
+  });
 }
 
-/**
- * Message du client. Chat ouvert : il entre dans la conversation, qui prend le canal où il vient
- * d'écrire (portail, WhatsApp ou SMS, étape 20), et l'agent n'est alerté que si rien n'attendait déjà
- * sa lecture — une rafale de messages, une seule alerte.
- */
 export async function messageDuClientDansConversation(
-  tx: ClientTransaction, t: TicketCourant, p: ParametresBanque, maintenant: Date, canal: CanalConversation = 'WEB',
+  tx: ClientTransaction,
+  t: TicketCourant,
+  p: ParametresBanque,
+  maintenant: Date,
+  canal: CanalConversation = "WEB",
 ): Promise<{ alerterAgent: boolean }> {
   if (!p.banque.chatWeb) return { alerterAgent: true };
   const avant = await ouvrirConversation(tx, t, maintenant, canal);
@@ -43,13 +49,6 @@ export async function messageDuClientDansConversation(
   return { alerterAgent: alerterAgent(avant) };
 }
 
-/**
- * Par où part la prochaine réponse de la banque (étape 20) : là où le client a écrit en dernier.
- * - WHATSAPP : le texte même, tant que la fenêtre de 24 h de Meta est ouverte (marge de 5 min) ;
- * - SMS : le texte même, du numéro de la banque (expéditeur), pour que le client puisse répondre ;
- * - WEB : la réponse reste dans le suivi, le client en est averti par e-mail ou SMS, sans le texte.
- * Un canal que Makor a fermé depuis revient au portail.
- */
 export interface FilClient {
   readonly canal: CanalConversation;
   /** WhatsApp : fin de la fenêtre de 24 h */
@@ -58,63 +57,111 @@ export interface FilClient {
   readonly expediteur: string | null;
 }
 
-export const FIL_WEB: FilClient = { canal: 'WEB', finFenetreLe: null, expediteur: null };
+export const FIL_WEB: FilClient = {
+  canal: "WEB",
+  finFenetreLe: null,
+  expediteur: null,
+};
 
-export async function canalDeReponse(tx: ClientTransaction, t: TicketCourant, p: ParametresBanque, maintenant: Date): Promise<FilClient> {
+export async function canalDeReponse(
+  tx: ClientTransaction,
+  t: TicketCourant,
+  p: ParametresBanque,
+  maintenant: Date,
+): Promise<FilClient> {
   if (!p.banque.whatsapp && !p.banque.smsEntrant) return FIL_WEB;
   const c = await tx.conversation.findUnique({
-    where: { tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id } },
+    where: {
+      tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id },
+    },
     select: { canal: true, dernierMessageClientLe: true },
   });
-  return filDe(c, p, maintenant, async (canal) => (await tx.canalBanque.findUnique({
-    where: { tenantId_canal: { tenantId: t.tenantId, canal } }, select: { numero: true },
-  }))?.numero ?? null);
+  return filDe(
+    c,
+    p,
+    maintenant,
+    async (canal) =>
+      (
+        await tx.canalBanque.findUnique({
+          where: { tenantId_canal: { tenantId: t.tenantId, canal } },
+          select: { numero: true },
+        })
+      )?.numero ?? null,
+  );
 }
 
 /** Même règle (`canalDuFil`), le numéro d'expédition des SMS lu à la demande. */
 export async function filDe(
-  c: { canal: CanalConversation; dernierMessageClientLe: Date | null } | null, p: Pick<ParametresBanque, 'banque'>, maintenant: Date,
+  c: { canal: CanalConversation; dernierMessageClientLe: Date | null } | null,
+  p: Pick<ParametresBanque, "banque">,
+  maintenant: Date,
   numero: (canal: CanalMessagerie) => Promise<string | null>,
 ): Promise<FilClient> {
   const r = canalDuFil(c, p.banque, maintenant);
-  if (r.canal === 'WHATSAPP') return { canal: 'WHATSAPP', finFenetreLe: r.finFenetreLe, expediteur: null };
-  if (r.canal === 'SMS') {
-    const expediteur = await numero('SMS');
-    if (expediteur) return { canal: 'SMS', finFenetreLe: null, expediteur };
+  if (r.canal === "WHATSAPP")
+    return {
+      canal: "WHATSAPP",
+      finFenetreLe: r.finFenetreLe,
+      expediteur: null,
+    };
+  if (r.canal === "SMS") {
+    const expediteur = await numero("SMS");
+    if (expediteur) return { canal: "SMS", finFenetreLe: null, expediteur };
   }
   return FIL_WEB;
 }
 
-/**
- * Réponse de la banque. Si le client a ouvert le chat, l'avis par e-mail ou SMS est différé : le worker
- * ne l'envoie que si la réponse reste non lue 2 minutes (taches-sla.ts). Avec `avisDonne` (résolution,
- * réponse partie sur WhatsApp ou par SMS), le message tient lieu d'avis. Répondre marque la
- * conversation lue pour la banque.
- */
 export async function reponseDansConversation(
-  tx: ClientTransaction, t: TicketCourant, p: ParametresBanque, maintenant: Date, options: { avisDonne?: boolean } = {},
+  tx: ClientTransaction,
+  t: TicketCourant,
+  p: ParametresBanque,
+  maintenant: Date,
+  options: { avisDonne?: boolean } = {},
 ): Promise<{ avisDiffere: boolean }> {
   if (!p.banque.chatWeb) return { avisDiffere: false };
-  const c = await tx.conversation.findUnique({ where: { tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id } } });
+  const c = await tx.conversation.findUnique({
+    where: {
+      tenantId_reclamationId: { tenantId: t.tenantId, reclamationId: t.id },
+    },
+  });
   if (!c) return { avisDiffere: false };
   await tx.conversation.update({
     where: { id: c.id },
-    data: { dernierMessageBanqueLe: maintenant, luBanqueLe: maintenant, ...(options.avisDonne ? { avisClientLe: maintenant } : {}) },
+    data: {
+      dernierMessageBanqueLe: maintenant,
+      luBanqueLe: maintenant,
+      ...(options.avisDonne ? { avisClientLe: maintenant } : {}),
+    },
   });
   return { avisDiffere: !options.avisDonne };
 }
 
 /** Le client a le chat à l'écran : messages lus, client en ligne. Le premier passage ouvre la conversation. */
-export async function lectureClient(tx: ClientTransaction, t: TicketCourant, maintenant: Date): Promise<void> {
+export async function lectureClient(
+  tx: ClientTransaction,
+  t: TicketCourant,
+  maintenant: Date,
+): Promise<void> {
   const c = await ouvrirConversation(tx, t, maintenant);
-  if (!c.luClientLe || c.luClientLe < maintenant) await tx.conversation.update({ where: { id: c.id }, data: { luClientLe: maintenant } });
+  if (!c.luClientLe || c.luClientLe < maintenant)
+    await tx.conversation.update({
+      where: { id: c.id },
+      data: { luClientLe: maintenant },
+    });
 }
 
 /** Lecture par la banque : compte pour l'agent assigné, ou pour un superviseur si la réclamation n'est pas assignée. */
 export async function lectureBanque(
-  tx: ClientTransaction, conversationId: string, lecteur: Lecteur, agentId: string | null, maintenant: Date,
+  tx: ClientTransaction,
+  conversationId: string,
+  lecteur: Lecteur,
+  agentId: string | null,
+  maintenant: Date,
 ): Promise<boolean> {
   if (!marqueLaLecture(lecteur, agentId)) return false;
-  await tx.conversation.update({ where: { id: conversationId }, data: { luBanqueLe: maintenant } });
+  await tx.conversation.update({
+    where: { id: conversationId },
+    data: { luBanqueLe: maintenant },
+  });
   return true;
 }

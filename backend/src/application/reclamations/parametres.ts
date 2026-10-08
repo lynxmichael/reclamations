@@ -1,7 +1,10 @@
-import type { ModeAttribution } from '../../domaine/attribution.js';
-import { normaliserCalendrier } from '../../domaine/temps-ouvre/calendrier.js';
-import type { ParametresSla } from '../../domaine/reclamation/sla.js';
-import { enSerie, type ClientTransaction } from '../../infrastructure/base-de-donnees/index.js';
+import type { ModeAttribution } from "../../domaine/attribution.js";
+import { normaliserCalendrier } from "../../domaine/temps-ouvre/calendrier.js";
+import type { ParametresSla } from "../../domaine/reclamation/sla.js";
+import {
+  enSerie,
+  type ClientTransaction,
+} from "../../infrastructure/base-de-donnees/index.js";
 
 export interface ParametresBanque {
   readonly banque: {
@@ -11,22 +14,24 @@ export interface ParametresBanque {
     readonly prefixeTickets: string;
     readonly fuseauHoraire: string;
     readonly smsChaqueChangementStatut: boolean;
-    /** Enquête de satisfaction à la clôture (étape 15) */
+
     readonly enqueteSatisfaction: boolean;
-    /** Attribution et escalade automatiques (étape 16) : MANUELLE quand Makor n'a pas ouvert la fonction */
+
     readonly modeAttribution: ModeAttribution;
-    /** La fonction est ouverte (groupes, absences), quel que soit le mode choisi par la banque */
+
     readonly attributionOuverte: boolean;
-    /** Seuils d'escalade à l'Admin Entreprise ; tous deux vides (ou fonction fermée) : pas de second niveau */
-    readonly escaladeAdmin: { readonly pourcent: number | null; readonly urgentPourcent: number | null } | null;
-    /** Chat web du portail et boîte de réception (étape 17), ouverts par Makor */
+
+    readonly escaladeAdmin: {
+      readonly pourcent: number | null;
+      readonly urgentPourcent: number | null;
+    } | null;
+
     readonly chatWeb: boolean;
-    /** Assistant IA (étape 18) : portail et brouillons pour les agents, ouverts par Makor (exige le chat) */
-    readonly assistantIa: boolean;
-    /** WhatsApp Business et SMS entrant (étape 20), ouverts par Makor (exigent le chat) */
+
+    readonly assistantIa: boolean; /** WhatsApp Business et SMS entrant (étape 20), ouverts par Makor (exigent le chat) */
     readonly whatsapp: boolean;
     readonly smsEntrant: boolean;
-    /** Baromètre mensuel et recommandations (étape 23), ouverts par Makor */
+
     readonly barometre: boolean;
     readonly suspendueLe: Date | null;
     readonly plafondTicketsMois: number | null;
@@ -35,10 +40,20 @@ export interface ParametresBanque {
 }
 
 /** Paramètres de la banque courante (contexte banque : la RLS ne laisse voir que la sienne). */
-export async function chargerParametres(tx: ClientTransaction, tenantId: string): Promise<ParametresBanque> {
+export async function chargerParametres(
+  tx: ClientTransaction,
+  tenantId: string,
+): Promise<ParametresBanque> {
   const [banque, plages, joursFeries] = await enSerie([
-    () => tx.banque.findUniqueOrThrow({ where: { id: tenantId }, include: { plan: { select: { plafondTicketsMois: true } } } }),
-    () => tx.horaireOuvre.findMany({ select: { jourSemaine: true, debutMinute: true, finMinute: true } }),
+    () =>
+      tx.banque.findUniqueOrThrow({
+        where: { id: tenantId },
+        include: { plan: { select: { plafondTicketsMois: true } } },
+      }),
+    () =>
+      tx.horaireOuvre.findMany({
+        select: { jourSemaine: true, debutMinute: true, finMinute: true },
+      }),
     () => tx.jourFerie.findMany({ select: { date: true, recurrent: true } }),
   ]);
   return {
@@ -50,10 +65,15 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
       fuseauHoraire: banque.fuseauHoraire,
       smsChaqueChangementStatut: banque.smsChaqueChangementStatut,
       enqueteSatisfaction: banque.enqueteSatisfaction,
-      modeAttribution: banque.attributionAutomatique ? banque.modeAttribution : 'MANUELLE',
+      modeAttribution: banque.attributionAutomatique
+        ? banque.modeAttribution
+        : "MANUELLE",
       attributionOuverte: banque.attributionAutomatique,
       escaladeAdmin: banque.attributionAutomatique
-        ? { pourcent: banque.seuilEscaladeAdminPourcent, urgentPourcent: banque.seuilEscaladeAdminUrgentPourcent }
+        ? {
+            pourcent: banque.seuilEscaladeAdminPourcent,
+            urgentPourcent: banque.seuilEscaladeAdminUrgentPourcent,
+          }
         : null,
       chatWeb: banque.chatWeb,
       assistantIa: banque.assistantIa && banque.chatWeb,
@@ -67,7 +87,10 @@ export async function chargerParametres(tx: ClientTransaction, tenantId: string)
       calendrier: normaliserCalendrier({
         fuseauHoraire: banque.fuseauHoraire,
         plages,
-        joursFeries: joursFeries.map((j) => ({ date: j.date.toISOString().slice(0, 10), recurrent: j.recurrent })),
+        joursFeries: joursFeries.map((j) => ({
+          date: j.date.toISOString().slice(0, 10),
+          recurrent: j.recurrent,
+        })),
       }),
       seuilAlertePourcent: banque.seuilAlerteSlaPourcent,
       delaiClotureAutoJours: banque.delaiClotureAutoJours,

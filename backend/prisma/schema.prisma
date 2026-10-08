@@ -32,9 +32,6 @@ datasource db {
   provider = "postgresql"
 }
 
-// -----------------------------------------------------------------------------
-//  Énumérations (13)
-// -----------------------------------------------------------------------------
 
 /// Rôles du personnel (§5). Le client final n'est pas un utilisateur (arbitrage 1).
 enum RoleUtilisateur {
